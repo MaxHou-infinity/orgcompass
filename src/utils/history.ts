@@ -123,6 +123,7 @@ export function useHistoryState<S>(initial: S, limit = 50) {
 
   return {
     state,
+    getSnapshot: store.getSnapshot,
     /** 提交新快照（入历史栈） */
     set: store.set.bind(store),
     /** 替换快照（清空历史，用于载入/重置） */

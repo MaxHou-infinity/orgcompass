@@ -10,8 +10,14 @@ import {
   PersonnelChange,
   ScenarioDiffResult,
 } from '../utils/scenarioDiff';
-import { HEALTH_STATUS_LABEL, HealthStatus, METRIC_CALIBER_NOTES, computePositionSummary } from '../utils/analytics';
-import { flattenAllPositions } from './positionUtils';
+import { HEALTH_STATUS_LABEL, HealthStatus, METRIC_CALIBER_NOTES } from '../utils/analytics';
+import {
+  buildGapListRows,
+  summarizeGapList,
+  GAP_LIST_CALIBER,
+  type GapListRow,
+} from '../utils/gapList';
+import { deriveBoard } from '../utils/boardScope';
 import { STATUS_STYLE, fmt, fmtCost } from '../utils/statusUI';
 import { APP_VERSION } from '../version';
 
@@ -91,12 +97,34 @@ function buildHighlights(diff: ScenarioDiffResult): string[] {
   return out.slice(0, 5);
 }
 
+/** 岗位缺口清单 → Excel 行（与界面岗位明细表使用同一份编号结果，A31） */
+function gapRowsToSheet(rows: GapListRow[]): Record<string, string | number>[] {
+  return rows.map((r) => ({
+    场景: r.scenario,
+    完整部门路径: r.deptPath,
+    岗位: r.position,
+    职级带宽: r.levelBand,
+    岗位状态: r.statusLabel,
+    编制配置状态: r.headcountStatusLabel,
+    编制: r.headcount,
+    主岗占用: r.primaryOccupied,
+    兼岗关系数: r.secondaryRelations,
+    待补人数: r.pendingCount,
+    超额人数: r.overflowCount,
+    成本估算状态: r.costStatusLabel,
+    '估算值(万元/月)': r.unitCost ?? '',
+    '缺口成本(万元/月)': r.gapCost ?? '',
+    估算依据: r.costBasis,
+  }));
+}
+
 /** 差异表 → Excel 字节（管理层报告 E2；复用现有 XLSX 导出模式） */
 async function buildDiffExcelBytes(
   projectName: string,
   baseline: Scenario,
   target: Scenario,
   diff: ScenarioDiffResult,
+  gapRows: GapListRow[],
 ): Promise<Uint8Array> {
   const XLSX = await import('xlsx');
   const wb = XLSX.utils.book_new();
@@ -151,6 +179,25 @@ async function buildDiffExcelBytes(
   ];
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryRows), '缺口与成本汇总');
 
+  // v2.3 M4：补齐界面已有的岗位明细（此前 Excel 构建路径缺此工作表）
+  if (gapRows.length > 0) {
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(gapRowsToSheet(gapRows)), '岗位缺口清单');
+    const s = summarizeGapList(gapRows);
+    const gapMeta = [
+      { 项: '项目', 值: projectName },
+      { 项: '场景', 值: target.name },
+      { 项: '生成时间', 值: new Date().toLocaleString('zh-CN', { dateStyle: 'long', timeStyle: 'short' }) },
+      { 项: '待补人数合计', 值: s.pendingTotal },
+      { 项: '超额人数合计', 值: s.overflowTotal },
+      { 项: '净额（仅补充，不用超编抵消待补）', 值: s.netTotal },
+      { 项: '编制冻结岗位数', 值: s.frozenPositions },
+      { 项: '未配置编制岗位数', 值: s.unconfiguredPositions },
+      { 项: '已知缺口成本合计(万元/月)', 值: s.costPartial ? `${s.knownCostTotal}（已知部分，另有 ${s.costMissingPositions} 个岗位无法估算）` : s.knownCostTotal },
+      ...GAP_LIST_CALIBER.map((line, i) => ({ 项: `口径 ${i + 1}`, 值: line })),
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(gapMeta), '岗位清单口径');
+  }
+
   const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
   return new Uint8Array(out as ArrayBuffer);
 }
@@ -172,26 +219,29 @@ export function ManagementReport({
 
   const diff: ScenarioDiffResult = useMemo(() => computeScenarioDiff(baseline, target), [baseline, target]);
 
-  // —— v2.1.1 岗位级缺口对比（复用 PositionSummary）——
-  const baselinePositions = useMemo(
-    () => computePositionSummary(flattenAllPositions(baseline.departments), baseline.allEmployeesFlat, levelConfigs),
-    [baseline, levelConfigs],
+  // —— v2.3 M4：岗位缺口清单（与界面岗位明细表使用同一份 deriveBoard 派生，Excel 同源）——
+  const emptySummaries = useMemo(() => new Map(), []);
+  const gapBoard = useMemo(
+    () => deriveBoard({
+      departments: target.departments,
+      allEmployees: target.allEmployeesFlat,
+      // v2.3 M4 修复：岗位以部门树为结构来源；Scenario.positions 仅作兜底（可能过期）
+      allPositions: target.positions ?? [],
+      assessments: target.assessments ?? [],
+      competencyModel: target.competencyModel ?? { dimensions: [] },
+      positionAssignments: target.positionAssignments ?? [],
+      levelConfigs,
+      competencySummaries: emptySummaries as never,
+      matchStates: [],
+      scopeDeptId: null,
+      includeChildren: true,
+      filter: 'all',
+    }),
+    [target, levelConfigs, emptySummaries],
   );
-  const targetPositions = useMemo(
-    () => computePositionSummary(flattenAllPositions(target.departments), target.allEmployeesFlat, levelConfigs),
-    [target, levelConfigs],
-  );
-  const deptNameById = useMemo(() => {
-    const m = new Map<string, string>();
-    const walk = (depts: Scenario['departments']) => {
-      for (const d of depts) {
-        m.set(d.id, d.name);
-        walk(d.children);
-      }
-    };
-    walk(target.departments);
-    return m;
-  }, [target.departments]);
+  /** 目标场景岗位缺口清单（界面与 Excel 逐行同源） */
+  const gapRows = useMemo(() => buildGapListRows(gapBoard, target.name), [gapBoard, target.name]);
+  const gapSummary = useMemo(() => summarizeGapList(gapRows), [gapRows]);
 
   const generatedAt = useMemo(
     () => new Date().toLocaleString('zh-CN', { dateStyle: 'long', timeStyle: 'short' }),
@@ -231,7 +281,7 @@ export function ManagementReport({
 
   const handleExportExcel = async () => {
     try {
-      const bytes = await buildDiffExcelBytes(projectName, baseline, target, diff);
+      const bytes = await buildDiffExcelBytes(projectName, baseline, target, diff, gapRows);
       const { saveFile } = await import('../utils/tauri');
       const ok = await saveFile(
         `管理层报告-${baseline.name}-vs-${target.name}.xlsx`,
@@ -608,58 +658,62 @@ export function ManagementReport({
           </div>
         </section>
 
-        {/* ⑥b 岗位级缺口对比（v2.1.1：部门 → 岗位两级，仅列目标场景有岗位者） */}
-        {targetPositions.length > 0 && (
+        {/* ⑥b 岗位缺口清单（v2.3 M4：编制缺口事实，与导出 Excel 同源；待补与超额分开） */}
+        {gapRows.length > 0 && (
           <section className="report-section">
-            <h2 className="text-base font-bold text-slate-900 mb-3">岗位级缺口对比（招聘缺口）</h2>
+            <h2 className="text-base font-bold text-slate-900 mb-3">岗位缺口清单（编制缺口事实，非已批准招聘需求）</h2>
+            <div className="flex flex-wrap items-center gap-4 text-xs mb-2">
+              <span className="text-amber-600">待补 {gapSummary.pendingTotal} 人 · {gapSummary.pendingPositions} 个岗位</span>
+              <span className="text-red-600">超额 {gapSummary.overflowTotal} 人 · {gapSummary.overflowPositions} 个岗位</span>
+              <span className="text-slate-600">净额 {gapSummary.netTotal}（仅补充，不用超编抵消待补）</span>
+              <span className="text-slate-600">
+                已知缺口成本 {fmtCost(gapSummary.knownCostTotal)} 万元/月
+                {gapSummary.costPartial ? `（已知部分；${gapSummary.costMissingPositions} 个待补岗位无法估算）` : ''}
+              </span>
+              <span className="text-slate-500">冻结 {gapSummary.frozenPositions} · 未配置编制 {gapSummary.unconfiguredPositions}</span>
+            </div>
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-xs text-slate-500 uppercase tracking-wide border-b border-slate-200">
                   <th className="text-left py-2 font-medium">岗位</th>
-                  <th className="text-left py-2 font-medium">所属部门</th>
+                  <th className="text-left py-2 font-medium">完整部门路径</th>
+                  <th className="text-left py-2 font-medium">职级带宽</th>
+                  <th className="text-left py-2 font-medium">岗位状态</th>
                   <th className="text-right py-2 font-medium">编制</th>
-                  <th className="text-right py-2 font-medium">在岗</th>
-                  <th className="text-right py-2 font-medium">缺口</th>
-                  <th className="text-right py-2 font-medium">缺口成本</th>
+                  <th className="text-right py-2 font-medium">主岗占用</th>
+                  <th className="text-right py-2 font-medium">兼岗</th>
+                  <th className="text-right py-2 font-medium">待补</th>
+                  <th className="text-right py-2 font-medium">超额</th>
+                  <th className="text-right py-2 font-medium">缺口成本(万元/月)</th>
                 </tr>
               </thead>
               <tbody>
-                {targetPositions.map((p) => {
-                  const b = baselinePositions.find((x) => x.positionId === p.positionId);
-                  return (
-                    <tr key={p.positionId} className="border-b border-slate-100">
-                      <td className="py-2 text-slate-700">{p.name}</td>
-                      <td className="py-2 text-slate-500">{deptNameById.get(p.departmentId) ?? '—'}</td>
-                      <td className="py-2 text-right text-slate-600">
-                        {fmt(b?.headcount ?? null)} → {fmt(p.headcount)}
-                        {(b?.headcount ?? 0) !== p.headcount && (
-                          <span className="block text-[10px] text-slate-400">Δ {p.headcount - (b?.headcount ?? 0)}</span>
-                        )}
-                      </td>
-                      <td className="py-2 text-right text-slate-700">
-                        {b?.assignedCount ?? 0} → {p.assignedCount}
-                      </td>
-                      <td className="py-2 text-right">
-                        {p.gap === null ? (
-                          <span className="text-slate-400">—</span>
-                        ) : (
-                          <span className={p.gap > 0 ? 'text-amber-600' : p.gap < 0 ? 'text-red-600' : 'text-emerald-600'}>
-                            {p.gap > 0 ? `+${p.gap} 空岗` : p.gap < 0 ? `${p.gap} 超编` : '满编'}
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2 text-right">
-                        <span className={p.gapCost > 0 ? 'text-amber-600' : p.gapCost < 0 ? 'text-red-600' : 'text-slate-500'}>
-                          {fmtCost(b?.gapCost ?? 0)} → {fmtCost(p.gapCost)}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
+                {gapRows.map((r) => (
+                  <tr key={`${r.deptPath}-${r.position}`} className="border-b border-slate-100">
+                    <td className="py-2 text-slate-700">{r.position}</td>
+                    <td className="py-2 text-slate-500">{r.deptPath}</td>
+                    <td className="py-2 text-slate-600 tabular-nums">{r.levelBand}</td>
+                    <td className={`py-2 ${r.headcountStatusLabel === '已配置' ? 'text-slate-600' : 'text-amber-600'}`}>
+                      {r.statusLabel}{r.headcountStatusLabel === '已配置' ? '' : ` · ${r.headcountStatusLabel}`}
+                    </td>
+                    <td className="py-2 text-right text-slate-600 tabular-nums">{r.headcount}</td>
+                    <td className="py-2 text-right text-slate-700 tabular-nums">{r.primaryOccupied}</td>
+                    <td className="py-2 text-right text-slate-500 tabular-nums">{r.secondaryRelations}</td>
+                    <td className="py-2 text-right text-amber-600 tabular-nums">{r.pendingCount || '—'}</td>
+                    <td className="py-2 text-right text-red-600 tabular-nums">{r.overflowCount || '—'}</td>
+                    <td className="py-2 text-right text-slate-600 tabular-nums">
+                      {r.gapCost === null
+                        ? (r.pendingCount > 0 ? <span className="text-amber-600 text-xs">无法估算</span> : '—')
+                        : fmtCost(r.gapCost)}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
             <p className="text-xs text-slate-400 mt-2 leading-snug">
-              岗位级缺口 = 平均月成本 × 缺口；目标职级/带宽优先，缺省回退在岗均值。冻结岗位不计缺口。
+              缺成本显示「无法估算」而非 0；冻结与未配置编制单独表达，不当作满编或零缺口。
+              成本依据顺序：岗位职级带宽 → 在岗目标职级成本均值 → 在岗实际成本均值。
+              本清单不含个人姓名、工号、个人薪酬、评分或复核依据。
             </p>
           </section>
         )}

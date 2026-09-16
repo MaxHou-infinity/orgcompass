@@ -19,7 +19,14 @@ const employees = [manager, worker, outsider];
 function batch() {
   const onSave = vi.fn();
   render(<BatchAssessmentModal open onClose={vi.fn()} departments={depts} allEmployees={employees} allPositions={[]} competencyModel={DEFAULT_COMPETENCY_MODEL} assessments={[]} onSave={onSave} onImportExcel={vi.fn()} />);
+  // v2.3 M2：岗位评价默认只覆盖已套岗人员；本组用例未套岗 → 显式选择「通用评价」范围
+  fireEvent.click(screen.getByRole('button', { name: '通用评价' }));
   return onSave;
+}
+/** v2.3 M2：批次经办人（牵头 HRBP）与实际评分人分开留痕，两者均为保存前置条件 */
+function fillBatchHeader() {
+  fireEvent.change(screen.getByRole('textbox', { name: '牵头 HRBP' }), { target: { value: '体验测试' } });
+  fireEvent.change(screen.getByRole('textbox', { name: '上级评分人' }), { target: { value: '上级A' } });
 }
 
 describe('体验断点回归', () => {
@@ -43,7 +50,7 @@ describe('体验断点回归', () => {
   });
   it('数字键覆盖已有分数，保存只接受 1–5 整数', () => {
     const save = batch();
-    fireEvent.change(screen.getByRole('textbox', { name: '牵头 HRBP' }), { target: { value: '体验测试' } });
+    fillBatchHeader();
     const cell = screen.getByRole('spinbutton', { name: '测试主管 · 战略解码' });
     fireEvent.change(cell, { target: { value: '3' } });
     fireEvent.keyDown(cell, { key: '5' });
@@ -74,7 +81,7 @@ describe('体验断点回归', () => {
   it('切换部门后保存包含之前已输入的评分', () => {
     const save = batch();
     fireEvent.click(screen.getByRole('button', { name: '员工胜任度' }));
-    fireEvent.change(screen.getByRole('textbox', { name: '牵头 HRBP' }), { target: { value: '体验测试' } });
+    fillBatchHeader();
     fireEvent.change(screen.getByRole('combobox', { name: '部门' }), { target: { value: 'child' } });
     fireEvent.change(screen.getByRole('spinbutton', { name: '测试员工 · 业务能力' }), { target: { value: '4' } });
     fireEvent.change(screen.getByRole('combobox', { name: '部门' }), { target: { value: 'other' } });

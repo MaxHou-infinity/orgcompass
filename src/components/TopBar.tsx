@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ChevronDown, FileSpreadsheet, Building2, Settings2, Minus, Plus, Undo2, Redo2, Activity, Search, LayoutTemplate, GitCompare, Briefcase, Target } from 'lucide-react';
+import { ChevronDown, FileSpreadsheet, Building2, Settings2, Minus, Plus, Undo2, Redo2, Activity, Search, LayoutTemplate, GitCompare, Briefcase, Target, ClipboardList } from 'lucide-react';
 import { Scenario } from '../types';
 import { OrgTemplate } from '../types';
 import { SaveState } from '../utils/useOrgWorkspace';
@@ -57,6 +57,8 @@ interface TopBarProps {
   onOpenPositionOps: () => void;
   /** v2.2.0：打开「胜任度」看板抽屉（评估/看板/维度配置入口） */
   onOpenCompetency: () => void;
+  /** v2.3 M4：打开「岗位缺口清单」（当前场景直接查看与导出） */
+  onOpenGapList: () => void;
 }
 
 function SaveIndicator({ saveState, lastSavedAt }: { saveState: SaveState; lastSavedAt: string | null }) {
@@ -103,6 +105,7 @@ export function TopBar({
   onLoadIndustryTemplate,
   onOpenPositionOps,
   onOpenCompetency,
+  onOpenGapList,
 }: TopBarProps) {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
@@ -304,6 +307,17 @@ export function TopBar({
         >
           <Target className="w-4 h-4" />
           胜任度
+        </button>
+
+        {/* v2.3 M4：岗位缺口清单（当前场景直读，不要求先建第二个场景） */}
+        <button
+          onClick={onOpenGapList}
+          disabled={!hasData}
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          title="岗位缺口清单：编制/占用/待补/超额与成本依据，可直接导出"
+        >
+          <ClipboardList className="w-4 h-4" />
+          缺口清单
         </button>
       </nav>
 

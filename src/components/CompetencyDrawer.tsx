@@ -9,24 +9,32 @@ import {
   Building2,
   ClipboardList,
   SlidersHorizontal,
+  AlertTriangle,
+  UserMinus,
 } from 'lucide-react';
-import { Department, Employee, MatchStatus, Position } from '../types';
+import { Assessment, CompetencyModel, Department, Employee, LevelConfig, MatchStatus, Position, PositionAssignment } from '../types';
 import { MatchResult } from '../utils/match';
 import { CompetencySummary } from '../utils/competency';
+import {
+  BOARD_FILTER_LABEL,
+  PENDING_REVIEW_LABEL,
+  deriveBoard,
+  type BoardDerivation,
+  type BoardFilter,
+} from '../utils/boardScope';
 import { employeeLevelGap } from '../utils/analytics';
 import { COMPETENCY_STYLE, COMPETENCY_LABEL, CompetencyStatus, fmt } from '../utils/statusUI';
 
 /**
- * —— v2.2.0 胜任度看板抽屉（design §9 = ux §3 = visual §4）——
+ * —— v2.2.0 / v2.3 M3 胜任度看板抽屉 ——
  *
  * 独立右侧抽屉（不塞进 HealthDrawer：数量 vs 质量两类任务）。
- * 三层穿透 IA：L1 部门卡（胜任度分布条 + 未评率）→ L2 岗位行（在岗分布 + 空缺标记）
- * → L3 员工明细（姓名/匹配点/职级差距/胜任度环/总分）。
- * 读图顺序（od §3.4）：组织层分布 → 岗位层缺口 → 个体档案。
+ * v2.3 M3 起改为**统一范围派生**（utils/boardScope.deriveBoard）驱动：
+ * 组织指标、岗位缺口、评价完整度、能力风险、待复核项共享同一份派生结果，
+ * 汇总与明细不再各自遍历计数；支持任意层级部门下钻与「含下级 / 仅直属」切换，
+ * 未评 / 部分已评 / 能力风险 / 待复核筛选，以及与详情、画布定位的联动。
  *
- * 数据全部由 props 传入（本组件不碰 workspace）：competencySummaries / matchStates /
- * departments / allEmployees / allPositions。任一层点击 → onFocusDept 定位画布、
- * onOpenDetail 开详情。红线：未评 = 中性灰；只呈现派生值不落库。
+ * 红线：未评 = 中性灰；不合成「排兵布阵总分」；只呈现派生值不落库。
  */
 
 /** 胜任度小环（看板/明细共用）：环形 + 图标 + title 带分值/阈值（可解释，visual §3.2） */
@@ -107,15 +115,6 @@ function summaryStatus(s: CompetencySummary | undefined): CompetencyStatus {
   return s?.overall ? s.overall.status : 'unrated';
 }
 
-/** 收集部门（含子树）内全部真人员工 */
-function collectDeptEmployees(dept: Department, includeChildren: boolean): Employee[] {
-  const out = [...dept.employees];
-  if (includeChildren) {
-    for (const c of dept.children) out.push(...collectDeptEmployees(c, true));
-  }
-  return out;
-}
-
 interface CompetencyDrawerProps {
   open: boolean;
   onClose: () => void;
@@ -129,6 +128,13 @@ interface CompetencyDrawerProps {
   allEmployees: Employee[];
   /** 全量岗位扁平列表（空缺标记 / 岗位信息用） */
   allPositions: Position[];
+  /** v2.3 M3：统一范围派生输入（缺省时按空场景降级，保证组件可独立渲染） */
+  assessments?: Assessment[];
+  competencyModel?: CompetencyModel;
+  positionAssignments?: PositionAssignment[];
+  levelConfigs?: LevelConfig[];
+  /** v2.3 M3：导出/交付入口（消费同一份 board 派生结果） */
+  onExportGapList?: (board: BoardDerivation) => void;
   /** 点击部门卡 → 画布定位该部门 */
   onFocusDept: (deptId: string) => void;
   /** 点击员工行 → 打开胜任度详情 */
@@ -137,8 +143,6 @@ interface CompetencyDrawerProps {
   onStartBatch: () => void;
   /** 打开维度配置（CompetencyModelModal） */
   onOpenModelConfig: () => void;
-  /** 人工确认/撤销 not_competent（候选→已确认；缺省不渲染确认按钮） */
-  onConfirmNotCompetent?: (empId: string, confirmed: boolean) => void;
   /** 已人工确认不胜任的 employeeId 集合 */
   confirmedNotCompetent?: ReadonlySet<string>;
 }
@@ -151,17 +155,47 @@ export function CompetencyDrawer({
   departments,
   allEmployees,
   allPositions,
+  assessments = [],
+  competencyModel,
+  positionAssignments = [],
+  levelConfigs = [],
+  onExportGapList,
   onFocusDept,
   onOpenDetail,
   onStartBatch,
   onOpenModelConfig,
-  onConfirmNotCompetent,
   confirmedNotCompetent,
 }: CompetencyDrawerProps) {
-  // 本地「聚焦部门」state（点击 L1 卡聚焦；同时调用 onFocusDept 定位画布）
+  // 本地「聚焦部门」state（点击部门卡聚焦；同时调用 onFocusDept 定位画布）
   const [selectedDeptId, setSelectedDeptId] = useState<string | null>(null);
+  /** v2.3 M3：范围是否含下级（默认含，与部门汇总口径一致） */
+  const [includeChildren, setIncludeChildren] = useState(true);
+  /** v2.3 M3：明细筛选 */
+  const [filter, setFilter] = useState<BoardFilter>('all');
   // L2 岗位展开（已展开岗位 id 集合）
   const [expandedPosIds, setExpandedPosIds] = useState<Set<string>>(() => new Set());
+
+  const emptyModel: CompetencyModel = useMemo(() => ({ dimensions: [] }), []);
+  /** v2.3 M3：本次看板唯一派生结果（汇总、下钻、导出共用） */
+  const board = useMemo(
+    () => deriveBoard({
+      departments,
+      allEmployees,
+      allPositions,
+      assessments,
+      competencyModel: competencyModel ?? emptyModel,
+      positionAssignments,
+      levelConfigs,
+      competencySummaries,
+      matchStates,
+      ...(confirmedNotCompetent ? { confirmedNotCompetent } : {}),
+      scopeDeptId: selectedDeptId,
+      includeChildren,
+      filter,
+    }),
+    [departments, allEmployees, allPositions, assessments, competencyModel, emptyModel, positionAssignments,
+      levelConfigs, competencySummaries, matchStates, confirmedNotCompetent, selectedDeptId, includeChildren, filter],
+  );
 
   const dialogRef = useDialogFocus(open, onClose);
   const matchById = useMemo(
@@ -172,47 +206,6 @@ export function CompetencyDrawer({
     () => new Map<string, Position>(allPositions.map((p) => [p.id, p])),
     [allPositions],
   );
-
-  // L1：一级部门（含各自子树员工）的胜任度分布 + 未评率
-  const l1 = useMemo(
-    () =>
-      departments
-        .filter((d) => d.level === 1)
-        .map((dept) => {
-          const emps = collectDeptEmployees(dept, true).filter((e) => !e.isVirtual);
-          const counts = { healthy: 0, warn: 0, danger: 0, unrated: 0 };
-          for (const e of emps) {
-            const st = summaryStatus(competencySummaries.get(e.id));
-            counts[st === 'unrated' ? 'unrated' : st] += 1;
-          }
-          const total = emps.length;
-          const pct = (n: number) => (total === 0 ? 0 : Math.round((n / total) * 100));
-          const unratedRatio = total === 0 ? 0 : counts.unrated / total;
-          return { dept, emps, counts, total, pct, unratedRatio };
-        }),
-    [departments, competencySummaries],
-  );
-
-  const selectedDept = useMemo(
-    () => (selectedDeptId ? departments.find((d) => d.id === selectedDeptId) ?? null : null),
-    [selectedDeptId, departments],
-  );
-
-  // 明细必须覆盖汇总的同一子树，包括子部门岗位与未套岗人员。
-  const selectedPositions = useMemo(() => {
-    const collect = (dept: Department): Position[] => [
-      ...(dept.positions ?? []).filter((p) => p.status !== 'archived'),
-      ...dept.children.flatMap(collect),
-    ];
-    return selectedDept ? collect(selectedDept) : [];
-  }, [selectedDept]);
-  const employeeRows = useMemo(() => {
-    if (!selectedDept) return [];
-    const positionIds = new Set(selectedPositions.map((p) => p.id));
-    return collectDeptEmployees(selectedDept, true).filter((e) =>
-      !e.isVirtual && (!e.positionId || !positionIds.has(e.positionId)),
-    );
-  }, [selectedDept, selectedPositions]);
 
   if (!open) return null;
 
@@ -225,8 +218,10 @@ export function CompetencyDrawer({
     });
   };
 
-  /** L3 员工行（通用）：匹配点 + 职级差距 + 胜任度环 + 总分 + 不胜任确认 */
-  const renderEmployeeRow = (emp: Employee) => {
+  /** L3 员工行（通用）：匹配点 + 职级差距 + 胜任度环 + 总分 + 待复核标记 */
+  const renderEmployeeRow = (row: BoardDerivation['rows'][number]) => {
+    const emp = allEmployees.find((e) => e.id === row.employeeId);
+    if (!emp) return null;
     const match = matchById.get(emp.id);
     const summary = competencySummaries.get(emp.id);
     const st = summaryStatus(summary);
@@ -283,12 +278,13 @@ export function CompetencyDrawer({
         <span className="text-xs text-slate-500 w-8 text-right tabular-nums shrink-0">
           {score == null ? '—' : fmt(score)}
         </span>
-        {onConfirmNotCompetent && emp.positionId && (isCandidate || isConfirmed) && (
+        {emp.positionId && (isCandidate || isConfirmed) && (
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              onConfirmNotCompetent(emp.id, !isConfirmed);
+              // v2.3 M2：复核必须记录复核人与依据 → 统一在详情弹窗完成，不在列表一键落结论
+              onOpenDetail(emp.id);
             }}
             className={`shrink-0 text-xs px-1.5 py-0.5 rounded-md border font-medium transition-colors ${
               isConfirmed
@@ -297,11 +293,11 @@ export function CompetencyDrawer({
             }`}
             title={
               isConfirmed
-                ? '已人工确认不胜任（撤销确认）'
-                : '胜任度红灯候选（worstGap≥2）→ 人工确认不胜任（留痕）'
+                ? '已人工确认不胜任；在详情中撤销并留痕'
+                : '胜任度红灯候选（worstGap≥2）→ 在详情中人工确认（需填写复核人与依据）'
             }
           >
-            {isConfirmed ? '已确认不胜任 ×' : '确认不胜任'}
+            {isConfirmed ? '已确认不胜任 →' : '去复核'}
           </button>
         )}
       </div>
@@ -319,7 +315,7 @@ export function CompetencyDrawer({
           <div>
             <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
               <Target className="w-4 h-4 text-indigo-500" />
-              {selectedDept ? `${selectedDept.name} · 胜任度` : '胜任度'}
+              {selectedDeptId ? `${board.scopeLabel.split('（')[0]} · 胜任度` : '胜任度'}
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
               选择部门查看岗位和人员，点击姓名复核评分依据
@@ -355,207 +351,364 @@ export function CompetencyDrawer({
           {/* 常驻图例 */}
           <LegendBar />
 
-          {/* L1 部门层 */}
-          <section>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                部门胜任度分布
-              </h3>
-              {selectedDept && (
-                <button
-                  onClick={() => setSelectedDeptId(null)}
-                  className="flex items-center gap-1 text-xs text-indigo-600 hover:underline"
-                >
-                  <Building2 className="w-3.5 h-3.5" />
-                  查看全公司
-                </button>
-              )}
+          {/* v2.3 M3：统一范围条（当前范围 + 含下级 / 仅直属 + 返回上一层） */}
+          <section className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <Building2 className="w-3.5 h-3.5 text-slate-500" />
+              <span className="text-xs text-slate-500">当前范围</span>
+              <span className="text-sm font-semibold text-slate-800">{board.scopeLabel}</span>
+              <div className="ml-auto flex items-center gap-1.5">
+                {board.breadcrumb.map((b) => (
+                  <button
+                    key={b.id}
+                    onClick={() => setSelectedDeptId(b.id)}
+                    className="text-xs text-indigo-600 hover:underline"
+                  >
+                    {b.name}
+                  </button>
+                ))}
+                {selectedDeptId && (
+                  <button
+                    onClick={() => { setSelectedDeptId(null); }}
+                    className="text-xs text-indigo-600 hover:underline"
+                  >
+                    {board.breadcrumb.length > 0 ? '← 全公司' : '← 全公司'}
+                  </button>
+                )}
+              </div>
             </div>
-            <div className="grid grid-cols-1 min-[540px]:grid-cols-2 gap-3">
-              {l1.map(({ dept, counts, total, pct, unratedRatio }) => (
+            <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
+              <label className="flex items-center gap-1.5 text-slate-600 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={includeChildren}
+                  onChange={(e) => setIncludeChildren(e.target.checked)}
+                  className="accent-indigo-500"
+                />
+                含下级部门
+              </label>
+              <span className="text-slate-500">
+                {board.summary.deptCount} 个部门 · {board.summary.employeeCount} 人（真人去重）
+              </span>
+              {onExportGapList && (
                 <button
-                  key={dept.id}
-                  onClick={() => {
-                    setSelectedDeptId(dept.id);
-                    onFocusDept(dept.id);
-                  }}
-                  className={`min-w-0 rounded-xl bg-white border border-slate-200 p-4 text-left transition-all hover:shadow-md ${
-                    selectedDeptId === dept.id ? 'ring-2 ring-indigo-400' : ''
-                  }`}
-                  title="点击聚焦该部门（画布定位）"
+                  onClick={() => onExportGapList(board)}
+                  className="ml-auto px-2.5 py-1 rounded-lg text-xs font-medium border border-indigo-200 bg-white text-indigo-600 hover:bg-indigo-50 transition-colors"
+                  title="导出岗位缺口事实清单（与当前范围、筛选一致；默认不含个人评价明细）"
                 >
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-bold text-slate-800 truncate">{dept.name}</span>
-                    <span className="text-xs text-slate-500">{total} 人</span>
-                  </div>
-                  {/* 胜任度分布条：绿/黄/红/未评 四段堆叠（visual §4.2） */}
-                  <div className="flex h-2 rounded-full overflow-hidden bg-slate-100">
-                    <div className="bg-emerald-500" style={{ width: `${pct(counts.healthy)}%` }} />
-                    <div className="bg-amber-500" style={{ width: `${pct(counts.warn)}%` }} />
-                    <div className="bg-red-500" style={{ width: `${pct(counts.danger)}%` }} />
-                    <div className="bg-slate-300" style={{ width: `${pct(counts.unrated)}%` }} />
-                  </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                    <span className="text-emerald-600">绿 {counts.healthy}</span>
-                    <span className="text-amber-600">黄 {counts.warn}</span>
-                    <span className="text-red-600">红 {counts.danger}</span>
-                    <span className="text-slate-500">未评 {counts.unrated}</span>
-                    <span
-                      className={`ml-auto font-medium tabular-nums ${
-                        unratedRatio >= 0.3 ? 'text-slate-600' : 'text-slate-500'
-                      }`}
-                      title="未评率 = 未评估人数 ÷ 部门人数（数据完备度，未评不伪装成绿/红）"
-                    >
-                      未评率 {total === 0 ? '—' : `${Math.round(unratedRatio * 100)}%`}
-                    </span>
-                  </div>
+                  导出岗位缺口清单
                 </button>
-              ))}
-              {l1.length === 0 && (
-                <div className="text-sm text-slate-500 py-6 text-center w-full">暂无一~级部门</div>
               )}
             </div>
           </section>
 
-          {/* L2 岗位层 + L3 员工层 */}
-          {selectedDept && (
-            <section>
-              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
-                {selectedDept.name} · 岗位与人员（含下级部门）
-              </h3>
+          {/* A27：未入架构人员独立提示，不混入任何部门分母 */}
+          {board.unplaced.count > 0 && (
+            <section className="rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-800">
+              <span className="inline-flex items-center gap-1.5 font-medium">
+                <UserMinus className="w-3.5 h-3.5" />
+                全公司另有 {board.unplaced.count} 人已入名册但未进入组织架构
+              </span>
+              <span className="ml-1 text-amber-700">
+                （不计入任何部门人数与完整度分母；示例：{board.unplaced.names.slice(0, 3).join('、')}
+                {board.unplaced.count > 3 ? ' 等' : ''}）
+              </span>
+            </section>
+          )}
 
-              {selectedPositions.length > 0 && (
-                <div className="space-y-2">
-                  {selectedPositions
-                    .slice()
-                    .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? '', 'zh-CN'))
-                    .map((pos) => {
-                      const inPos = allEmployees.filter(
-                        (e) => !e.isVirtual && e.positionId === pos.id,
-                      );
-                      const assigned = inPos.length;
-                      const hasBudget = pos.status === 'active' && pos.headcount > 0;
-                      const gap = hasBudget ? pos.headcount - assigned : null;
-                      const counts = { healthy: 0, warn: 0, danger: 0, unrated: 0 };
-                      for (const e of inPos) {
-                        const st = summaryStatus(competencySummaries.get(e.id));
-                        counts[st === 'unrated' ? 'unrated' : st] += 1;
-                      }
-                      const total = assigned;
-                      const pct = (n: number) => (total === 0 ? 0 : Math.round((n / total) * 100));
-                      const noCompetent =
-                        total > 0 && counts.danger === total;
-                      const isExpanded = expandedPosIds.has(pos.id);
-                      return (
-                        <div
-                          key={pos.id}
-                          className="rounded-xl bg-slate-50 border border-slate-200 overflow-hidden"
-                        >
-                          <div className="flex items-center gap-1.5 px-3 py-2">
-                            <button
-                              onClick={() => togglePosition(pos.id)}
-                              className="p-0.5 rounded text-slate-500 hover:text-indigo-600"
-                              title={isExpanded ? '收起员工' : '展开员工'}
-                            >
-                              {isExpanded ? (
-                                <ChevronDown className="w-3.5 h-3.5" />
-                              ) : (
-                                <ChevronRight className="w-3.5 h-3.5" />
-                              )}
-                            </button>
-                            <Briefcase className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                            <span className="text-sm font-medium text-slate-700 truncate">
-                              {pos.name}
-                            </span>
-                            {/* 空缺标记（对齐 DepartmentCard 岗位区口径） */}
-                            <span
-                              className={`ml-auto shrink-0 text-xs font-medium ${
-                                gap === null
-                                  ? 'text-slate-500'
-                                  : gap > 0
-                                    ? 'text-amber-600'
-                                    : gap < 0
-                                      ? 'text-red-600'
-                                      : 'text-emerald-600'
-                              }`}
-                              title={
-                                pos.status === 'frozen'
-                                  ? '编制已冻结，不计缺口'
-                                  : pos.headcount <= 0
-                                    ? '未配置编制'
-                                    : `编制 ${pos.headcount} · 在岗 ${assigned}`
-                              }
-                            >
-                              {pos.status === 'frozen'
-                                ? '冻结'
-                                : pos.headcount <= 0
-                                  ? '未配置'
-                                  : gap === null
-                                    ? '—'
-                                    : gap > 0
-                                      ? `缺 ${gap}`
-                                      : gap < 0
-                                        ? `超 ${-gap}`
-                                        : '满编'}
-                            </span>
-                            {noCompetent && (
-                              <span className="shrink-0 text-xs px-1.5 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-200">
-                                无胜任者
-                              </span>
-                            )}
-                          </div>
-                          {/* 在岗胜任度分布条 */}
-                          <div className="px-3 pb-1">
-                            <div className="flex h-1.5 rounded-full overflow-hidden bg-slate-100">
-                              <div className="bg-emerald-500" style={{ width: `${pct(counts.healthy)}%` }} />
-                              <div className="bg-amber-500" style={{ width: `${pct(counts.warn)}%` }} />
-                              <div className="bg-red-500" style={{ width: `${pct(counts.danger)}%` }} />
-                              <div className="bg-slate-300" style={{ width: `${pct(counts.unrated)}%` }} />
-                            </div>
-                            <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
-                              <span className="text-emerald-600">绿 {counts.healthy}</span>
-                              <span className="text-amber-600">黄 {counts.warn}</span>
-                              <span className="text-red-600">红 {counts.danger}</span>
-                              <span>未评 {counts.unrated}</span>
-                              <span className="ml-auto">在岗 {assigned} 人</span>
-                            </div>
-                          </div>
-                          {isExpanded && (
-                            <div className="px-2 pb-2 pt-1 border-t border-slate-100">
-                              {inPos.length === 0 ? (
-                                <div className="text-[11px] text-slate-500 text-center py-2">
-                                  该岗位暂无在岗员工
-                                </div>
-                              ) : (
-                                <div className="space-y-0.5">
-                                  {inPos.map((emp) => renderEmployeeRow(emp))}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+          {/* v2.3 M3：五块口径并列，不合成「排兵布阵总分」 */}
+          <section className="grid grid-cols-1 min-[560px]:grid-cols-2 gap-3">
+            <div className="rounded-xl bg-white border border-slate-200 p-3">
+              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">组织指标</h3>
+              <div className="space-y-1 text-xs text-slate-600">
+                <div>人数：<b className="tabular-nums">{board.summary.employeeCount}</b>（真人去重）</div>
+                <div>部门数：<b className="tabular-nums">{board.summary.deptCount}</b></div>
+                <div>
+                  管理幅度中位数：
+                  <b className="tabular-nums">{fmt(board.organization.totals.totalEmployees === 0 ? null : (board.organization.report.l2.find((m) => m.key === 'span')?.value ?? null))}</b>
                 </div>
-              )}
-              {(employeeRows.length > 0 || selectedPositions.length === 0) && (
-                <div className="rounded-xl bg-slate-50 border border-slate-200 p-2">
-                  {employeeRows.length === 0 ? (
-                    <div className="text-[11px] text-slate-500 text-center py-2">
-                      该部门暂无员工
-                    </div>
-                  ) : (
-                    <div className="space-y-0.5">{employeeRows.map(renderEmployeeRow)}</div>
+                <div>
+                  层级深度：
+                  <b className="tabular-nums">{fmt(board.organization.report.l2.find((m) => m.key === 'depth')?.value ?? null)}</b>
+                </div>
+                <div>
+                  总编制：
+                  <b className="tabular-nums">{board.organization.totals.totalHeadcount ?? '未配置'}</b>
+                  {board.organization.totals.totalGap !== null && (
+                    <span className="ml-1 text-slate-500">（净差 {board.organization.totals.totalGap}，仅供参考）</span>
                   )}
                 </div>
-              )}
+              </div>
+            </div>
+
+            <div className="rounded-xl bg-white border border-slate-200 p-3">
+              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">岗位缺口</h3>
+              <div className="space-y-1 text-xs text-slate-600">
+                <div>待补：<b className="tabular-nums text-amber-600">{board.summary.positionGap.pendingTotal}</b> 人 · {board.summary.positionGap.pendingPositions} 个岗位</div>
+                <div>超额：<b className="tabular-nums text-red-600">{board.summary.positionGap.overflowTotal}</b> 人 · {board.summary.positionGap.overflowPositions} 个岗位</div>
+                <div className="text-slate-500">冻结岗位 {board.summary.positionGap.frozen} 个 · 未配置编制 {board.summary.positionGap.unconfigured} 个</div>
+                <div className="text-[10px] text-slate-500 leading-snug">待补与超额分别求和；净额只作补充，不以超编抵消待补。</div>
+              </div>
+            </div>
+
+            <div className="rounded-xl bg-white border border-slate-200 p-3">
+              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">评价完整度</h3>
+              <div className="space-y-1 text-xs text-slate-600">
+                <div>应评合计：<b className="tabular-nums">{board.summary.completeness.expectedTotal}</b> 维度 · 有效已评 <b className="tabular-nums">{board.summary.completeness.assessedTotal}</b></div>
+                <div>完整达标：<b className="tabular-nums text-emerald-600">{board.summary.completeness.qualified}</b> 人（完整已评且绿）</div>
+                <div className="text-slate-500">
+                  部分已评 {board.summary.completeness.partial} · 未评 {board.summary.completeness.unrated} · 模型未配置 {board.summary.completeness.modelUnconfigured}
+                </div>
+                <div className="text-[10px] text-slate-500 leading-snug">部分已评、未评、模型未配置分别列出，不与风险人数相加。</div>
+              </div>
+            </div>
+
+            <div className="rounded-xl bg-white border border-slate-200 p-3">
+              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">能力风险 · 待复核</h3>
+              <div className="space-y-1 text-xs text-slate-600">
+                <div>
+                  绿 {board.summary.risk.healthy} · 黄 {board.summary.risk.warn} · 红 {board.summary.risk.danger} · 未评 {board.summary.risk.unrated}
+                </div>
+                <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                  <span className="inline-flex items-center gap-1 text-amber-700">
+                    <AlertTriangle className="w-3 h-3" />
+                    待复核 {board.summary.pendingReview.total} 人
+                  </span>
+                  <span className="text-[10px] text-slate-500">
+                    红灯候选 {board.summary.pendingReview.candidate} · 依据已变 {board.summary.pendingReview.staleBasis} · 冲突 {board.summary.pendingReview.conflict}
+                  </span>
+                </div>
+                {board.summary.completeness.conflicted > 0 && (
+                  <div className="text-[10px] text-red-600">存在数据问题：{board.summary.completeness.conflicted} 人存在未解决评分冲突</div>
+                )}
+                {board.summary.completeness.historical > 0 && (
+                  <div className="text-[10px] text-slate-500">{board.summary.completeness.historical} 人仅有历史岗位评价，适用性待复核</div>
+                )}
+              </div>
+            </div>
+          </section>
+
+          {/* 下钻：下一层部门卡片 */}
+          {board.deptCards.length > 0 && (
+            <section>
+              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+                {selectedDeptId ? '下级部门' : '一级部门'}（点击下钻并定位画布）
+              </h3>
+              <div className="grid grid-cols-1 min-[540px]:grid-cols-2 gap-3">
+                {board.deptCards.map((card) => {
+                  const total = card.employeeCount;
+                  const pct = (n: number) => (total === 0 ? 0 : Math.round((n / total) * 100));
+                  return (
+                    <button
+                      key={card.deptId}
+                      onClick={() => {
+                        setSelectedDeptId(card.deptId);
+                        onFocusDept(card.deptId);
+                      }}
+                      className={`min-w-0 rounded-xl bg-white border border-slate-200 p-4 text-left transition-all hover:shadow-md ${
+                        selectedDeptId === card.deptId ? 'ring-2 ring-indigo-400' : ''
+                      }`}
+                      title="点击下钻该部门（并画布定位）"
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-bold text-slate-800 truncate flex items-center gap-1">
+                          {card.name}
+                          {card.hasChildren && <ChevronRight className="w-3 h-3 text-slate-400" />}
+                        </span>
+                        <span className="text-xs text-slate-500 shrink-0">{total} 人</span>
+                      </div>
+                      <div className="flex h-2 rounded-full overflow-hidden bg-slate-100">
+                        <div className="bg-emerald-500" style={{ width: `${pct(card.risk.healthy)}%` }} />
+                        <div className="bg-amber-500" style={{ width: `${pct(card.risk.warn)}%` }} />
+                        <div className="bg-red-500" style={{ width: `${pct(card.risk.danger)}%` }} />
+                        <div className="bg-slate-300" style={{ width: `${pct(card.risk.unrated)}%` }} />
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                        <span className="text-emerald-600">绿 {card.risk.healthy}</span>
+                        <span className="text-amber-600">黄 {card.risk.warn}</span>
+                        <span className="text-red-600">红 {card.risk.danger}</span>
+                        <span className="text-slate-500">未评 {card.risk.unrated}</span>
+                        <span className="ml-auto text-slate-500">
+                          {card.positionGap.pendingTotal > 0 && <span className="text-amber-600">待补 {card.positionGap.pendingTotal} </span>}
+                          {card.positionGap.overflowTotal > 0 && <span className="text-red-600">超额 {card.positionGap.overflowTotal}</span>}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {/* 筛选（作用于明细与导出，同一份 filteredRows） */}
+          <section className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-slate-500">筛选</span>
+            {(Object.keys(BOARD_FILTER_LABEL) as BoardFilter[]).map((f) => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                aria-pressed={filter === f}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                  filter === f
+                    ? 'bg-indigo-500 text-white border-indigo-500'
+                    : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'
+                }`}
+              >
+                {BOARD_FILTER_LABEL[f]}
+              </button>
+            ))}
+            <span className="text-xs text-slate-500 ml-auto">明细 {board.filteredRows.length} / {board.rows.length} 人</span>
+          </section>
+
+          {/* 岗位与人员明细（范围与汇总一致） */}
+          <section>
+            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
+              {board.scopeLabel} · 岗位与人员
+            </h3>
+
+            {board.positions.length > 0 && (
+              <div className="space-y-2">
+                {board.positions.map((pos) => {
+                  const occupants = board.rows.filter((r) => r.positionId === pos.positionId);
+                  const counts = { healthy: 0, warn: 0, danger: 0, unrated: 0 };
+                  for (const r of occupants) counts[r.status === 'unrated' ? 'unrated' : r.status] += 1;
+                  const total = occupants.length;
+                  const pct = (n: number) => (total === 0 ? 0 : Math.round((n / total) * 100));
+                  const noCompetent = total > 0 && counts.danger === total;
+                  const isExpanded = expandedPosIds.has(pos.positionId);
+                  return (
+                    <div key={pos.positionId} className="rounded-xl bg-slate-50 border border-slate-200 overflow-hidden">
+                      <div className="flex items-center gap-1.5 px-3 py-2">
+                        <button
+                          onClick={() => togglePosition(pos.positionId)}
+                          className="p-0.5 rounded text-slate-500 hover:text-indigo-600"
+                          title={isExpanded ? '收起员工' : '展开员工'}
+                        >
+                          {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                        </button>
+                        <Briefcase className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                        <span className="text-sm font-medium text-slate-700 truncate">{pos.name}</span>
+                        {pos.secondaryRelations > 0 && (
+                          <span className="shrink-0 text-[10px] px-1 rounded bg-violet-50 text-violet-600" title="兼岗关系数（不占第二个编制名额）">
+                            兼岗 {pos.secondaryRelations}
+                          </span>
+                        )}
+                        <span
+                          className={`ml-auto shrink-0 text-xs font-medium ${
+                            pos.headcountStatus !== 'configured'
+                              ? 'text-slate-500'
+                              : pos.pendingCount > 0
+                                ? 'text-amber-600'
+                                : pos.overflowCount > 0
+                                  ? 'text-red-600'
+                                  : 'text-emerald-600'
+                          }`}
+                          title={
+                            pos.headcountStatus === 'frozen'
+                              ? '编制已冻结，不计待补缺口'
+                              : pos.headcountStatus === 'unconfigured'
+                                ? '未配置编制（不视为明确零编制）'
+                                : `编制 ${pos.headcount} · 主岗占用 ${pos.primaryOccupied} · 净缺口 ${pos.netGap}`
+                          }
+                        >
+                          {pos.headcountStatus === 'frozen'
+                            ? '冻结'
+                            : pos.headcountStatus === 'unconfigured'
+                              ? '未配置'
+                              : pos.pendingCount > 0
+                                ? `待补 ${pos.pendingCount}`
+                                : pos.overflowCount > 0
+                                  ? `超额 ${pos.overflowCount}`
+                                  : '满编'}
+                        </span>
+                        {noCompetent && (
+                          <span className="shrink-0 text-xs px-1.5 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-200">
+                            无胜任者
+                          </span>
+                        )}
+                      </div>
+                      <div className="px-3 pb-1">
+                        <div className="flex h-1.5 rounded-full overflow-hidden bg-slate-100">
+                          <div className="bg-emerald-500" style={{ width: `${pct(counts.healthy)}%` }} />
+                          <div className="bg-amber-500" style={{ width: `${pct(counts.warn)}%` }} />
+                          <div className="bg-red-500" style={{ width: `${pct(counts.danger)}%` }} />
+                          <div className="bg-slate-300" style={{ width: `${pct(counts.unrated)}%` }} />
+                        </div>
+                        <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
+                          <span className="text-emerald-600">绿 {counts.healthy}</span>
+                          <span className="text-amber-600">黄 {counts.warn}</span>
+                          <span className="text-red-600">红 {counts.danger}</span>
+                          <span>未评 {counts.unrated}</span>
+                          <span className="ml-auto">主岗占用 {pos.primaryOccupied} 人</span>
+                        </div>
+                      </div>
+                      {isExpanded && (
+                        <div className="px-2 pb-2 pt-1 border-t border-slate-100">
+                          {occupants.length === 0 ? (
+                            <div className="text-[11px] text-slate-500 text-center py-2">该岗位暂无在岗员工</div>
+                          ) : (
+                            <div className="space-y-0.5">{occupants.map(renderEmployeeRow)}</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* 未套岗 / 未落入当前筛选的人员明细 */}
+            {(() => {
+              const inPosition = new Set(board.positions.map((p) => p.positionId));
+              const loose = board.filteredRows.filter((r) => !r.positionId || !inPosition.has(r.positionId));
+              return (
+                <div className="rounded-xl bg-slate-50 border border-slate-200 p-2 mt-2">
+                  {loose.length === 0 ? (
+                    <div className="text-[11px] text-slate-500 text-center py-2">
+                      {board.rows.length === 0 ? '当前范围暂无员工' : '当前筛选下没有未套岗人员'}
+                    </div>
+                  ) : (
+                    <div className="space-y-0.5">{loose.map(renderEmployeeRow)}</div>
+                  )}
+                </div>
+              );
+            })()}
+          </section>
+
+          {/* 数据问题（可见，不静默） */}
+          {board.dataIssues.length > 0 && (
+            <section className="rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2 text-[11px] text-amber-800 space-y-0.5">
+              {board.dataIssues.slice(0, 5).map((issue) => (
+                <div key={issue}>· {issue}</div>
+              ))}
+            </section>
+          )}
+
+          {/* 待复核清单（可点击进入详情，复核人在详情中填写） */}
+          {filter === 'pending-review' && board.filteredRows.length > 0 && (
+            <section className="rounded-xl border border-amber-200 bg-white px-3 py-2">
+              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">待复核项</h3>
+              <ul className="space-y-1 text-xs text-slate-600">
+                {board.filteredRows.map((r) => (
+                  <li key={r.employeeId} className="flex items-center gap-2">
+                    <button onClick={() => onOpenDetail(r.employeeId)} className="text-indigo-600 hover:underline">
+                      {r.name}
+                    </button>
+                    <span className="text-slate-500">{r.deptPath}</span>
+                    <span className="ml-auto px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[10px]">
+                      {r.pendingReview ? PENDING_REVIEW_LABEL[r.pendingReview] : '—'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             </section>
           )}
 
           {/* 底部说明（红线：只呈现、不下结论） */}
           <p className="text-xs text-slate-500 leading-snug">
             胜任度灯 = 最差维度 Gap（木桶）：绿=达标 / 黄=待提升 / 红=不胜任候选（worstGap≥2，需人工确认）。
-            未评 = 中性灰，不计入红黄绿。本工具只呈现可追溯依据，不自动定级 / 晋升 / 淘汰。
+            未评 = 中性灰，不计入红黄绿。完整达标只统计「完整已评且绿」。
+            本页组织指标 / 岗位缺口 / 完整度 / 风险各有口径，不合成总分；只呈现可追溯依据，不自动定级 / 晋升 / 淘汰。
           </p>
         </div>
       </aside>

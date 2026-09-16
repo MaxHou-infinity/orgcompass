@@ -70,7 +70,7 @@ describe('.orgproj v1→v3 迁移（岗位化；v2.2.0 升至 v3，岗位派生�
   it('v1 头数>0 部门派生「默认岗位」，员工自动套岗，数字不变', () => {
     const parsed = parseProject(serializeProject(v1ProjectFixture()))!;
     expect(parsed).not.toBeNull();
-    expect(parsed.version).toBe(3); // 数据模型版本升为 3（v1→v2→v3 链式迁移）
+    expect(parsed.version).toBe(4); // 数据模型版本升为 4（v1→v2→v3 链式迁移）
 
     const sc = parsed.scenarios[0];
     // 全量岗位扁平镜像：d1 + d2 各一个默认岗位（d3 无编制 → 不建岗）
@@ -117,7 +117,7 @@ describe('.orgproj v1→v3 迁移（岗位化；v2.2.0 升至 v3，岗位派生�
     const v3 = parseProject(serializeProject(v1ProjectFixture()))!;
     const again = parseProject(serializeProject(v3))!;
     expect(again.scenarios[0].positions?.length).toBe(2);
-    expect(again.version).toBe(3);
+    expect(again.version).toBe(4);
   });
 
   it('关键准则「数字不变」：v1 迁移 v3 后 computeL2/L3 指标与迁移前完全一致', () => {
@@ -212,11 +212,11 @@ function v2ProjectFixture(): ProjectFile {
 }
 
 describe('.orgproj v2→v3 迁移（胜任度引擎：幂等 + 无损 + 不造数据）', () => {
-  it('版本升为 3；competencyModel 回填默认 6 维（深拷贝不共享引用）；assessments/positionAssignments 空数组占位【不回填】', () => {
+  it('版本升为 4；competencyModel 回填默认 6 维（深拷贝不共享引用）；评分为空，旧当前关系缺日期', () => {
     const parsed = parseProject(serializeProject(v2ProjectFixture()))!;
     expect(parsed).not.toBeNull();
-    expect(parsed.version).toBe(3);
-    expect(parsed.meta.version).toBe(3);
+    expect(parsed.version).toBe(4);
+    expect(parsed.meta.version).toBe(4);
 
     const sc = parsed.scenarios[0];
     // 模型缺省回填默认预设（深层拷贝：改解析结果不影响全局默认）
@@ -227,9 +227,10 @@ describe('.orgproj v2→v3 迁移（胜任度引擎：幂等 + 无损 + 不造�
     sc.competencyModel!.dimensions[0].label = '被我改了';
     expect(DEFAULT_COMPETENCY_MODEL.dimensions[0].label).toBe('战略解码');
 
-    // 两张新表空数组占位、【不派生】——v2 套岗事实仍以 Employee.positionId 投影表达
+    // 评分不回填；格式 4 为旧当前投影分配未知日期的关联标识
     expect(sc.assessments).toEqual([]);
-    expect(sc.positionAssignments).toEqual([]);
+    expect(sc.positionAssignments!.length).toBeGreaterThan(0);
+    expect(sc.positionAssignments!.every((a) => !a.startDate && a.source === 'legacy')).toBe(true);
     const e1 = sc.departments[0].children[0].employees.find((e) => e.id === 'e1')!;
     expect(e1.positionId).toBe('pos-d2');
   });
@@ -292,17 +293,17 @@ describe('.orgproj v2→v3 迁移（胜任度引擎：幂等 + 无损 + 不造�
     });
     const parsed = parseProject(partial)!;
     const sc = parsed.scenarios[0];
-    expect(parsed.version).toBe(3);
+    expect(parsed.version).toBe(4);
     expect(sc.competencyModel?.dimensions).toHaveLength(1); // 已有模型不覆盖
     expect(sc.competencyModel?.dimensions[0].key).toBe('custom_keep_000001');
     expect(sc.assessments).toHaveLength(1);
     expect(sc.positionAssignments).toHaveLength(1);
   });
 
-  it('二次迁移幂等：不重复建岗/套岗，模型维度 key 稳定、空表仍为空', () => {
+  it('二次迁移幂等：不重复建岗/套岗，模型维度 key 稳定、当前关联标识稳定', () => {
     const first = parseProject(serializeProject(v2ProjectFixture()))!;
     const second = parseProject(serializeProject(first))!;
-    expect(second.version).toBe(3);
+    expect(second.version).toBe(4);
     const s1 = first.scenarios[0];
     const s2 = second.scenarios[0];
     expect(s2.positions?.map((p) => p.id).sort()).toEqual(s1.positions?.map((p) => p.id).sort());
@@ -310,6 +311,6 @@ describe('.orgproj v2→v3 迁移（胜任度引擎：幂等 + 无损 + 不造�
       s1.competencyModel?.dimensions.map((d) => d.key),
     );
     expect(s2.assessments).toEqual([]);
-    expect(s2.positionAssignments).toEqual([]);
+    expect(s2.positionAssignments).toEqual(s1.positionAssignments);
   });
 });

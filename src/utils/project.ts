@@ -15,6 +15,7 @@ import {
   DEFAULT_COMPETENCY_MODEL,
   COMPETENCY_SCALE,
 } from '../types';
+import { seedLegacyAssignments } from './placement';
 import { DEFAULT_LEVELS } from './levels';
 import { compressToUTF16, decompressFromUTF16 } from 'lz-string';
 
@@ -28,10 +29,16 @@ import { compressToUTF16, decompressFromUTF16 } from 'lz-string';
  */
 
 /** 数据模型版本（用于迁移）。v2.1.1 升为 2：引入岗位（Position）实体。v2.2.0 升为 3：胜任度引擎（CompetencyModel / Assessment / PositionAssignment）。 */
-export const PROJECT_VERSION = 3;
+/** V2.3 M1 格式 4：当前任职关联 ID、未知日期与独立确认关联；产品版本独立管理。 */
+export const PROJECT_VERSION = 4;
 
 /** localStorage key */
 export const PROJECT_STORAGE_KEY = 'org-designer.project.v2';
+export const PROJECT_BACKUP_KEY = `${PROJECT_STORAGE_KEY}.before-v4`;
+export let projectLoadIssue: string | null = null;
+export class UnsupportedProjectVersionError extends Error {
+  constructor(version: number) { super(`此项目使用格式 ${version}，请使用支持该格式的新版应用打开。`); }
+}
 
 /** 自动保存使用压缩格式，避免大型组织与胜任度明细触发 WebView 存储配额。 */
 const COMPRESSED_STORAGE_PREFIX = 'lz16:';
@@ -300,6 +307,12 @@ function sanitizeAssessments(raw: unknown, now: string): Assessment[] {
     if (typeof a.positionId === 'string') assessment.positionId = a.positionId;
     if (typeof a.assessorId === 'string') assessment.assessorId = a.assessorId;
     if (typeof a.note === 'string') assessment.note = a.note;
+    // —— v2.3 M2：适用范围 / 任职关联 / 同日修订（缺省不回填伪造；未知保持未知）——
+    if (a.scope === 'position' || a.scope === 'general') assessment.scope = a.scope;
+    if (typeof a.relationId === 'string' && a.relationId) assessment.relationId = a.relationId;
+    if (typeof a.revisionOf === 'string' && a.revisionOf) assessment.revisionOf = a.revisionOf;
+    if (typeof a.revisionNote === 'string') assessment.revisionNote = a.revisionNote;
+    if (typeof a.enteredBy === 'string') assessment.enteredBy = a.enteredBy;
     out.push(assessment);
   }
   return out;
@@ -316,7 +329,6 @@ function sanitizePositionAssignments(raw: unknown, now: string): PositionAssignm
     if (typeof a.id !== 'string' || !a.id) continue;
     if (typeof a.employeeId !== 'string' || !a.employeeId) continue;
     if (typeof a.positionId !== 'string' || !a.positionId) continue;
-    if (typeof a.startDate !== 'string' || !a.startDate) continue;
     const type: AssignmentType = a.type === 'secondary' ? 'secondary' : 'primary';
     const status: AssignmentStatus =
       a.status === 'ended' ? 'ended' : a.status === 'not_competent' ? 'not_competent' : 'active';
@@ -325,14 +337,26 @@ function sanitizePositionAssignments(raw: unknown, now: string): PositionAssignm
       employeeId: a.employeeId,
       positionId: a.positionId,
       type,
-      startDate: a.startDate,
+      startDate: typeof a.startDate === 'string' && a.startDate ? a.startDate : undefined,
       status,
       createdAt: typeof a.createdAt === 'string' ? a.createdAt : now,
       updatedAt: typeof a.updatedAt === 'string' ? a.updatedAt : now,
     };
+    assignment.source = a.source === 'operation' ? 'operation' : 'legacy';
+    for (const key of ['relationId', 'revokedAt', 'positionName', 'departmentName'] as const) {
+      if (typeof a[key] === 'string') assignment[key] = a[key];
+    }
     if (typeof a.endDate === 'string') assignment.endDate = a.endDate;
     if (typeof a.confirmedBy === 'string') assignment.confirmedBy = a.confirmedBy;
     if (typeof a.confirmedAt === 'string') assignment.confirmedAt = a.confirmedAt;
+    // —— v2.3 M2：复核留痕（依据、引用评分、撤销人/原因）；缺失保持未知，不编造 ——
+    if (typeof a.reviewNote === 'string') assignment.reviewNote = a.reviewNote;
+    if (Array.isArray(a.reviewAssessmentIds)) {
+      const ids = a.reviewAssessmentIds.filter((x): x is string => typeof x === 'string' && !!x);
+      if (ids.length > 0) assignment.reviewAssessmentIds = ids;
+    }
+    if (typeof a.revokedBy === 'string') assignment.revokedBy = a.revokedBy;
+    if (typeof a.revokeReason === 'string') assignment.revokeReason = a.revokeReason;
     out.push(assignment);
   }
   return out;
@@ -370,7 +394,9 @@ function sanitizeScenario(raw: Record<string, unknown>, index: number): Scenario
     // —— v2.2.0：胜任度三张表（缺省回退，不丢旧文件） ——
     competencyModel: sanitizeCompetencyModel(raw.competencyModel),
     assessments: sanitizeAssessments(raw.assessments, now),
-    positionAssignments: sanitizePositionAssignments(raw.positionAssignments, now),
+    positionAssignments: raw.seedLegacyRelations === true
+      ? seedLegacyAssignments(allEmployeesFlat, departments, sanitizePositionAssignments(raw.positionAssignments, now), now)
+      : sanitizePositionAssignments(raw.positionAssignments, now),
   };
 }
 
@@ -384,9 +410,15 @@ const MIGRATIONS: Record<number, Migration> = {
   1: (data) => migrateV1ToV2(data),
   // v2 → v3：胜任度引擎。competencyModel 缺省回填默认预设 + 两张新表空数组占位（positionAssignments 不回填，不造数据）。
   2: (data) => migrateV2ToV3(data),
+  3: (data) => {
+    for (const raw of Array.isArray(data.scenarios) ? data.scenarios : []) {
+      if (raw && typeof raw === 'object') (raw as Record<string, unknown>).seedLegacyRelations = true;
+    }
+    return data;
+  },
 };
 
-/** 将任意版本数据迁移到当前 PROJECT_VERSION（只读输入，返回 v3 结构；未知版本交由 sanitize 尽力处理）。 */
+/** 将已支持版本迁移到当前 PROJECT_VERSION；更高版本在 parseProject 入口拒绝。 */
 function migrateToCurrent(data: Record<string, unknown>): Record<string, unknown> {
   let v = typeof data.version === 'number' ? data.version : 1;
   let out = data;
@@ -495,6 +527,8 @@ export function parseProject(raw: string): ProjectFile | null {
     return null;
   }
   if (!data || typeof data !== 'object') return null;
+  const inputVersion = (data as Record<string, unknown>).version;
+  if (typeof inputVersion === 'number' && inputVersion > PROJECT_VERSION) throw new UnsupportedProjectVersionError(inputVersion);
   const migratedRaw = migrateToCurrent(data as Record<string, unknown>);
   const p = migratedRaw;
 
@@ -536,22 +570,44 @@ export function parseProject(raw: string): ProjectFile | null {
 /** —— localStorage IO —— */
 
 export function loadProject(): ProjectFile | null {
+  projectLoadIssue = null;
   if (typeof localStorage === 'undefined') return null;
   try {
     const raw = localStorage.getItem(PROJECT_STORAGE_KEY);
     if (!raw) return null;
-    if (!raw.startsWith(COMPRESSED_STORAGE_PREFIX)) return parseProject(raw);
-    const decompressed = decompressFromUTF16(raw.slice(COMPRESSED_STORAGE_PREFIX.length));
-    return decompressed ? parseProject(decompressed) : null;
+    const json = decodeStoredProject(raw);
+    if (!json) throw new Error('自动保存内容无法解压，原数据已保留。');
+    const parsed = parseProject(json);
+    if (!parsed) throw new Error('自动保存内容无法读取，原数据已保留。');
+    return parsed;
   } catch (error) {
+    projectLoadIssue = error instanceof Error ? error.message : '项目读取失败，原数据已保留';
     console.error('加载项目失败:', error);
     return null;
   }
 }
 
+export function decodeStoredProject(raw: string): string | null {
+  return raw.startsWith(COMPRESSED_STORAGE_PREFIX)
+    ? decompressFromUTF16(raw.slice(COMPRESSED_STORAGE_PREFIX.length)) : raw;
+}
+
 export function persistProject(project: ProjectFile): boolean {
   if (typeof localStorage === 'undefined') return true;
   try {
+    const raw = localStorage.getItem(PROJECT_STORAGE_KEY);
+    if (raw) {
+      const json = decodeStoredProject(raw);
+      if (!json) throw new Error('原自动保存无法读取，禁止覆盖');
+      const existing = JSON.parse(json) as { version?: number };
+      if ((existing.version ?? 1) > PROJECT_VERSION) throw new UnsupportedProjectVersionError(existing.version!);
+      if ((existing.version ?? 1) < 4 && project.version >= 4) {
+        // 先保存原字节；备份写入失败时整个保存失败，不能跳过。
+        const backup = localStorage.getItem(PROJECT_BACKUP_KEY);
+        if (!backup) localStorage.setItem(PROJECT_BACKUP_KEY, raw);
+        else if (backup !== raw) localStorage.setItem(`${PROJECT_BACKUP_KEY}.${crypto.randomUUID()}`, raw);
+      }
+    }
     const compactJson = JSON.stringify(project);
     localStorage.setItem(
       PROJECT_STORAGE_KEY,

@@ -18,8 +18,11 @@ import {
   parseProject,
   loadProject,
   persistProject,
+  projectLoadIssue,
   getCurrentScenario,
 } from './project';
+import { reconcilePlacementChange, seedLegacyAssignments } from './placement';
+import { flattenPositions } from './positions';
 import { useLevelConfigs, updateLevelConfigs } from './levels';
 import { useHistoryState, HistorySnapshot } from './history';
 
@@ -44,6 +47,7 @@ export function useOrgWorkspace() {
   const [project, setProjectState] = useState<ProjectFile>(() => {
     return loadProject() ?? createProject('组织架构项目');
   });
+  const [loadIssue] = useState(projectLoadIssue);
   const projectRef = useRef(project);
   useEffect(() => {
     projectRef.current = project;
@@ -67,7 +71,7 @@ export function useOrgWorkspace() {
     },
     50,
   );
-  const { state: live, set: setSnapshot, replace: replaceSnapshot, undo, redo, canUndo, canRedo } = history;
+  const { state: live, getSnapshot, set: setSnapshot, replace: replaceSnapshot, undo, redo, canUndo, canRedo } = history;
   const { departments, allEmployeesFlat, assessments, competencyModel, positionAssignments } = live;
   const departmentsRef = useRef(departments);
   const employeesRef = useRef(allEmployeesFlat);
@@ -99,6 +103,12 @@ export function useOrgWorkspace() {
   /** 把实时快照写回当前场景并持久化（不重置 saveState 计时）。 */
   const patchCurrentScenario = useCallback((): void => {
     const now = new Date().toISOString();
+    const current = getSnapshot();
+    departmentsRef.current = current.departments;
+    employeesRef.current = current.allEmployeesFlat;
+    assessmentsRef.current = current.assessments;
+    competencyModelRef.current = current.competencyModel;
+    positionAssignmentsRef.current = current.positionAssignments;
     const cur = projectRef.current;
     const next: ProjectFile = {
       ...cur,
@@ -107,6 +117,9 @@ export function useOrgWorkspace() {
           ? {
               ...s,
               departments: departmentsRef.current,
+              // v2.3 M4 修复：回写岗位扁平镜像，避免 Scenario.positions 长期为空/过期
+              // （此前只保存 departments，导致依赖该镜像的消费者读到空岗位）
+              positions: flattenPositions(departmentsRef.current),
               allEmployeesFlat: employeesRef.current,
               assessments: assessmentsRef.current,
               competencyModel: competencyModelRef.current,
@@ -124,7 +137,7 @@ export function useOrgWorkspace() {
     const ok = persistProject(next);
     setSaveState(ok ? 'saved' : 'failed');
     setLastSavedAt(formatTime(now));
-  }, []);
+  }, [getSnapshot]);
 
   /** 强制保存当前场景（清空计时器 + 立即落盘）。 */
   const flushCurrent = useCallback((): ProjectFile => {
@@ -158,14 +171,14 @@ export function useOrgWorkspace() {
 
   const setDepartments = useCallback(
     (fn: (prev: Department[]) => Department[]) => {
-      setSnapshot((prev) => ({ ...prev, departments: fn(prev.departments) }));
+      setSnapshot((prev) => reconcilePlacementChange(prev, { ...prev, departments: fn(prev.departments) }, new Date().toISOString()));
     },
     [setSnapshot],
   );
 
   const setAllEmployeesFlat = useCallback(
     (fn: (prev: Employee[]) => Employee[]) => {
-      setSnapshot((prev) => ({ ...prev, allEmployeesFlat: fn(prev.allEmployeesFlat) }));
+      setSnapshot((prev) => reconcilePlacementChange(prev, { ...prev, allEmployeesFlat: fn(prev.allEmployeesFlat) }, new Date().toISOString()));
     },
     [setSnapshot],
   );
@@ -205,7 +218,7 @@ export function useOrgWorkspace() {
 
   const setBoth = useCallback(
     (fn: (prev: HistorySnapshot) => HistorySnapshot) => {
-      setSnapshot(fn);
+      setSnapshot((prev) => reconcilePlacementChange(prev, fn(prev), new Date().toISOString()));
     },
     [setSnapshot],
   );
@@ -221,6 +234,13 @@ export function useOrgWorkspace() {
       competencyModel: CompetencyModel;
       positionAssignments: PositionAssignment[];
     }) => {
+      departmentsRef.current = snap.departments;
+      employeesRef.current = snap.allEmployeesFlat;
+      assessmentsRef.current = snap.assessments;
+      competencyModelRef.current = snap.competencyModel;
+      positionAssignmentsRef.current = snap.positionAssignments;
+      zoomRef.current = snap.canvas.zoom ?? 100;
+      levelConfigsRef.current = snap.levelConfigs;
       replaceSnapshot({
         departments: snap.departments,
         allEmployeesFlat: snap.allEmployeesFlat,
@@ -281,12 +301,15 @@ export function useOrgWorkspace() {
       projectRef.current = next;
       setProjectState(next);
       persistProject(next);
+      loadSnapshot({ ...created, assessments: created.assessments ?? [],
+        competencyModel: created.competencyModel!, positionAssignments: created.positionAssignments ?? [] });
     },
-    [flushCurrent],
+    [flushCurrent, loadSnapshot],
   );
 
   const duplicateScenario = useCallback(
     (sceneId: string) => {
+      flushCurrent();
       const target = projectRef.current.scenarios.find((s) => s.id === sceneId);
       if (!target) return;
       const copied = cloneScenario(target);
@@ -298,7 +321,7 @@ export function useOrgWorkspace() {
       setProjectState(next);
       persistProject(next);
     },
-    [],
+    [flushCurrent],
   );
 
   const renameScenario = useCallback(
@@ -361,6 +384,31 @@ export function useOrgWorkspace() {
     [],
   );
 
+  /** 全量导入只在空场景填充；已有事实时生成独立场景，保留原场景全部关联。 */
+  const importWorkspace = useCallback((name: string, tree: Department[], employees: Employee[]): boolean => {
+    flushCurrent();
+    const cur = projectRef.current;
+    const old = getCurrentScenario(cur);
+    const occupied = old.departments.length > 0 || old.allEmployeesFlat.length > 0
+      || (old.assessments?.length ?? 0) > 0 || (old.positionAssignments?.length ?? 0) > 0;
+    const now = new Date().toISOString();
+    const created = createScenario(name, {
+      departments: structuredClone(tree), allEmployeesFlat: structuredClone(employees),
+      levelConfigs: structuredClone(levelConfigsRef.current), canvas: { zoom: 100 },
+      competencyModel: structuredClone(competencyModelRef.current), assessments: [],
+      positionAssignments: seedLegacyAssignments(employees, tree, [], now),
+    }, now);
+    if (!occupied) created.id = old.id;
+    const next = { ...cur, currentScenarioId: created.id,
+      scenarios: occupied ? [...cur.scenarios, created] : cur.scenarios.map((s) => s.id === old.id ? created : s),
+      meta: { ...cur.meta, updatedAt: now } };
+    if (!persistProject(next)) { setSaveState('failed'); return false; }
+    projectRef.current = next;
+    setProjectState(next);
+    loadSnapshot({ ...created, assessments: [], competencyModel: created.competencyModel!, positionAssignments: created.positionAssignments! });
+    return true;
+  }, [flushCurrent, loadSnapshot]);
+
   /** —— 文件导入 / 导出 —— */
 
   /** 导出 .orgproj JSON 字符串 */
@@ -374,9 +422,9 @@ export function useOrgWorkspace() {
     (json: string): boolean => {
       const parsed = parseProject(json);
       if (!parsed) return false;
+      if (!persistProject(parsed)) return false;
       projectRef.current = parsed;
       setProjectState(parsed);
-      persistProject(parsed);
       const first = getCurrentScenario(parsed);
       loadSnapshot({
         departments: first.departments,
@@ -407,6 +455,8 @@ export function useOrgWorkspace() {
 
   return {
     project,
+    loadIssue,
+    importWorkspace,
     currentScenario,
     currentScenarioId: project.currentScenarioId,
     zoom,

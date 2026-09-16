@@ -1,6 +1,6 @@
 [package]
 name = "orgcompass"
-version = "2.2.1"
+version = "2.3.0"
 description = "组织罗盘 OrgCompass - 桌面版 (Tauri)"
 authors = ["Max Hou"]
 license = "Apache-2.0"

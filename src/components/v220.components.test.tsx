@@ -5,7 +5,7 @@
  * 视觉细节仍以真实浏览器回归为准（dev server http://127.0.0.1:5173）。
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { CompetencyRing, CompetencyCapsule, CompetencyDrawer } from './CompetencyDrawer';
 import { BatchAssessmentModal } from './BatchAssessmentModal';
 import { CompetencyDetailModal } from './CompetencyDetailModal';
@@ -74,20 +74,21 @@ const summary: CompetencySummary = {
   employeeId: 'e1',
   group: 'staff',
   dimensions: [
-    { dimension: 'business', label: '业务能力', definition: '岗位专业深度', group: 'staff', score: 2, requirement: 3, gap: 1, status: 'warn' },
-    { dimension: 'individual', label: '单兵能力', definition: '自驱学习', group: 'staff', score: 4, requirement: 3, gap: -1, status: 'healthy' },
+    { dimension: 'business', label: '业务能力', definition: '岗位专业深度', group: 'staff', score: 2, requirement: 3, gap: 1, status: 'warn', assessmentId: 'asm1', assessedAt: NOW, applicability: 'current', revised: false, duplicate: false, hrbpCalibration: null },
+    { dimension: 'individual', label: '单兵能力', definition: '自驱学习', group: 'staff', score: 4, requirement: 3, gap: -1, status: 'healthy', assessmentId: 'asm2', assessedAt: NOW, applicability: 'current', revised: false, duplicate: false, hrbpCalibration: null },
   ],
   overall: { score: 3, gap: 0, worstGap: 1, status: 'warn' },
   notCompetentCandidate: false,
   assessedBy: ['a1'],
   latestAssessedAt: NOW,
+  completeness: { status: 'complete', expected: 2, assessed: 2, conflicted: [], historical: [], qualified: false, computable: true, dataIssue: false },
 };
 
 const dossier: LeadershipDossier = {
   employeeId: 'e1',
   targetLevel: 'L3.2',
   dimensions: [
-    { dimension: 'leadership_strategy', label: '战略解码', definition: '目标拆解', group: 'leadership', score: 4, requirement: 3, gap: -1, status: 'healthy' },
+    { dimension: 'leadership_strategy', label: '战略解码', definition: '目标拆解', group: 'leadership', score: 4, requirement: 3, gap: -1, status: 'healthy', assessmentId: 'asm3', assessedAt: NOW, applicability: 'current', revised: false, duplicate: false, hrbpCalibration: null },
   ],
   overall: { score: 4, gap: -1, worstGap: -1, status: 'healthy' },
 };
@@ -139,6 +140,7 @@ describe('v2.2.0 组件交互冒烟', () => {
   });
 
   it('BatchAssessmentModal 渲染维度列网格（默认预设 6 维）与未评态', () => {
+    // v2.3 M2：岗位评价默认只覆盖已套岗人员 → 本用例走「通用评价」显式范围
     render(
       <BatchAssessmentModal
         open
@@ -152,6 +154,7 @@ describe('v2.2.0 组件交互冒烟', () => {
         onImportExcel={vi.fn()}
       />,
     );
+    fireEvent.click(screen.getByRole('button', { name: '通用评价' }));
     // 干部 4 维列头
     expect(screen.getByText('战略解码')).toBeTruthy();
     expect(screen.getByText('带队育人')).toBeTruthy();

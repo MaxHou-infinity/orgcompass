@@ -19,11 +19,11 @@ describe('computeMatchStates（人岗匹配状态机 v2.1.1）', () => {
     expect(r.every((x) => x.positionId === 'p1')).toBe(true);
   });
 
-  it('超编：headcount=2，3 人 → 后进者 overstaffed', () => {
+  it('超编：日期未知时只报告岗位超额，不指定个人', () => {
     const positions = [pos('p1', 2)];
     const emps = [emp('a', 'p1'), emp('b', 'p1'), emp('c', 'p1')];
     const r = computeMatchStates(emps, positions);
-    expect(r.find((x) => x.employeeId === 'c')?.status).toBe('overstaffed');
+    expect(r.find((x) => x.employeeId === 'c')).toMatchObject({ status: 'placed', positionOverflow: 1, overflowUnresolved: true });
     expect(r.find((x) => x.employeeId === 'a')?.status).toBe('placed');
   });
 
@@ -100,8 +100,9 @@ describe('computeMatchStates v2.2.0：not_competent 两态接入（design doc §
     const positions = [pos('p1', 2)];
     const emps = [emp('a', 'p1')];
     const confirmed = confirmedNotCompetentSet([
-      { id: 'asg-1', employeeId: 'a', positionId: 'p1', type: 'primary', startDate: '2026-01-01', status: 'not_competent', confirmedBy: 'hr', confirmedAt: '2026-02-01T00:00:00Z', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-02-01T00:00:00Z' },
-    ]);
+      { id: 'active-1', employeeId: 'a', positionId: 'p1', type: 'primary', status: 'active', createdAt: '2026-01-01', updatedAt: '2026-01-01' },
+      { relationId: 'active-1', id: 'asg-1', employeeId: 'a', positionId: 'p1', type: 'primary', startDate: '2026-01-01', status: 'not_competent', confirmedBy: 'hr', confirmedAt: '2026-02-01T00:00:00Z', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-02-01T00:00:00Z' },
+    ], emps);
     expect(computeMatchStates(emps, positions, confirmed)[0]).toMatchObject({ status: 'not_competent', reason: 'not-competent' });
   });
 });

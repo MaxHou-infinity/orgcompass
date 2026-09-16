@@ -83,12 +83,12 @@ function v2ProjectFixture(): ProjectFile {
 }
 
 describe('.orgproj v2→v3 迁移（胜任度引擎）', () => {
-  it('数据模型版本升为 3', () => {
-    expect(PROJECT_VERSION).toBe(3);
+  it('数据模型版本升为 4', () => {
+    expect(PROJECT_VERSION).toBe(4);
     const parsed = parseProject(serializeProject(v2ProjectFixture()))!;
     expect(parsed).not.toBeNull();
-    expect(parsed.version).toBe(3);
-    expect(parsed.meta.version).toBe(3);
+    expect(parsed.version).toBe(4);
+    expect(parsed.meta.version).toBe(4);
   });
 
   it('competencyModel 回填默认 6 维（深层拷贝，不共享引用）', () => {
@@ -103,12 +103,13 @@ describe('.orgproj v2→v3 迁移（胜任度引擎）', () => {
     expect(DEFAULT_COMPETENCY_MODEL.dimensions[0].label).toBe('战略解码');
   });
 
-  it('assessments / positionAssignments 空数组占位，【不回填】——不造数据红线', () => {
+  it('评分不回填；旧当前关系建立关联标识但不伪造到岗日期', () => {
     const parsed = parseProject(serializeProject(v2ProjectFixture()))!;
     const sc = parsed.scenarios[0];
     expect(sc.assessments).toEqual([]);
-    expect(sc.positionAssignments).toEqual([]);
-    // 不回填：v2 套岗事实仍以 Employee.positionId 投影表达，assignment 表不伪造 startDate
+    expect(sc.positionAssignments!.length).toBeGreaterThan(0);
+    expect(sc.positionAssignments!.every((a) => !a.startDate && a.source === 'legacy')).toBe(true);
+    // 只标识旧当前关系；assignment 表不伪造 startDate
     const e1 = sc.departments[0].children[0].employees.find((e) => e.id === 'e1')!;
     expect(e1.positionId).toBeTruthy();
   });
@@ -155,7 +156,7 @@ describe('.orgproj v2→v3 迁移（胜任度引擎）', () => {
   it('二次 parse 幂等：不重复建岗/套岗，三张表保留不重建', () => {
     const first = parseProject(serializeProject(v2ProjectFixture()))!;
     const second = parseProject(serializeProject(first))!;
-    expect(second.version).toBe(3);
+    expect(second.version).toBe(4);
     const s1 = first.scenarios[0];
     const s2 = second.scenarios[0];
 
@@ -168,11 +169,11 @@ describe('.orgproj v2→v3 迁移（胜任度引擎）', () => {
     const flat2 = s2.allEmployeesFlat.filter((e) => !e.isVirtual).sort((a, b) => a.id.localeCompare(b.id));
     expect(flat2.map((e) => e.positionId)).toEqual(flat1.map((e) => e.positionId));
 
-    // 三张表幂等：模型维度 key 稳定、空表仍为空
+    // 三张表幂等：模型维度 key 稳定、当前关联标识稳定
     expect(s2.competencyModel?.dimensions.map((d) => d.key)).toEqual(
       s1.competencyModel?.dimensions.map((d) => d.key),
     );
     expect(s2.assessments).toEqual([]);
-    expect(s2.positionAssignments).toEqual([]);
+    expect(s2.positionAssignments).toEqual(s1.positionAssignments);
   });
 });

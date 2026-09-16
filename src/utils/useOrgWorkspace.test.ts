@@ -202,7 +202,8 @@ describe('useOrgWorkspace v2.2.0 胜任度三字段', () => {
     act(() => {
       vi.advanceTimersByTime(800);
     });
-    const json = result.current.exportProjectJson();
+    let json = '';
+    act(() => { json = result.current.exportProjectJson(); });
     act(() => {
       result.current.importProjectJson(json);
     });

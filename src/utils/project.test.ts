@@ -491,14 +491,15 @@ describe('v2.2.0 胜任度三张表 sanitize', () => {
       positionAssignments: [
         { id: 'asg-1', employeeId: 'e1', positionId: 'p1', startDate: '2026-01-01', type: 'primary', status: 'active' },
         { id: 'asg-2', employeeId: 'e2', positionId: 'p2', startDate: '2026-01-01', type: 'weird', status: 'bogus' }, // 回退 primary/active
-        { id: 'asg-3', employeeId: 'e3', positionId: 'p3', type: 'primary', status: 'active' },                      // 缺 startDate → 丢
+        { id: 'asg-3', employeeId: 'e3', positionId: 'p3', type: 'primary', status: 'active' },                      // 缺 startDate → 保留未知日期
         { id: 'asg-4', employeeId: 'e4', positionId: 'p4', startDate: '2026-01-01', type: 'secondary', status: 'not_competent', confirmedBy: 'e9', confirmedAt: '2026-02-01' },
       ],
     }))!;
     const asg = p.scenarios[0].positionAssignments!;
-    expect(asg).toHaveLength(3);
+    expect(asg).toHaveLength(4);
     expect(asg[0]).toMatchObject({ id: 'asg-1', type: 'primary', status: 'active' });
     expect(asg[1]).toMatchObject({ id: 'asg-2', type: 'primary', status: 'active' });
-    expect(asg[2]).toMatchObject({ id: 'asg-4', type: 'secondary', status: 'not_competent', confirmedBy: 'e9' });
+    expect(asg[2].startDate).toBeUndefined();
+    expect(asg[3]).toMatchObject({ id: 'asg-4', type: 'secondary', status: 'not_competent', confirmedBy: 'e9' });
   });
 });

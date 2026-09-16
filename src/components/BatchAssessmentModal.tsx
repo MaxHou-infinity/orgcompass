@@ -3,6 +3,7 @@ import { Upload, ClipboardPaste, Eraser, CheckSquare, FileSpreadsheet, AlertTria
 import { AppModal } from './AppModal';
 import {
   Assessment,
+  AssessmentScope,
   AssessorRole,
   CompetencyModel,
   Department,
@@ -28,17 +29,26 @@ import { COMPETENCY_STYLE, COMPETENCY_LABEL, CompetencyStatus, fmt } from '../ut
  * （position 按 emp.positionId 从 allPositions 查；冻结时点标准）。
  * 键盘流：1-5 数字键直接录入 + Enter/↓ 下移一行 + Tab 右移维度。
  * Excel 评分导入走 props.onImportExcel（App 层调 parseAssessmentExcel）。
+ *
+ * v2.3 M2：
+ * - 评分角色显式选择上级原始分 / HRBP 校准分；评分人与批次经办人分开，不把 HRBP 冒充上级；
+ * - 评价适用范围显式选择「当前岗位」/「通用评价」，不靠空字段猜用途；
+ * - relationId 由 App 按当前在职主岗绑定（本组件只传 employeeId，避免 UI 复制人岗真值）。
  */
 
 /** 保存行（新评估原始事实；id/createdAt/updatedAt 由 App 落库时补） */
 export interface NewAssessment {
   employeeId: string;
   positionId?: string;
+  /** v2.3 M2：显式评价适用范围（position 岗位评价 / general 通用评价） */
+  scope: AssessmentScope;
   dimension: string;
   score: number;
   requirement: number;
   assessorRole: AssessorRole;
   assessorId?: string;
+  /** v2.3 M2：批次经办人（与评分人分开留痕） */
+  enteredBy?: string;
   assessedAt: string;
   source: 'manual' | 'import';
   note?: string;
@@ -49,6 +59,16 @@ export type AssessType = 'leadership' | 'staff';
 const ASSESS_TYPE_LABEL: Record<AssessType, string> = {
   leadership: '干部领导力',
   staff: '员工胜任度',
+};
+
+const ROLE_LABEL: Record<'supervisor' | 'hrbp', string> = {
+  supervisor: '上级原始分',
+  hrbp: 'HRBP 校准分',
+};
+
+const SCOPE_LABEL: Record<AssessmentScope, string> = {
+  position: '当前岗位',
+  general: '通用评价',
 };
 
 interface BatchAssessmentModalProps {
@@ -100,8 +120,10 @@ export function BatchAssessmentModal({
   onImportExcel,
 }: BatchAssessmentModalProps) {
   const [assessType, setAssessType] = useState<AssessType>('leadership');
-  const [hrbp, setHrbp] = useState('');
-  const [leader, setLeader] = useState('');
+  const [assessorRole, setAssessorRole] = useState<'supervisor' | 'hrbp'>('supervisor');
+  const [assessorName, setAssessorName] = useState('');
+  const [scope, setScope] = useState<AssessmentScope>('position');
+  const [operator, setOperator] = useState('');
   const [assessDate, setAssessDate] = useState(() => {
     const d = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
@@ -164,13 +186,36 @@ export function BatchAssessmentModal({
         ? isManager(e.id, departments, allEmployees)
         : !isManager(e.id, departments, allEmployees),
     );
+    // v2.3 M2：岗位评价只对已套岗人员成立；未套岗人员不在岗位评价批次内
+    if (scope === 'position') emps = emps.filter((e) => !!e.positionId);
     if (onlyUnrated) {
       emps = emps.filter((e) => {
         return dims.some((d) => !latestSupervisorAssessment(assessments, e.id, d.key));
       });
     }
     return emps.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
-  }, [allEmployees, departments, deptId, includeChildren, assessType, onlyUnrated, dims, assessments]);
+  }, [allEmployees, departments, deptId, includeChildren, assessType, onlyUnrated, dims, assessments, scope]);
+
+  /** v2.3 M2：范围内已套岗/未套岗人数（说明岗位评价为何排除某些人） */
+  const unplacedInScope = useMemo(() => {
+    if (scope !== 'position') return 0;
+    let emps: Employee[] = allEmployees.filter((e) => !e.isVirtual && !e.positionId);
+    if (deptId) {
+      const findDept = (list: Department[]): Department | undefined => {
+        for (const dept of list) {
+          if (dept.id === deptId) return dept;
+          const child = findDept(dept.children);
+          if (child) return child;
+        }
+      };
+      const dept = findDept(departments);
+      const inDept = new Set(dept ? collectDeptEmployees(dept, includeChildren).map((e) => e.id) : []);
+      emps = emps.filter((e) => inDept.has(e.id));
+    }
+    return emps.filter((e) =>
+      assessType === 'leadership' ? isManager(e.id, departments, allEmployees) : !isManager(e.id, departments, allEmployees),
+    ).length;
+  }, [scope, allEmployees, departments, deptId, includeChildren, assessType]);
 
   // 打开时重置临时态（未评 = 空，绝不预填伪中立分）
   useEffect(() => {
@@ -179,8 +224,10 @@ export function BatchAssessmentModal({
       setNotes({});
       setSelectedRows(new Set());
       setAssessType('leadership');
-      setHrbp('');
-      setLeader('');
+      setAssessorRole('supervisor');
+      setAssessorName('');
+      setScope('position');
+      setOperator('');
       setDeptId('');
       setIncludeChildren(true);
       setOnlyUnrated(false);
@@ -310,23 +357,28 @@ export function BatchAssessmentModal({
   })), [allEmployees, activeDims, scores]);
   const pendingCells = pendingEmployees.reduce((total, emp) => total + activeDims.filter((d) => typeof scores[emp.id]?.[d.key] === 'number').length, 0);
 
-  /** 保存：只落「已评分」格（部分未评允许）；每条快照 requirement */
+  /** 保存：只落「已评分」格（部分未评允许）；每条快照 requirement 与显式适用范围 */
   const handleSave = useCallback(() => {
     const rows: NewAssessment[] = [];
+    const trimmedAssessor = assessorName.trim() || undefined;
+    const trimmedOperator = operator.trim() || undefined;
     for (const emp of pendingEmployees) {
       const row = scores[emp.id] ?? {};
       const note = (notes[emp.id] ?? '').trim() || undefined;
       for (const d of activeDims) {
         const v = row[d.key];
         if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > 5) continue;
+        if (scope === 'position' && !emp.positionId) continue; // 未套岗不写岗位评价
         rows.push({
           employeeId: emp.id,
-          positionId: emp.positionId,
+          ...(scope === 'position' && emp.positionId ? { positionId: emp.positionId } : {}),
+          scope,
           dimension: d.key,
           score: v,
           requirement: empRequirement(emp),
-          assessorRole: 'supervisor',
-          assessorId: (leader || hrbp).trim() || undefined,
+          assessorRole,
+          assessorId: trimmedAssessor,
+          enteredBy: trimmedOperator,
           assessedAt: assessDate ? new Date(`${assessDate}T12:00:00`).toISOString() : new Date().toISOString(),
           source: 'manual',
           note,
@@ -336,7 +388,7 @@ export function BatchAssessmentModal({
     if (rows.length === 0) return;
     onSave(rows);
     onClose();
-  }, [pendingEmployees, scores, notes, activeDims, empRequirement, leader, hrbp, assessDate, onSave, onClose]);
+  }, [pendingEmployees, scores, notes, activeDims, empRequirement, assessorRole, assessorName, operator, scope, assessDate, onSave, onClose]);
 
   const ratedCount = useMemo(() => {
     let n = 0;
@@ -368,9 +420,17 @@ export function BatchAssessmentModal({
       </div>
       <button
         onClick={handleSave}
-        disabled={!hrbp.trim() || pendingEmployees.length === 0}
+        disabled={!operator.trim() || !assessorName.trim() || pendingEmployees.length === 0}
         className="px-5 py-2 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-indigo-500 to-violet-500 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-        title={!hrbp.trim() ? '请填写牵头 HRBP' : pendingEmployees.length === 0 ? '请至少评一个分数格' : '保存本批已评分数'}
+        title={
+          !operator.trim()
+            ? '请填写牵头 HRBP（批次经办人）'
+            : !assessorName.trim()
+              ? `请填写${assessorRole === 'hrbp' ? '校准 HRBP' : '上级评分人'}姓名`
+              : pendingEmployees.length === 0
+                ? '请至少评一个分数格'
+                : `保存本批 ${assessorRole === 'hrbp' ? 'HRBP 校准分' : '上级原始分'}（${SCOPE_LABEL[scope]}）`
+        }
       >
         保存批次
       </button>
@@ -416,20 +476,20 @@ export function BatchAssessmentModal({
             <span className="text-xs text-slate-500">牵头 HRBP</span>
             <input
               type="text"
-              value={hrbp}
-              onChange={(e) => setHrbp(e.target.value)}
-              placeholder="必填"
-              className="w-32 px-2 py-1 rounded-lg border border-slate-200 text-sm focus-ring"
+              value={operator}
+              onChange={(e) => setOperator(e.target.value)}
+              placeholder="批次经办人（必填）"
+              className="w-40 px-2 py-1 rounded-lg border border-slate-200 text-sm focus-ring"
             />
           </label>
           <label className="flex items-center gap-2">
-            <span className="text-xs text-slate-500">评分 Leader</span>
+            <span className="text-xs text-slate-500">{assessorRole === 'hrbp' ? '校准 HRBP' : '上级评分人'}</span>
             <input
               type="text"
-              value={leader}
-              onChange={(e) => setLeader(e.target.value)}
-              placeholder="可选"
-              className="w-32 px-2 py-1 rounded-lg border border-slate-200 text-sm focus-ring"
+              value={assessorName}
+              onChange={(e) => setAssessorName(e.target.value)}
+              placeholder="实际评分人（必填）"
+              className="w-40 px-2 py-1 rounded-lg border border-slate-200 text-sm focus-ring"
             />
           </label>
           <label className="flex items-center gap-2">
@@ -441,6 +501,48 @@ export function BatchAssessmentModal({
               className="px-2 py-1 rounded-lg border border-slate-200 text-sm focus-ring"
             />
           </label>
+        </div>
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500">评分角色</span>
+            <div className="flex gap-1.5">
+              {(['supervisor', 'hrbp'] as const).map((r) => (
+                <button
+                  key={r}
+                  onClick={() => setAssessorRole(r)}
+                  aria-pressed={assessorRole === r}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                    assessorRole === r
+                      ? 'bg-violet-500 text-white border-violet-500'
+                      : 'bg-white text-slate-600 border-slate-200 hover:border-violet-300'
+                  }`}
+                  title={r === 'hrbp' ? '校准分并列对照，不参与原始能力灯号与完整度' : '上级原始分，决定能力灯号'}
+                >
+                  {ROLE_LABEL[r]}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500">适用范围</span>
+            <div className="flex gap-1.5">
+              {(['position', 'general'] as const).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => { setScope(s); setSelectedRows(new Set()); }}
+                  aria-pressed={scope === s}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                    scope === s
+                      ? 'bg-indigo-500 text-white border-indigo-500'
+                      : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'
+                  }`}
+                  title={s === 'position' ? '绑定当前人岗关系：换岗后不自动成为新岗位结论' : '明确不限岗位，可作为缺当前岗位评价时的来源'}
+                >
+                  {SCOPE_LABEL[s]}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-4">
           <label className="flex items-center gap-2">
@@ -480,6 +582,7 @@ export function BatchAssessmentModal({
           </label>
           <span className="text-[11px] text-slate-500 ml-auto">
             本次将评估 {scopeEmployees.length} 名{assessType === 'leadership' ? '管理者' : '员工'}
+            {scope === 'position' && unplacedInScope > 0 ? `（已套岗范围；另有 ${unplacedInScope} 人未套岗，不在岗位评价内）` : ''}
           </span>
         </div>
       </div>
@@ -692,7 +795,11 @@ export function BatchAssessmentModal({
         </table>
       </div>
       <p className="mt-2 text-[10px] text-slate-500 leading-snug">
-        保存后保留本次评分、当时的要求分、评分人和日期，供后续复核；
+        保存后保留本次评分、当时的要求分、评分角色、实际评分人和日期，供后续复核；
+        {scope === 'position'
+          ? '当前为「岗位评价」：绑定各人当前任职，换岗或离岗后旧分只作历史，不会自动成为新岗位结论。'
+          : '当前为「通用评价」：明确不限岗位，仅在缺当前岗位评价时作为来源并在详情标明。'}
+        同日对同一人同一维度再次录入会保留旧分并记为修订。
         本工具只呈现依据，不自动定级 / 晋升 / 淘汰。
       </p>
     </AppModal>

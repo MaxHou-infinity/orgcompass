@@ -213,6 +213,14 @@ export type AssessorRole = 'supervisor' | 'hrbp' | 'self' | 'peer' | 'subordinat
 /** 固定评分刻度（1-5 行为锚点，不可配） */
 export const COMPETENCY_SCALE = { min: 1, max: 5 } as const;
 
+/**
+ * v2.3 M2：评价适用范围。
+ * - `position` 岗位评价：绑定具体人岗关系（`relationId`），只在同一段任职内适用；
+ * - `general` 通用评价：明确无岗位限制，可在缺当前岗位评价时作为来源（详情须标明）。
+ * 旧记录缺省由 `positionId` 有无推断；新录入必须显式给出，不靠空字段猜用途。
+ */
+export type AssessmentScope = 'position' | 'general';
+
 /** 胜任度评估记录（一条 = 被评人 × 维度 × 评分人 × 时间；原始事实，落库） */
 export interface Assessment {
   id: string;                  // uid('asm')
@@ -223,10 +231,20 @@ export interface Assessment {
   scale: typeof COMPETENCY_SCALE; // 固定 {min:1,max:5}（快照落库，AI 归一化用）
   requirement: number;         // 要求分（缺省 3；评估时快照落库，冻结时点标准）
   assessorRole: AssessorRole;  // supervisor 原始分 / hrbp 校准
-  assessorId?: string;         // FK → Employee.id（评分人，可追溯）
+  assessorId?: string;         // 评分人名称或 FK（本地无账号体系，明确为录入身份）
   assessedAt: string;          // 评分时间（ISO，时态）
   source: 'manual' | 'import';
   note?: string;               // 评分依据/行为锚点引用（可追溯，可选）
+  /** v2.3 M2：评价适用范围；旧记录缺省按 positionId 推断，sanitize 不回填伪造。 */
+  scope?: AssessmentScope;
+  /** v2.3 M2：岗位评价绑定的人岗任职关系 id（同一段任职才算当前适用）。 */
+  relationId?: string;
+  /** v2.3 M2：同日纠错显式引用被修订记录；旧记录保留，修订链终点才是有效记录。 */
+  revisionOf?: string;
+  /** v2.3 M2：修订/冲突处理的依据说明（可追溯，可选）。 */
+  revisionNote?: string;
+  /** v2.3 M2：批次经办人（如牵头 HRBP）。与实际评分人分开，避免把经办人冒充上级评分人。 */
+  enteredBy?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -243,11 +261,27 @@ export interface PositionAssignment {
   employeeId: string;          // FK → Employee.id（真人，非虚拟副本）
   positionId: string;          // FK → Position.id
   type: AssignmentType;        // primary 主岗 / secondary 兼岗
-  startDate: string;           // 到岗日期（ISO date；前向写入时默认「操作当日」，可编辑）
+  startDate?: string;          // 本次调整生效时点；旧快照不知道到岗时间时留空
   endDate?: string;            // 离岗日期（可空 = 至今）
   status: AssignmentStatus;    // active 当前有效 / ended 已结束 / not_competent 已确认不胜任
-  confirmedBy?: string;        // 人工确认人（FK → Employee，not_competent 落点）
+  confirmedBy?: string;        // 人工确认人名称（本地无账号体系，明确为录入身份）
   confirmedAt?: string;        // 确认时间
   createdAt: string;
   updatedAt: string;
+  /** v2.3：操作事实与旧快照分开；旧快照不能用于推断先后入岗顺序。 */
+  source?: 'operation' | 'legacy';
+  /** 确认记录关联的一次连续任职；确认不代替 active/ended 任职记录。 */
+  relationId?: string;
+  /** 撤销确认保留原记录（完整复核事件在 M2 实施）。 */
+  revokedAt?: string;
+  /** v2.3 M2：确认依据说明（复核留痕；未知保持未知，不编造）。 */
+  reviewNote?: string;
+  /** v2.3 M2：确认所引用的评分记录 id（复核依据可追溯）。 */
+  reviewAssessmentIds?: string[];
+  /** v2.3 M2：撤销人名称（本地无账号体系，明确为录入身份）。 */
+  revokedBy?: string;
+  /** v2.3 M2：撤销原因（撤销事件必须留痕）。 */
+  revokeReason?: string;
+  positionName?: string;
+  departmentName?: string;
 }

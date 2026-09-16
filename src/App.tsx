@@ -1,6 +1,7 @@
 import { exportCanvas } from './utils/exportCanvas';
 import { useRef, useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
+import { AppModal } from './components/AppModal';
 import { Sidebar } from './components/Sidebar';
 import { OrgChart } from './components/OrgChart';
 import { TopBar } from './components/TopBar';
@@ -18,6 +19,7 @@ import { CompetencyDrawer } from './components/CompetencyDrawer';
 import { BatchAssessmentModal, NewAssessment } from './components/BatchAssessmentModal';
 import { CompetencyDetailModal } from './components/CompetencyDetailModal';
 import { CompetencyModelModal } from './components/CompetencyModelModal';
+import { GapListModal } from './components/GapListModal';
 import { computeUnassignedEmployees } from './utils/analytics';
 import { SearchHighlight } from './components/SearchContext';
 import { Employee, Department, OrgTemplate, Position, Assessment, COMPETENCY_SCALE } from './types';
@@ -25,13 +27,15 @@ import { expandDepartments, SearchMatch } from './utils/search';
 import { computePositionSummary } from './utils/analytics';
 import { computeMatchStates } from './utils/match';
 import { flattenAllPositions } from './components/positionUtils';
-import { uid } from './utils/project';
+import { uid, decodeStoredProject, PROJECT_STORAGE_KEY } from './utils/project';
+import { assignPrimary, indexPlacements, inspectPlacements, seedLegacyAssignments } from './utils/placement';
 import { moveEmployeesBetween } from './utils/departments';
 import { findIndustryTemplate, loadIndustryTemplate } from './utils/industryTemplates';
 import {
   parseEmployeeExcel,
   parseOrgTemplateExcel,
   parseAssessmentExcel,
+  resolveAssessmentEmployees,
   buildDepartmentTree,
   exportToExcel,
   generateSampleEmployeeTemplate,
@@ -43,9 +47,18 @@ import {
   buildLeadershipDossier,
   listAssessmentHistory,
   benchmarkFor,
+  revisionChainIssue,
+  currentRevisionEndpoint,
   CompetencySummary,
+  CompetencyScopeContext,
 } from './utils/competency';
-import { confirmedNotCompetentSet } from './utils/assignment';
+import { confirmedNotCompetentSet, listReviewEvents } from './utils/assignment';
+import {
+  buildGapListExcelBytes,
+  buildGapListRows,
+  summarizeGapList,
+} from './utils/gapList';
+import { BOARD_FILTER_LABEL, type BoardDerivation } from './utils/boardScope';
 import { saveTextFile, saveFile } from './utils/tauri';
 import { useOrgWorkspace } from './utils/useOrgWorkspace';
 
@@ -129,7 +142,6 @@ export default function App() {
     positionAssignments,
     setAssessments,
     setCompetencyModel,
-    setPositionAssignments,
     undo,
     redo,
     canUndo,
@@ -145,11 +157,18 @@ export default function App() {
     resetWorkspace,
     project,
     currentScenario,
+    importWorkspace,
+    loadIssue,
     saveState,
     lastSavedAt,
     flushCurrent,
   } = ws;
 
+  const [pendingImport, setPendingImport] = useState<{
+    name: string; departments: Department[]; employees: Employee[]; templates?: OrgTemplate[]; scenarioId: string;
+  } | null>(null);
+  const [pendingAction, setPendingAction] = useState<{ title: string; description: string; apply: () => void; scenarioId: string } | null>(null);
+  const [issuesOpen, setIssuesOpen] = useState(false);
   const [levelManagerOpen, setLevelManagerOpen] = useState(false);
   const [healthOpen, setHealthOpen] = useState(false);
   const [healthFocusDeptId, setHealthFocusDeptId] = useState<string | undefined>();
@@ -172,6 +191,8 @@ export default function App() {
   const [batchOpen, setBatchOpen] = useState(false);
   const [detailEmpId, setDetailEmpId] = useState<string | null>(null);
   const [modelOpen, setModelOpen] = useState(false);
+  /** v2.3 M4：岗位缺口清单（当前场景直读） */
+  const [gapListOpen, setGapListOpen] = useState(false);
   // v2.0.3 修复：保存"当前组织架构模板"，员工上传时用它重建以保留模板负责人/层级结构
   const [orgTemplates, setOrgTemplates] = useState<OrgTemplate[]>([]);
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -181,6 +202,8 @@ export default function App() {
   useEffect(() => { allEmployeesRef.current = allEmployeesFlat; }, [allEmployeesFlat]);
   const orgTemplatesRef = useRef(orgTemplates);
   useEffect(() => { orgTemplatesRef.current = orgTemplates; }, [orgTemplates]);
+  const currentSceneRef = useRef(project.currentScenarioId);
+  currentSceneRef.current = project.currentScenarioId;
 
   // 首次进入引导：localStorage 标记，默认未看过则展示（v2.0.3 P2-6）
   useEffect(() => {
@@ -248,37 +271,44 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKey);
   }, [undo, redo]);
 
+  const stageImport = useCallback((name: string, tree: Department[], employees: Employee[], templates?: OrgTemplate[]) => {
+    if (currentSceneRef.current !== project.currentScenarioId) { showToast('读取期间场景已变化，请重新导入'); return; }
+    if (!employees.length && !tree.length) { showToast('文件无有效数据，当前场景未改变'); return; }
+    const apply = () => {
+      if (!importWorkspace(name, tree, employees)) { showToast('保存失败，导入未应用'); return; }
+      setOrgTemplates(templates ?? []);
+      showToast(`已导入「${name}」，原场景已保留`);
+    };
+    if (departments.length || allEmployeesFlat.length || assessments.length || positionAssignments.length) {
+      setPendingImport({ name, departments: tree, employees, templates, scenarioId: project.currentScenarioId });
+    } else apply();
+  }, [departments.length, allEmployeesFlat.length, assessments.length, positionAssignments.length, importWorkspace, project.currentScenarioId, showToast]);
+
   /** —— 文件操作 —— */
   const handleEmployeeFileUpload = useCallback(async (file: File) => {
     try {
       const parsedEmployees = await parseEmployeeExcel(file);
       // 用已保存的组织模板（若有）重建，保留模板的部门层级与负责人结构
       const tree = buildDepartmentTree(parsedEmployees, orgTemplatesRef.current);
-      setBoth((prev) => ({ ...prev, departments: tree, allEmployeesFlat: parsedEmployees }));
-      if (parsedEmployees.length > 0) {
-        showToast(`已导入 ${parsedEmployees.length} 名员工`);
-      } else {
-        showToast('员工文件无有效数据，请检查格式');
-      }
+      stageImport(file.name, tree, parsedEmployees, orgTemplatesRef.current);
     } catch (error) {
       console.error('解析员工文件失败:', error);
       showToast(getImportErrorMessage(error));
     }
-  }, [setBoth, showToast]);
+  }, [stageImport, showToast]);
 
   const handleOrgTemplateUpload = useCallback(async (file: File) => {
     try {
       const templates = await parseOrgTemplateExcel(file);
       // 保存模板，供后续员工上传时重建结构
-      setOrgTemplates(templates);
-      const tree = buildDepartmentTree(allEmployeesRef.current, templates);
-      setDepartments(() => tree);
-      showToast(`已导入组织架构（${templates.length} 个部门）`);
+      const employees = allEmployeesRef.current.map((e) => ({ ...e, positionId: undefined }));
+      const tree = buildDepartmentTree(employees, templates);
+      stageImport(file.name, tree, employees, templates);
     } catch (error) {
       console.error('解析组织架构文件失败:', error);
       showToast(getImportErrorMessage(error));
     }
-  }, [setDepartments, setOrgTemplates, showToast]);
+  }, [stageImport, showToast]);
 
   /** —— 部门/员工操作（历史感知） —— */
   const handleToggleExpand = useCallback((id: string) => {
@@ -326,39 +356,24 @@ export default function App() {
     });
   }, [setDepartments]);
 
-  const handleMoveEmployee = useCallback((empId: string, fromDeptId: string, toDeptId: string) => {
-    setDepartments((prev) => {
-      let movedEmployee: Employee | null = null;
-      const removeEmployee = (depts: Department[]): Department[] => {
-        return depts.map((dept) => {
-          if (dept.id === fromDeptId) {
-            const emp = dept.employees.find((e) => e.id === empId);
-            if (emp) movedEmployee = emp;
-            return { ...dept, employees: dept.employees.filter((e) => e.id !== empId) };
-          }
-          if (dept.children.length > 0) return { ...dept, children: removeEmployee(dept.children) };
-          return dept;
-        });
-      };
-      let newDepts = removeEmployee(prev);
-      if (movedEmployee) {
-        const addEmployee = (depts: Department[]): Department[] => {
-          return depts.map((dept) => {
-            if (dept.id === toDeptId) return { ...dept, employees: [...dept.employees, movedEmployee!] };
-            if (dept.children.length > 0) return { ...dept, children: addEmployee(dept.children) };
-            return dept;
-          });
-        };
-        newDepts = addEmployee(newDepts);
-      }
-      return newDepts;
-    });
-  }, [setDepartments]);
-
-  /** 批量移动员工：从各自所在部门移除，一次性加入目标部门（历史感知，与单移动口径一致） */
+  const requestMoveEmployees = useCallback((empIds: string[], toDeptId: string) => {
+    const index = indexPlacements(departments);
+    if (!index.departments.has(toDeptId)) return;
+    const impacted = allEmployeesFlat.filter((e) => empIds.includes(e.id) && e.positionId
+      && index.positions.get(e.positionId)?.departmentId !== toDeptId);
+    const apply = () => setDepartments((prev) => moveEmployeesBetween(prev, empIds, toDeptId));
+    if (impacted.length) {
+      setPendingAction({ title: '确认调整人员部门',
+        description: `${impacted.map((e) => e.name).join('、')} 将移入「${index.departments.get(toDeptId)!.name}」，并结束原岗位关系。评分与任职历史保留，可撤销本次调整。`,
+        apply, scenarioId: project.currentScenarioId });
+    } else apply();
+  }, [departments, allEmployeesFlat, setDepartments, project.currentScenarioId]);
+  const handleMoveEmployee = useCallback((empId: string, _fromDeptId: string, toDeptId: string) => {
+    requestMoveEmployees([empId], toDeptId);
+  }, [requestMoveEmployees]);
   const handleMoveMultiple = useCallback((empIds: string[], toDeptId: string) => {
-    setDepartments((prev) => moveEmployeesBetween(prev, empIds, toDeptId));
-  }, [setDepartments]);
+    requestMoveEmployees(empIds, toDeptId);
+  }, [requestMoveEmployees]);
 
   /** 未入架构员工（v2.0.5）：全量员工 vs 树内已挂载员工的差值 */
   const unassignedEmployees = useMemo(
@@ -375,21 +390,69 @@ export default function App() {
   // —— v2.2.0 胜任度：派生纯函数（运行时算、不落库） ——
   // 已人工确认不胜任集合（PositionAssignment.status==='not_competent'）→ computeMatchStates 第三参
   const confirmedNotCompetent = useMemo(
-    () => confirmedNotCompetentSet(positionAssignments),
-    [positionAssignments],
+    () => confirmedNotCompetentSet(positionAssignments, allEmployeesFlat),
+    [positionAssignments, allEmployeesFlat],
   );
   const matchStates = useMemo(
-    () => computeMatchStates(allEmployeesFlat, allPositions, confirmedNotCompetent),
-    [allEmployeesFlat, allPositions, confirmedNotCompetent],
+    () => computeMatchStates(allEmployeesFlat, allPositions, confirmedNotCompetent, positionAssignments, departments),
+    [allEmployeesFlat, allPositions, confirmedNotCompetent, positionAssignments, departments],
   );
-  // 全量员工 → CompetencySummary（每个员工一条；未评估 = overall:null 灰态占位）
+  const placementIssues = useMemo(() => inspectPlacements(allEmployeesFlat, departments, positionAssignments, assessments), [allEmployeesFlat, departments, positionAssignments, assessments]);
+  const unresolvedOverflow = useMemo(() => [...new Map(matchStates.filter((m) => m.overflowUnresolved)
+    .map((m) => [m.positionId, `${allPositions.find((p) => p.id === m.positionId)?.name ?? m.positionId}：岗位超额 ${m.positionOverflow} 人，缺可信入岗顺序，具体人员需判断`])).values()], [matchStates, allPositions]);
+  // 全量员工 → CompetencySummary（每个员工一条；未评/不可算也有完整度占位，不伪装绿/红）
+  // v2.3 M2：按「当前分类应评维度 + 人岗适用范围（relationId/岗位核对）」取数
+  const managerIds = useMemo(() => {
+    const out = new Set<string>();
+    const idsByEmployeeId = new Map<string, string[]>();
+    for (const e of allEmployeesFlat) {
+      if (e.isVirtual || !e.employeeId) continue;
+      idsByEmployeeId.set(e.employeeId, [...(idsByEmployeeId.get(e.employeeId) ?? []), e.id]);
+    }
+    const resolve = (v: string) => idsByEmployeeId.get(v) ?? [v];
+    const walk = (list: Department[]) => {
+      for (const d of list) {
+        if (d.leaderId) for (const id of resolve(d.leaderId)) out.add(id);
+        walk(d.children);
+      }
+    };
+    walk(departments);
+    for (const e of allEmployeesFlat) {
+      if (e.isVirtual || !e.reportsToEmployeeId) continue;
+      for (const id of resolve(e.reportsToEmployeeId)) if (id !== e.id) out.add(id);
+    }
+    return out;
+  }, [allEmployeesFlat, departments]);
+
+  const activePrimaryByEmployee = useMemo(() => {
+    const m = new Map<string, import('./types').PositionAssignment>();
+    for (const a of positionAssignments) {
+      if (a.type !== 'primary' || a.status !== 'active' || a.endDate) continue;
+      if (!m.has(a.employeeId)) m.set(a.employeeId, a);
+    }
+    return m;
+  }, [positionAssignments]);
+
+  const competencyContextFor = useCallback(
+    (e: Employee): CompetencyScopeContext => {
+      const relation = activePrimaryByEmployee.get(e.id);
+      return {
+        expectedGroup: managerIds.has(e.id) ? 'leadership' : 'staff',
+        ...(relation ? { currentRelationId: relation.id } : {}),
+        ...(e.positionId ? { currentPositionId: e.positionId } : {}),
+        assignments: positionAssignments,
+      };
+    },
+    [activePrimaryByEmployee, managerIds, positionAssignments],
+  );
+
   const competencySummaries = useMemo(() => {
     const m = new Map<string, CompetencySummary>();
-    for (const c of computeCompetencyStates(assessments, allEmployeesFlat, competencyModel)) {
+    for (const c of computeCompetencyStates(assessments, allEmployeesFlat, competencyModel, competencyContextFor)) {
       m.set(c.employeeId, c);
     }
     return m;
-  }, [assessments, allEmployeesFlat, competencyModel]);
+  }, [assessments, allEmployeesFlat, competencyModel, competencyContextFor]);
 
   // 详情弹窗数据（按 detailEmpId 查 summary/dossier/history/position）
   const detailEmployee = useMemo(
@@ -406,14 +469,24 @@ export default function App() {
   );
   const detailDossier = useMemo(
     () =>
-      detailEmpId
-        ? buildLeadershipDossier(assessments, detailEmpId, competencyModel, detailEmployee?.targetLevel)
+      detailEmpId && detailEmployee
+        ? buildLeadershipDossier(assessments, detailEmpId, competencyModel, detailEmployee.targetLevel, competencyContextFor(detailEmployee))
         : null,
-    [detailEmpId, assessments, competencyModel, detailEmployee],
+    [detailEmpId, assessments, competencyModel, detailEmployee, competencyContextFor],
   );
   const detailHistory = useMemo(
     () => (detailEmpId ? listAssessmentHistory(assessments, detailEmpId, competencyModel) : []),
     [detailEmpId, assessments, competencyModel],
+  );
+  /** v2.3 M2：该员工的全部人工复核事件（含已撤销与历史确认） */
+  const detailReviews = useMemo(
+    () => (detailEmpId ? listReviewEvents(positionAssignments, assessments, detailEmpId) : []),
+    [detailEmpId, positionAssignments, assessments],
+  );
+  /** v2.3 M2：该员工的任职记录（详情弹窗按 relationId 关联复核） */
+  const detailAssignments = useMemo(
+    () => (detailEmpId ? positionAssignments.filter((a) => a.employeeId === detailEmpId) : []),
+    [detailEmpId, positionAssignments],
   );
   const detailMatch = useMemo(
     () => matchStates.find((r) => r.employeeId === detailEmpId),
@@ -525,20 +598,10 @@ export default function App() {
   );
 
   /** 员工套岗到指定岗位（主岗）。同步更新 allEmployeesFlat 与所有部门员工列表（跨部门一致）。 */
-  const handleAssignEmployeeToPosition = useCallback(
-    (empId: string, positionId: string) => {
-      const emp = allEmployeesRef.current.find((e) => e.id === empId);
-      if (!emp || !positionId) return;
-      const patch = (e: Employee) => (e.id === empId ? { ...e, positionId, assignmentType: 'primary' as const } : e);
-      setBoth((prev) => ({
-        ...prev,
-        departments: mapEmployeesInDepts(prev.departments, empId, patch),
-        allEmployeesFlat: prev.allEmployeesFlat.map(patch),
-      }));
-      showToast(`已为 ${emp.name} 套岗`);
-    },
-    [setBoth, showToast],
-  );
+  const handleAssignEmployeeToPosition = useCallback((empId: string, positionId: string) => {
+    setBoth((prev) => assignPrimary(prev, empId, positionId));
+    showToast('已更新主岗与所属部门，本次调整即刻生效');
+  }, [setBoth, showToast]);
 
   /** 取消员工套岗（清空 positionId）。 */
   const handleRemoveAssignment = useCallback(
@@ -558,10 +621,10 @@ export default function App() {
   const handleCreateVirtualForPosition = useCallback(
     (deptId: string, positionId: string, empId: string) => {
       const source = allEmployeesRef.current.find((e) => e.id === empId && !e.isVirtual);
-      if (!source) return;
+      if (!source || allEmployeesRef.current.some((e) => e.isVirtual && e.primaryEmployeeId === empId && e.positionId === positionId)) return;
       const virtual: Employee = {
         ...source,
-        id: `virtual-${Date.now()}`,
+        id: uid('virtual'),
         isVirtual: true,
         positionId,
         assignmentType: 'secondary',
@@ -582,31 +645,24 @@ export default function App() {
   );
 
   /** 抽屉/套岗：把员工排入「某部门 + 某岗位」（移动式：先从旧部门移出，再挂入目标部门并套岗）。 */
-  const handlePlaceEmployeeToPosition = useCallback(
-    (empId: string, deptId: string, positionId: string) => {
-      const emp = allEmployeesRef.current.find((e) => e.id === empId);
-      if (!emp || !positionId) return;
-      setBoth((prev) => {
-        const assign = (e: Employee) => ({ ...e, positionId, assignmentType: 'primary' as const });
-        const remove = (list: Department[]): Department[] =>
-          list.map((d) => ({ ...d, employees: d.employees.filter((e) => e.id !== empId), children: remove(d.children) }));
-        const removed = remove(prev.departments);
-        const add = (list: Department[]): Department[] =>
-          list.map((d) => {
-            if (d.id === deptId) return { ...d, employees: [...d.employees, assign({ ...emp })] };
-            if (d.children.length > 0) return { ...d, children: add(d.children) };
-            return d;
-          });
-        return {
-          ...prev,
-          departments: add(removed),
-          allEmployeesFlat: prev.allEmployeesFlat.map((e) => (e.id === empId ? assign(e) : e)),
-        };
-      });
-      showToast(`已为 ${emp.name} 排入岗位`);
-    },
-    [setBoth, showToast],
-  );
+  const handlePlaceEmployeeToPosition = useCallback((empId: string, _deptId: string, positionId: string) => {
+    handleAssignEmployeeToPosition(empId, positionId);
+  }, [handleAssignEmployeeToPosition]);
+
+  const handleArchivePosition = useCallback((deptId: string, positionId: string) => {
+    const p = indexPlacements(departments).positions.get(positionId);
+    if (!p) return;
+    const affected = allEmployeesFlat.filter((e) => e.positionId === positionId);
+    setPendingAction({ title: '确认归档岗位', scenarioId: project.currentScenarioId,
+      description: `归档「${p.name}」将结束 ${affected.length} 条当前主岗/兼岗关系${affected.length ? `（${affected.map((e) => e.name).join('、')}）` : ''}。人员保留在名册，评分与任职历史保留，可撤销。`,
+      apply: () => setDepartments((prev) => {
+        const walk = (list: Department[]): Department[] => list.map((d) => ({ ...d,
+          positions: d.id === deptId ? d.positions?.map((x) => x.id === positionId ? { ...x, status: 'archived' as const, updatedAt: new Date().toISOString() } : x) : d.positions,
+          children: walk(d.children) }));
+        return walk(prev);
+      }),
+    });
+  }, [departments, allEmployeesFlat, project.currentScenarioId, setDepartments]);
 
   /** 手动刷新画布：按当前 员工 + 组织模板 重新生成部门树（修复导入后画布不刷新） */
   const handleRefreshCanvas = useCallback(() => {
@@ -647,11 +703,9 @@ export default function App() {
       const tpl = findIndustryTemplate(id);
       if (!tpl) return;
       const built = loadIndustryTemplate(tpl);
-      setOrgTemplates(tpl.orgTemplates);
-      setBoth((prev) => ({ ...prev, departments: built.departments, allEmployeesFlat: built.allEmployeesFlat }));
-      showToast(`已载入「${tpl.name}」模板`);
+      stageImport(tpl.name, built.departments, built.allEmployeesFlat, tpl.orgTemplates);
     },
-    [setBoth, showToast],
+    [stageImport],
   );
 
   const handleDeleteEmployee = useCallback((deptId: string, empId: string) => {
@@ -729,7 +783,7 @@ export default function App() {
   const handleCreateVirtualFromEmployee = useCallback((deptId: string, empId: string) => {
     const source = allEmployeesFlat.find((e) => e.id === empId && !e.isVirtual);
     if (!source) return;
-    const virtual: Employee = { ...source, id: `virtual-${Date.now()}`, isVirtual: true };
+    const virtual: Employee = { ...source, id: uid('virtual'), isVirtual: true, primaryEmployeeId: source.id, positionId: undefined, assignmentType: 'secondary' };
     setBoth((prev) => {
       const add = (depts: Department[]): Department[] => {
         return depts.map((dept) => {
@@ -894,9 +948,8 @@ export default function App() {
       dept5: e.dept5,
       dept6: e.dept6,
     }));
-    setBoth((prev) => ({ ...prev, departments: buildDepartmentTree(employees, TEST_ORG), allEmployeesFlat: employees }));
-    showToast('已加载示例数据');
-  }, [setBoth, showToast]);
+    stageImport('示例数据', buildDepartmentTree(employees, TEST_ORG), employees, TEST_ORG);
+  }, [stageImport]);
 
   // 数据备份（导出 .orgproj）
   const handleExportProject = useCallback(async () => {
@@ -912,9 +965,10 @@ export default function App() {
 
   // 导入 .orgproj
   const handleImportProject = useCallback((json: string) => {
-    const ok = importProjectJson(json);
-    if (ok) showToast('已导入项目文件');
-    else showToast('导入失败：文件格式无效');
+    try {
+      const ok = importProjectJson(json);
+      showToast(ok ? '已导入项目文件' : '导入失败：文件格式无效或保存失败');
+    } catch (error) { showToast(error instanceof Error ? error.message : '项目读取失败'); }
   }, [importProjectJson, showToast]);
 
   const handleOpenReport = useCallback(() => {
@@ -948,32 +1002,76 @@ export default function App() {
     [departments, setDepartments, showToast],
   );
 
-  /** 批量评估保存：追加写入 Assessment 长表（append-only；latest-wins 由派生层按 assessedAt 处理）。 */
+  /** 批量评估保存（v2.3 M2）：
+   *  - 显式适用范围：岗位评价绑定当前在职关系 relationId，通用评价不带岗位；
+   *  - 同日再次录入 → 保留旧分并写入 revisionOf 修订链（F03：不再「先写入者获胜」）；
+   *  - 无效修订链（跨人/跨维度/跨角色/跨时点/循环/分叉）整条拒绝，原数据不变（A18）。 */
   const handleSaveAssessments = useCallback(
     (rows: NewAssessment[]) => {
       const now = new Date().toISOString();
-      setAssessments((prev) => [
-        ...prev,
-        ...rows.map((r) => ({
-          id: uid('asm'),
+      const created: Assessment[] = [];
+      const issues: string[] = [];
+      let revisions = 0;
+      let unchanged = 0;
+      let invalid = 0;
+      for (const r of rows) {
+        const relation = activePrimaryByEmployee.get(r.employeeId);
+        const relationId =
+          r.scope === 'position' && relation && r.positionId && relation.positionId === r.positionId
+            ? relation.id
+            : undefined;
+        const candidate = {
           employeeId: r.employeeId,
           positionId: r.positionId,
+          scope: r.scope,
+          relationId,
+          dimension: r.dimension,
+          assessorRole: r.assessorRole,
+          assessedAt: r.assessedAt,
+        };
+        const pool = [...assessments, ...created];
+        const endpoint = currentRevisionEndpoint(pool, candidate);
+        if (endpoint && endpoint.score === r.score && endpoint.requirement === r.requirement) {
+          unchanged += 1; // 同一时点同一内容 → 不重复写入（原记录保留）
+          continue;
+        }
+        const record: Assessment = {
+          id: uid('asm'),
+          employeeId: r.employeeId,
+          ...(r.positionId ? { positionId: r.positionId } : {}),
+          scope: r.scope,
+          ...(relationId ? { relationId } : {}),
           dimension: r.dimension,
           score: r.score,
           scale: COMPETENCY_SCALE,
           requirement: r.requirement,
           assessorRole: r.assessorRole,
-          assessorId: r.assessorId,
+          ...(r.assessorId ? { assessorId: r.assessorId } : {}),
+          ...(r.enteredBy ? { enteredBy: r.enteredBy } : {}),
           assessedAt: r.assessedAt,
           source: r.source,
-          note: r.note,
+          ...(r.note ? { note: r.note } : {}),
+          ...(endpoint ? { revisionOf: endpoint.id, revisionNote: '同日修改评分，显式关联被修订记录' } : {}),
           createdAt: now,
           updatedAt: now,
-        })),
-      ]);
-      showToast(`已保存 ${rows.length} 条评估（评分人/时间已留痕）`);
+        };
+        const issue = revisionChainIssue(pool, record);
+        if (issue) {
+          invalid += 1;
+          issues.push(`${r.dimension}：${issue}`);
+          continue;
+        }
+        if (endpoint) revisions += 1;
+        created.push(record);
+      }
+      if (created.length > 0) setAssessments((prev) => [...prev, ...created]);
+      const parts = [`已保存 ${created.length} 条评分`];
+      if (revisions > 0) parts.push(`其中 ${revisions} 条为同日修订（旧分保留）`);
+      if (unchanged > 0) parts.push(`${unchanged} 条与当前有效记录一致，未重复写入`);
+      if (invalid > 0) parts.push(`${invalid} 条被拒绝：${issues.slice(0, 3).join('；')}`);
+      showToast(parts.join('；'));
     },
-    [setAssessments, showToast],
+    [assessments, activePrimaryByEmployee, setAssessments, showToast],
   );
 
   /** Excel 评分导入：parseAssessmentExcel(file, model) 解析 → 解析员工标识 → 快照 requirement → 写入。
@@ -982,87 +1080,154 @@ export default function App() {
     async (file: File) => {
       try {
         const rows = await parseAssessmentExcel(file, competencyModel);
+        if (currentSceneRef.current !== project.currentScenarioId) { showToast('读取期间场景已变化，请重新导入'); return; }
         if (rows.length === 0) {
           showToast('评分文件无有效数据，请检查格式');
           return;
         }
-        // 员工标识 → Employee.id：工号优先，回退姓名（与 EmployeeImportRow 解析口径一致）
-        const byKey = new Map<string, Employee>();
-        for (const e of allEmployeesFlat) {
-          if (e.isVirtual) continue;
-          if (!byKey.has(e.employeeId)) byKey.set(e.employeeId, e);
-          if (!byKey.has(e.name)) byKey.set(e.name, e);
-        }
-        const unknownKeys = rows.filter((r) => !byKey.has(r.employeeKey)).map((r) => r.employeeKey);
-        if (unknownKeys.length > 0) {
-          showToast(`导入失败：未知员工 ${unknownKeys.slice(0, 5).join('、')}${unknownKeys.length > 5 ? ` 等 ${unknownKeys.length} 人` : ''}（请核对工号/姓名）`);
-          return;
-        }
+        const resolved = resolveAssessmentEmployees(rows, allEmployeesFlat);
         const now = new Date().toISOString();
         const created: Assessment[] = [];
-        for (const row of rows) {
-          const emp = byKey.get(row.employeeKey)!;
+        const skipped: string[] = [];
+        for (const [index, row] of rows.entries()) {
+          const emp = resolved[index];
           const position = emp.positionId ? allPositions.find((p) => p.id === emp.positionId) : undefined;
           const assessedAt = row.assessedAt
             ? new Date(`${row.assessedAt}T12:00:00`).toISOString()
             : now;
+          const relation = activePrimaryByEmployee.get(emp.id);
+          const relationId =
+            emp.positionId && relation && relation.positionId === emp.positionId ? relation.id : undefined;
           for (const [dimKey, score] of Object.entries(row.scores)) {
+            const candidate = {
+              employeeId: emp.id,
+              positionId: emp.positionId,
+              scope: (emp.positionId ? 'position' : 'general') as Assessment['scope'],
+              relationId,
+              dimension: dimKey,
+              assessorRole: 'supervisor' as const,
+              assessedAt,
+            };
+            const pool = [...assessments, ...created];
+            const endpoint = currentRevisionEndpoint(pool, candidate);
+            // 重新导入评分不得悄悄变成覆盖动作（契约 §4.2.6）：
+            // 同一时点已存在内容不同的记录且无显式修订关系 → 报冲突，由用户决定，不自动改写。
+            if (endpoint && endpoint.score !== score) {
+              skipped.push(`${emp.name}·${dimKey}：同一评估时点已有 ${endpoint.score} 分，导入值 ${score} 分存在冲突待核对`);
+              continue;
+            }
+            if (endpoint && endpoint.score === score) continue; // 内容一致 → 折叠，不重复写入
             created.push({
               id: uid('asm'),
               employeeId: emp.id,
-              positionId: emp.positionId,
+              ...(emp.positionId ? { positionId: emp.positionId } : {}),
+              scope: emp.positionId ? 'position' : 'general',
+              ...(relationId ? { relationId } : {}),
               dimension: dimKey,
               score,
               scale: COMPETENCY_SCALE,
               requirement: benchmarkFor(emp, position),
               assessorRole: 'supervisor',
-              assessorId: row.assessorName,
+              ...(row.assessorName ? { assessorId: row.assessorName } : {}),
               assessedAt,
               source: 'import',
-              note: row.note,
+              ...(row.note ? { note: row.note } : {}),
               createdAt: now,
               updatedAt: now,
             });
           }
         }
-        setAssessments((prev) => [...prev, ...created]);
-        showToast(`已导入 ${created.length} 条评分（${rows.length} 名员工）`);
+        const conflictNote = skipped.length > 0
+          ? ` 另有 ${skipped.length} 条同时间冲突未写入，需人工核对：${skipped.slice(0, 3).join('；')}`
+          : '';
+        if (created.length === 0) {
+          showToast(`没有可写入的评分。${conflictNote}`.trim());
+          return;
+        }
+        setPendingAction({ title: '确认评分导入', scenarioId: project.currentScenarioId,
+          description: `已唯一匹配 ${new Set(resolved.map((e) => e.id)).size} 名员工，共 ${created.length} 条评分。对象：${resolved.slice(0, 8).map((e) => `${e.name}（${e.employeeId || '无工号'}）`).join('、')}。所有评分在确认后一次性写入。${conflictNote}`,
+          apply: () => { setAssessments((prev) => [...prev, ...created]); showToast(`已导入 ${created.length} 条评分${conflictNote}`); setBatchOpen(false); },
+        });
       } catch (error) {
         console.error('解析评分表失败:', error);
         showToast(getImportErrorMessage(error));
       }
     },
-    [competencyModel, allEmployeesFlat, allPositions, setAssessments, showToast],
+    [competencyModel, allEmployeesFlat, allPositions, setAssessments, showToast, project.currentScenarioId, assessments, activePrimaryByEmployee],
   );
 
-  /** HRBP 人工确认 / 撤销 not_competent（两态：候选派生 → 人工确认落库留痕；红线：系统不自动定级）。 */
-  const handleConfirmNotCompetent = useCallback(
-    (empId: string, confirmed: boolean) => {
-      const now = new Date().toISOString();
-      setPositionAssignments((prev) => {
-        if (!confirmed) {
-          return prev.filter((a) => !(a.employeeId === empId && a.status === 'not_competent'));
-        }
-        if (prev.some((a) => a.employeeId === empId && a.status === 'not_competent')) return prev;
-        const emp = allEmployeesFlat.find((e) => e.id === empId);
-        return [
-          ...prev,
-          {
-            id: uid('asg'),
-            employeeId: empId,
-            positionId: emp?.positionId ?? '',
-            type: 'primary' as const,
-            startDate: now,
-            status: 'not_competent' as const,
-            confirmedAt: now,
-            createdAt: now,
-            updatedAt: now,
+  /** v2.3 M4：导出岗位缺口清单（消费看板同一份派生结果，界面与 Excel 逐行一致） */
+  const handleExportGapList = useCallback(
+    async (board: BoardDerivation) => {
+      try {
+        const scenarioName = currentScenario?.name ?? '场景';
+        const rows = buildGapListRows(board, scenarioName);
+        const summary = summarizeGapList(rows);
+        const bytes = await buildGapListExcelBytes({
+          rows,
+          summary,
+          meta: {
+            projectName: project.name,
+            scenarioName,
+            scopeLabel: board.scopeLabel,
+            filterLabel: BOARD_FILTER_LABEL[board.filter],
+            generatedAt: new Date().toLocaleString('zh-CN', { dateStyle: 'long', timeStyle: 'short' }),
           },
-        ];
-      });
-      showToast(confirmed ? '已确认不胜任（留痕）' : '已撤销不胜任确认');
+        });
+        const ok = await saveFile(
+          `岗位缺口清单-${scenarioName}.xlsx`,
+          bytes,
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        );
+        showToast(ok ? '岗位缺口清单 Excel 已导出' : '已取消导出');
+      } catch (error) {
+        console.error('导出岗位缺口清单失败:', error);
+        showToast('导出岗位缺口清单失败');
+      }
     },
-    [setPositionAssignments, allEmployeesFlat, showToast],
+    [currentScenario, project.name, showToast],
+  );
+
+  /** HRBP 人工确认 / 撤销 not_competent（v2.3 M2 完整复核留痕）：
+   *  - 确认保存：关系 ID、员工/岗位引用、确认人、确认时间、依据说明、引用的评分记录；
+   *  - 撤销保存：对应确认 ID、撤销人、撤销时间、原因，原确认事实仍保留；
+   *  - 复核绑定具体人岗关系，不改变任职状态；系统不自动下结论。 */
+  const handleConfirmNotCompetent = useCallback(
+    (empId: string, confirmed: boolean, payload: { reviewer: string; reason?: string }) => {
+      const now = new Date().toISOString();
+      setBoth((prev) => {
+        const records = seedLegacyAssignments(prev.allEmployeesFlat, prev.departments, prev.positionAssignments, now, false);
+        const emp = prev.allEmployeesFlat.find((e) => !e.isVirtual && e.id === empId);
+        const active = records.filter((a) => a.employeeId === empId && a.positionId === emp?.positionId && a.type === 'primary' && a.status === 'active' && !a.endDate);
+        if (active.length !== 1) return prev;
+        const relation = active[0];
+        // 确认依据：当时该员工在该岗位适用范围内的有效 supervisor 评分记录
+        const basis = assessments
+          .filter((a) => a.employeeId === empId && a.assessorRole === 'supervisor'
+            && (!a.positionId || a.positionId === relation.positionId))
+          .map((a) => a.id);
+        if (!confirmed) {
+          const current = records.find((a) => a.status === 'not_competent' && a.relationId === relation.id && !a.revokedAt);
+          if (!current) return prev;
+          return { ...prev, positionAssignments: records.map((a) =>
+            a.id === current.id
+              ? { ...a, revokedAt: now, revokedBy: payload.reviewer, ...(payload.reason ? { revokeReason: payload.reason } : {}), updatedAt: now }
+              : a) };
+        }
+        if (records.some((a) => a.status === 'not_competent' && a.relationId === relation.id && !a.revokedAt)) return prev;
+        return { ...prev, positionAssignments: [...records, {
+          id: uid('asg'), employeeId: empId, positionId: relation.positionId, type: 'primary' as const,
+          status: 'not_competent' as const, relationId: relation.id, source: 'operation' as const,
+          positionName: relation.positionName, departmentName: relation.departmentName,
+          confirmedBy: payload.reviewer, confirmedAt: now,
+          ...(payload.reason ? { reviewNote: payload.reason } : {}),
+          ...(basis.length > 0 ? { reviewAssessmentIds: basis } : {}),
+          createdAt: now, updatedAt: now,
+        }] };
+      });
+      showToast(confirmed ? `已确认不胜任（复核人：${payload.reviewer}，留痕）` : `已撤销确认（撤销人：${payload.reviewer}，原确认保留）`);
+    },
+    [setBoth, showToast, assessments],
   );
 
   // —— v2.0.9 场景差异比较 ——
@@ -1170,8 +1335,48 @@ export default function App() {
     showToast('已重做');
   }, [redo, showToast]);
 
+  if (loadIssue) return <div role="alert" className="p-8 space-y-4 text-slate-800">
+    <h1 className="text-xl font-semibold">项目未载入，原自动保存已保留</h1><p>{loadIssue}</p>
+    <button className="rounded-lg bg-indigo-600 px-4 py-2 text-white" onClick={async () => {
+      const raw = localStorage.getItem(PROJECT_STORAGE_KEY);
+      if (raw) await saveTextFile('原自动保存备份.orgproj', decodeStoredProject(raw) ?? raw, 'application/json');
+    }}>导出原自动保存</button><p>请使用兼容版本打开备份；当前窗口不编辑或覆盖原数据。</p>
+  </div>;
+
   return (
     <div className="workspace-shell flex flex-col h-screen">
+      {(placementIssues.length > 0 || unresolvedOverflow.length > 0) && <button onClick={() => setIssuesOpen(true)}
+        className="shrink-0 bg-amber-50 border-b border-amber-200 px-5 py-2 text-left text-sm text-amber-900">
+        人岗核对：{placementIssues.length} 项数据问题 · {unresolvedOverflow.length} 个超额岗位待判断（查看明细）
+      </button>}
+      <AppModal open={issuesOpen} onClose={() => setIssuesOpen(false)} title="人岗核对明细">
+        <ul className="space-y-2 text-sm text-slate-700">{[...placementIssues, ...unresolvedOverflow].map((issue, i) => <li key={i}>{issue}</li>)}</ul>
+      </AppModal>
+      <AppModal open={pendingImport !== null} onClose={() => setPendingImport(null)} title="确认导入到新场景" footer={<>
+        <button className="px-3 py-2" onClick={() => setPendingImport(null)}>取消</button>
+        <button className="rounded-lg bg-indigo-600 px-3 py-2 text-white" onClick={() => {
+          if (!pendingImport || pendingImport.scenarioId !== project.currentScenarioId) { setPendingImport(null); showToast('场景已变化，请重新导入'); return; }
+          if (importWorkspace(pendingImport.name, pendingImport.departments, pendingImport.employees)) {
+            setOrgTemplates(pendingImport.templates ?? []); setPendingImport(null); showToast('已导入新场景，原场景已完整保留');
+          } else showToast('保存失败，导入未应用');
+        }}>保留原场景并导入</button>
+      </>}>
+        {pendingImport && <div className="space-y-3 text-sm text-slate-700">
+          <p>文件/模板：{pendingImport.name}</p>
+          <p>新场景：{pendingImport.employees.filter((e) => !e.isVirtual).length} 名员工，{indexPlacements(pendingImport.departments).departments.size} 个部门，{indexPlacements(pendingImport.departments).positions.size} 个岗位。</p>
+          <p>原场景「{currentScenario.name}」的 {allEmployeesFlat.filter((e) => !e.isVirtual).length} 名员工、{assessments.length} 条评分和 {positionAssignments.length} 条关系/确认记录全部保留。</p>
+          <p>新场景复用模型和职级配置；不复制原人员的评分、任职与确认。导入日期不作为到岗日期。</p>
+          {inspectPlacements(pendingImport.employees, pendingImport.departments).length > 0 && <p role="alert">新数据存在人岗关联问题，导入后需核对：{inspectPlacements(pendingImport.employees, pendingImport.departments).slice(0, 5).join('；')}</p>}
+        </div>}
+      </AppModal>
+      <AppModal open={pendingAction !== null} onClose={() => setPendingAction(null)} title={pendingAction?.title ?? '确认操作'} footer={<>
+        <button className="px-3 py-2" onClick={() => setPendingAction(null)}>取消</button>
+        <button className="rounded-lg bg-indigo-600 px-3 py-2 text-white" onClick={() => {
+          if (pendingAction?.scenarioId === project.currentScenarioId) pendingAction.apply();
+          else showToast('场景已变化，请重新操作');
+          setPendingAction(null);
+        }}>确认执行</button>
+      </>}><p className="text-sm text-slate-700">{pendingAction?.description}</p></AppModal>
       <TopBar
         projectName={project.name}
         scenarios={project.scenarios}
@@ -1202,6 +1407,7 @@ export default function App() {
         onLoadIndustryTemplate={handleLoadIndustryTemplate}
         onOpenPositionOps={() => setPositionOpsOpen(true)}
         onOpenCompetency={() => setCompetencyOpen(true)}
+        onOpenGapList={() => setGapListOpen(true)}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -1390,6 +1596,7 @@ export default function App() {
         onSetPositionHeadcount={handleSetPositionHeadcount}
         onAssignEmployeeToPosition={handleAssignEmployeeToPosition}
         onCreateVirtualForPosition={handleCreateVirtualForPosition}
+        onArchivePosition={handleArchivePosition}
       />
 
       {/* —— v2.2.0 胜任度：看板抽屉 / 批量评估 / 详情 / 维度配置 —— */}
@@ -1405,8 +1612,22 @@ export default function App() {
         onOpenDetail={(empId) => setDetailEmpId(empId)}
         onStartBatch={() => setBatchOpen(true)}
         onOpenModelConfig={() => setModelOpen(true)}
-        onConfirmNotCompetent={handleConfirmNotCompetent}
+        assessments={assessments}
+        competencyModel={competencyModel}
+        positionAssignments={positionAssignments}
+        levelConfigs={levelConfigs}
+        onExportGapList={handleExportGapList}
         confirmedNotCompetent={confirmedNotCompetent}
+      />
+
+      {/* v2.3 M4：岗位缺口清单（当前场景直读；与看板同一派生口径） */}
+      <GapListModal
+        open={gapListOpen}
+        onClose={() => setGapListOpen(false)}
+        projectName={project.name}
+        scenario={currentScenario}
+        onLocateDept={handleCompetencyFocusDept}
+        onToast={showToast}
       />
 
       <BatchAssessmentModal
@@ -1431,6 +1652,9 @@ export default function App() {
         history={detailHistory}
         matchStatus={detailMatch?.status}
         resolveName={resolveEmployeeName}
+        assignments={detailAssignments}
+        reviews={detailReviews}
+        onReview={handleConfirmNotCompetent}
       />
 
       <CompetencyModelModal

@@ -364,6 +364,8 @@ export async function parsePositionExcel(file: File): Promise<PositionImportRow[
 export interface AssessmentImportRow {
   /** 员工标识：工号优先，缺省回退姓名（导入侧键，UI 层解析到 Employee.id） */
   employeeKey: string;
+  /** 保留标识来源，禁止工号与姓名共享一个索引。 */
+  employeeKeyType?: 'employeeId' | 'name';
   /** 维度分：dimension key → 1..5 整数（只含已填维度；未评维度不出现） */
   scores: Record<string, number>;
   /** 评分人（批次级人工字段，可追溯） */
@@ -403,7 +405,8 @@ export function mapAssessmentRows(
         );
       }
     }
-    const employeeKey = cellString(row['工号']) || cellString(row['姓名']);
+    const employeeNumber = cellString(row['工号']).trim();
+    const employeeKey = employeeNumber || cellString(row['姓名']).trim();
     if (!employeeKey) {
       throw new ExcelImportError(
         'invalid-structure',
@@ -423,7 +426,7 @@ export function mapAssessmentRows(
       }
       scores[dim.key] = value;
     }
-    const out: AssessmentImportRow = { employeeKey, scores };
+    const out: AssessmentImportRow = { employeeKey, employeeKeyType: employeeNumber ? 'employeeId' : 'name', scores };
     const assessorName = cellString(row['评分人']);
     if (assessorName) out.assessorName = assessorName;
     const assessedAt = cellString(row['评估日期']);
@@ -431,6 +434,34 @@ export function mapAssessmentRows(
     const note = cellString(row['备注']);
     if (note) out.note = note;
     return out;
+  });
+}
+
+/** 整批身份检查，全部唯一匹配才返回；不回退到同名第一人。 */
+export function resolveAssessmentEmployees(rows: AssessmentImportRow[], employees: Employee[]): Employee[] {
+  const byNumber = new Map<string, Employee[]>();
+  const byName = new Map<string, Employee[]>();
+  const byInternalId = new Map<string, number>();
+  for (const e of employees) {
+    if (e.isVirtual) continue;
+    byInternalId.set(e.id, (byInternalId.get(e.id) ?? 0) + 1);
+    for (const [map, value] of [[byNumber, e.employeeId], [byName, e.name]] as const) {
+      const k = value?.trim();
+      if (k) map.set(k, [...(map.get(k) ?? []), e]);
+    }
+  }
+  const seen = new Set<string>();
+  return rows.map((row, i) => {
+    const index = row.employeeKeyType === 'name' ? byName : byNumber;
+    const matches = index.get(row.employeeKey.trim()) ?? [];
+    if (matches.length !== 1 || byInternalId.get(matches[0].id) !== 1) throw new ExcelImportError('invalid-structure',
+      `评分表第 ${i + 2} 行「${row.employeeKey}」${matches.length ? '存在身份歧义，请使用唯一工号' : '未找到对应员工'}；本批未写入`);
+    for (const dim of Object.keys(row.scores)) {
+      const k = JSON.stringify([matches[0].id, dim, row.assessedAt ?? '']);
+      if (seen.has(k)) throw new ExcelImportError('invalid-structure', `评分表第 ${i + 2} 行存在同人同维度同日期的重复评分；请核对后导入，本批未写入`);
+      seen.add(k);
+    }
+    return matches[0];
   });
 }
 

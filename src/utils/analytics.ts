@@ -436,13 +436,13 @@ function sumHeadcountSubtree(dept: Department): number | null {
 }
 
 /** 获取某职级配置的月成本；未知职级返回 0 */
-function costForLevel(configs: LevelConfig[], code: string): number {
+export function costForLevel(configs: LevelConfig[], code: string): number {
   const match = configs.find((c) => fullCode(c) === code);
   return typeof match?.cost === 'number' && Number.isFinite(match.cost) ? match.cost : 0;
 }
 
 /** 员工月成本：优先用员工个人成本 emp.cost，缺省降级按职级成本映射。 */
-function employeeCost(emp: Employee, configs: LevelConfig[]): number {
+export function employeeCost(emp: Employee, configs: LevelConfig[]): number {
   if (typeof emp.cost === 'number' && Number.isFinite(emp.cost)) return emp.cost;
   return costForLevel(configs, emp.level);
 }
@@ -474,7 +474,7 @@ function levelDistributionSubtree(dept: Department): Record<string, number> {
   return dist;
 }
 
-function round1(n: number): number {
+export function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }
 

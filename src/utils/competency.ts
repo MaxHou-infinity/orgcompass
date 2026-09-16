@@ -1,10 +1,12 @@
 import type {
   Assessment,
+  AssessmentScope,
   CompetencyGroup,
   CompetencyModel,
   Department,
   Employee,
   Position,
+  PositionAssignment,
 } from '../types';
 import { HealthStatus, parseLevelNumber } from './analytics';
 
@@ -73,11 +75,258 @@ export function gapStatusFromWorstGap(worstGap: number): HealthStatus {
   return 'danger';
 }
 
-/** —— §5.4 取数规则（未评估 ≠ 0） —— */
+/** —— §5.4 取数规则（未评估 ≠ 0）——
+ *  v2.3 M2 重写：适用范围筛选 + 同日修订链 + 冲突显式标记，替代 F03「同时间先写入者获胜」。
+ */
 
-/** 某员工某维度当前有效评估：assessorRole==='supervisor' 且 assessedAt 最新。
- *  hrbp 校准分并列呈现、不参与 Gap/灯号；self/peer/subordinate 未实现、不参与。 */
+/** 员工当前人岗语境（适用范围判定输入）。App 必须传全量字段；缺省字段会降级为「无法核对」。 */
+export interface CompetencyScopeContext {
+  /** 应评维度分组（当前分类）。缺省 undefined = 模型全部启用维度（旧调用兼容）。 */
+  expectedGroup?: CompetencyGroup;
+  /** 当前有效主岗任职关系 id（无套岗 = undefined）。 */
+  currentRelationId?: string;
+  /** 当前主岗岗位 id。 */
+  currentPositionId?: string;
+  /** 该员工全部人岗关系；未提供（undefined）= 无法核对任职，仅按岗位匹配。 */
+  assignments?: PositionAssignment[];
+}
+
+/** 单条评分相对当前任职的适用范围。 */
+export type AssessmentApplicability =
+  | 'current' // 绑定当前任职关系（relationId 命中）
+  | 'current-position' // 旧记录：按当前岗位唯一对上，未绑定关系 ID（来源须标明）
+  | 'general' // 通用评价（明确无岗位限制）
+  | 'historical'; // 历史岗位评价：适用性待复核，不自动成为当前结论
+
+/** 评价适用范围：显式字段优先；旧记录按 positionId 有无推断（sanitize 不回填伪造）。 */
+export function assessmentScopeOf(a: { scope?: AssessmentScope; positionId?: string }): AssessmentScope {
+  if (a.scope === 'position' || a.scope === 'general') return a.scope;
+  return a.positionId ? 'position' : 'general';
+}
+
+/** 同一人 / 范围 / 维度 / 角色 / 评估时点的当前修订链终点（写入层关联 revisionOf 用）。 */
+export function currentRevisionEndpoint(
+  assessments: Assessment[],
+  candidate: Pick<Assessment, 'employeeId' | 'dimension' | 'assessorRole' | 'assessedAt' | 'scope' | 'positionId' | 'relationId'>,
+): Assessment | undefined {
+  const scope = assessmentScopeOf(candidate);
+  const sameTime = assessments.filter(
+    (a) =>
+      a.employeeId === candidate.employeeId &&
+      a.dimension === candidate.dimension &&
+      a.assessorRole === candidate.assessorRole &&
+      a.assessedAt === candidate.assessedAt &&
+      assessmentScopeOf(a) === scope &&
+      (a.positionId ?? '') === (candidate.positionId ?? '') &&
+      (a.relationId ?? '') === (candidate.relationId ?? ''),
+  );
+  if (sameTime.length === 0) return undefined;
+  const superseded = new Set(sameTime.map((a) => a.revisionOf).filter((x): x is string => !!x));
+  return sameTime.find((a) => !superseded.has(a.id));
+}
+
+/**
+ * 判定一条评分相对当前任职的适用范围（契约 §4.1）。
+ * - 通用评价 → general；
+ * - 岗位评价带 relationId → 命中当前关系 = current，否则 historical；
+ * - 旧记录无 relationId → 仅在「岗位一致 + 唯一在任主岗 + 未曾离岗再回同岗」时算 current-position，
+ *   其余一律 historical（不自动用于当前岗位结论）。
+ */
+export function assessmentApplicability(
+  a: Assessment,
+  ctx: CompetencyScopeContext = {},
+): AssessmentApplicability {
+  if (assessmentScopeOf(a) === 'general') return 'general';
+  if (a.relationId) return a.relationId === ctx.currentRelationId ? 'current' : 'historical';
+  if (!ctx.currentPositionId || a.positionId !== ctx.currentPositionId) return 'historical';
+  if (ctx.assignments === undefined) return 'current-position'; // 未提供关系表 → 仅按岗位匹配
+  const primaries = ctx.assignments.filter((r) => r.employeeId === a.employeeId && r.type === 'primary');
+  const active = primaries.filter((r) => r.status === 'active' && !r.endDate);
+  if (active.length !== 1) return 'historical'; // 无在任/多条在任 → 无法核对
+  if (primaries.some((r) => r.endDate && r.positionId === a.positionId)) return 'historical'; // 曾离岗再回
+  return 'current-position';
+}
+
+/** 同一时点两条记录是否内容完全一致（用于折叠重复，不折叠冲突）。 */
+function sameContent(x: Assessment, y: Assessment): boolean {
+  return x.score === y.score && x.requirement === y.requirement
+    && (x.note ?? '') === (y.note ?? '')
+    && (x.positionId ?? '') === (y.positionId ?? '')
+    && (x.relationId ?? '') === (y.relationId ?? '')
+    && assessmentScopeOf(x) === assessmentScopeOf(y);
+}
+
+/** 修订链校验：修订必须属于同一人、范围、维度、角色、评估时点（契约 §4.2.4）。 */
+export function revisionLinkIssue(target: Assessment, revision: Assessment): string | undefined {
+  if (target.id === revision.id) return '修订不能指向自身';
+  if (target.employeeId !== revision.employeeId) return '修订不能跨员工';
+  if (target.dimension !== revision.dimension) return '修订不能跨维度';
+  if (target.assessorRole !== revision.assessorRole) return '修订不能跨评分角色';
+  if (target.assessedAt !== revision.assessedAt) return '修订不能跨评估时点';
+  if (assessmentScopeOf(target) !== assessmentScopeOf(revision)) return '修订不能跨评价适用范围';
+  if (assessmentScopeOf(target) === 'position'
+    && (target.positionId ?? '') !== (revision.positionId ?? '')) return '修订不能跨岗位';
+  return undefined;
+}
+
+/**
+ * 修订链校验（整批）：检查引用存在、同组、无环、无分叉。
+ * 返回问题说明；无问题返回 undefined。写入前调用（A18：无效修订链拒绝写入）。
+ */
+export function revisionChainIssue(assessments: Assessment[], revision: Assessment): string | undefined {
+  if (!revision.revisionOf) return undefined;
+  const prior = assessments.find((a) => a.id === revision.revisionOf);
+  if (!prior) return '被修订记录不存在';
+  const linkIssue = revisionLinkIssue(prior, revision);
+  if (linkIssue) return linkIssue;
+  // 环检测：沿 revisionOf 向上追溯
+  const byId = new Map(assessments.map((a) => [a.id, a]));
+  const seen = new Set<string>([revision.id]);
+  let cursor: Assessment | undefined = prior;
+  while (cursor) {
+    if (seen.has(cursor.id)) return '修订链存在循环引用';
+    seen.add(cursor.id);
+    cursor = cursor.revisionOf ? byId.get(cursor.revisionOf) : undefined;
+  }
+  // 分叉检测：同一被修订记录已有一条纠正记录
+  if (assessments.some((a) => a.revisionOf === revision.revisionOf)) return '同一记录已存在修订，不能无提示分叉';
+  return undefined;
+}
+
+/** 单维度取数结果：有效记录 + 适用范围 + 冲突/重复/修订留痕。 */
+export interface ResolvedAssessment {
+  /** 有效记录（修订链终点）；无适用记录或存在未解决冲突 → null */
+  effective: Assessment | null;
+  /** 有效记录的适用范围（effective 为 null 时表示该维度最高适用层级） */
+  applicability: AssessmentApplicability | 'none';
+  /** 是否存在未解决冲突（同一时点内容冲突且无修订关系） */
+  conflict: boolean;
+  /** 是否折叠了内容完全一致的重复记录（原记录保留） */
+  duplicate: boolean;
+  /** 修订链上被替代的历史记录 id（保留可查） */
+  revisedIds: string[];
+  /** 该维度全部原始记录 id（含历史岗位评价） */
+  allIds: string[];
+  /** 是否存在「仅历史岗位评价、无当前适用记录」 */
+  historicalOnly: boolean;
+}
+
+const EMPTY_RESOLUTION: ResolvedAssessment = {
+  effective: null,
+  applicability: 'none',
+  conflict: false,
+  duplicate: false,
+  revisedIds: [],
+  allIds: [],
+  historicalOnly: false,
+};
+
+/**
+ * 取某员工某维度的当前有效 supervisor 评分（契约 §4.2）：
+ * 1) 先按适用范围筛选（historical 不参与当前结论）；
+ * 2) 取最新适用评估时点；
+ * 3) 该时点内按 revisionOf 解析修订链终点；
+ * 4) 无修订关系且内容冲突 → conflict，不按数组顺序任选；内容一致 → 折叠为 duplicate。
+ */
+export function resolveSupervisorAssessment(
+  assessments: Assessment[],
+  employeeId: string,
+  dimension: string,
+  ctx: CompetencyScopeContext = {},
+): ResolvedAssessment {
+  const all = assessments.filter(
+    (a) => a.employeeId === employeeId && a.dimension === dimension && a.assessorRole === 'supervisor',
+  );
+  if (all.length === 0) return EMPTY_RESOLUTION;
+
+  // §4.1 先按来源优先级选层（当前任职 > 旧记录按当前岗位核对 > 通用评价），再在层内取最新时点。
+  const TIER_RANK: Record<AssessmentApplicability, number> = { current: 0, 'current-position': 1, general: 2, historical: 3 };
+  const applicable = all
+    .map((a) => ({ a, tier: assessmentApplicability(a, ctx) }))
+    .filter((x) => x.tier !== 'historical');
+  if (applicable.length === 0) {
+    return { ...EMPTY_RESOLUTION, allIds: all.map((a) => a.id), historicalOnly: true };
+  }
+  const bestRank = applicable.reduce((min, x) => Math.min(min, TIER_RANK[x.tier]), 3);
+  const tierRecords = applicable.filter((x) => TIER_RANK[x.tier] === bestRank).map((x) => x.a);
+
+  let latest = '';
+  for (const a of tierRecords) if (a.assessedAt > latest) latest = a.assessedAt;
+  const group = tierRecords.filter((a) => a.assessedAt === latest);
+
+  const byId = new Map(group.map((a) => [a.id, a]));
+  // 修订边：仅在组内、且满足同人/同范围/同维度/同角色/同时点时生效；非法边按「无关系」处理并计入冲突。
+  let invalidLink = false;
+  const successor = new Map<string, string[]>();
+  const superseded = new Set<string>(); // 被修订（历史保留）的记录 id
+  for (const a of group) {
+    if (!a.revisionOf) continue;
+    const target = byId.get(a.revisionOf);
+    if (!target || revisionLinkIssue(target, a)) {
+      invalidLink = true;
+      continue;
+    }
+    const list = successor.get(target.id) ?? [];
+    list.push(a.id);
+    successor.set(target.id, list);
+    superseded.add(target.id);
+  }
+
+  const applicability = assessmentApplicability(group[0], ctx);
+  const base = { applicability, allIds: all.map((a) => a.id), historicalOnly: false };
+
+  // 环检测（修订边构成闭环 → 数据问题，不产出有效记录）
+  const cyclic = new Set<string>();
+  for (const start of group) {
+    const seen = new Set<string>();
+    let cursor: string | undefined = start.id;
+    while (cursor) {
+      if (seen.has(cursor)) { for (const id of seen) cyclic.add(id); break; }
+      seen.add(cursor);
+      cursor = successor.get(cursor)?.[0];
+    }
+  }
+  if (cyclic.size > 0 || invalidLink) {
+    return { ...EMPTY_RESOLUTION, ...base, conflict: true };
+  }
+
+  const endpoints = group.filter((a) => !(successor.get(a.id)?.length));
+  if (endpoints.length === 0) return { ...EMPTY_RESOLUTION, ...base, conflict: true };
+
+  if (endpoints.length > 1) {
+    const first = endpoints[0];
+    const identical = endpoints.every((a) => sameContent(first, a));
+    if (!identical) return { ...EMPTY_RESOLUTION, ...base, conflict: true };
+    // 内容完全一致 → 折叠展示（保留原记录），确定性取 createdAt/id 最小者
+    const picked = [...endpoints].sort((a, b) =>
+      a.createdAt === b.createdAt ? a.id.localeCompare(b.id) : a.createdAt.localeCompare(b.createdAt))[0];
+    return { ...base, effective: picked, conflict: false, duplicate: true, revisedIds: [...superseded].filter((id) => id !== picked.id) };
+  }
+
+  const endpoint = endpoints[0];
+  return {
+    ...base,
+    effective: endpoint,
+    conflict: false,
+    duplicate: false,
+    revisedIds: [...superseded].filter((id) => id !== endpoint.id),
+  };
+}
+
+/** 某员工某维度当前有效评估：assessorRole==='supervisor' 且通过适用范围/修订链解析。
+ *  hrbp 校准分并列呈现、不参与 Gap/灯号；self/peer/subordinate 未实现、不参与。
+ *  存在未解决冲突 → null（由 resolveSupervisorAssessment 标记 conflict）。 */
 export function latestSupervisorAssessment(
+  assessments: Assessment[],
+  employeeId: string,
+  dimension: string,
+  ctx?: CompetencyScopeContext,
+): Assessment | null {
+  return resolveSupervisorAssessment(assessments, employeeId, dimension, ctx).effective;
+}
+
+/** 某员工某维度最新 HRBP 校准分（并列对照；不参与灯号/完整度分子）。 */
+export function latestHrbpAssessment(
   assessments: Assessment[],
   employeeId: string,
   dimension: string,
@@ -85,10 +334,48 @@ export function latestSupervisorAssessment(
   let best: Assessment | null = null;
   for (const a of assessments) {
     if (a.employeeId !== employeeId || a.dimension !== dimension) continue;
-    if (a.assessorRole !== 'supervisor') continue;
+    if (a.assessorRole !== 'hrbp') continue;
     if (best === null || a.assessedAt > best.assessedAt) best = a;
   }
   return best;
+}
+
+/** 由「生效评分 + 适用范围 + 校准分」构造可追溯的维度派生值（灯号 = 木桶 worstGap）。 */
+function deriveDimension(
+  dim: { key: string; label: string; definition: string; group: CompetencyGroup },
+  a: Assessment,
+  resolved: ResolvedAssessment,
+  hrbp: Assessment | null,
+): CompetencyDimensionDerived {
+  const gap = dimensionGap(a.score, a.requirement);
+  return {
+    dimension: dim.key,
+    label: dim.label,
+    definition: dim.definition,
+    group: dim.group,
+    score: a.score,
+    requirement: a.requirement,
+    gap,
+    status: gapStatusFromWorstGap(gap),
+    assessmentId: a.id,
+    assessedAt: a.assessedAt,
+    ...(a.assessorId ? { assessorId: a.assessorId } : {}),
+    applicability:
+      resolved.applicability === 'general' || resolved.applicability === 'current-position'
+        ? resolved.applicability
+        : 'current',
+    revised: resolved.revisedIds.length > 0,
+    duplicate: resolved.duplicate,
+    hrbpCalibration: hrbp
+      ? {
+          assessmentId: hrbp.id,
+          score: hrbp.score,
+          requirement: hrbp.requirement,
+          assessedAt: hrbp.assessedAt,
+          ...(hrbp.assessorId ? { assessorId: hrbp.assessorId } : {}),
+        }
+      : null,
+  };
 }
 
 /** —— §5.5 权重归一化（只影响总分，不影响灯号） —— */
@@ -124,11 +411,53 @@ export interface CompetencyDimensionDerived {
   requirement: number; // 快照要求分（1..5）
   gap: number; // requirement − score
   status: HealthStatus; // gap≤0 healthy / ==1 warn / ≥2 danger
+  // —— v2.3 M2：能力信号可追溯（契约 §5.2「可追到采用的评分、要求分、维度及来源」）——
+  /** 采用的评分记录 id */
+  assessmentId: string;
+  /** 该记录的评估时点 */
+  assessedAt: string;
+  /** 该记录的实际评分人（本地无账号体系，为录入身份） */
+  assessorId?: string;
+  /** 来源：当前任职 / 旧记录按当前岗位匹配 / 通用评价 */
+  applicability: 'current' | 'current-position' | 'general';
+  /** 该维度存在同日修订链，旧分保留可查 */
+  revised: boolean;
+  /** 该维度同日内容一致的重复记录已折叠（原记录保留） */
+  duplicate: boolean;
+  /** HRBP 校准对照（并列，不参与灯号与完整度） */
+  hrbpCalibration: {
+    assessmentId: string;
+    score: number;
+    requirement: number;
+    assessedAt: string;
+    assessorId?: string;
+  } | null;
+}
+
+/** v2.3 M2：评分完整度（契约 §4.3）。完整度与能力灯号分开，部分达标不算完整达标。 */
+export type CompletenessStatus = 'model-unconfigured' | 'unrated' | 'partial' | 'complete';
+
+export interface CompetencyCompleteness {
+  status: CompletenessStatus;
+  /** 应评维度数（当前分类下启用维度）；模型未配置 = 0，分母不可算 */
+  expected: number;
+  /** 有效已评维度数（有唯一有效且适用的 supervisor 评分） */
+  assessed: number;
+  /** 存在未解决冲突的应评维度 key（不进入已评分子，历史可见） */
+  conflicted: string[];
+  /** 只有历史岗位评价、未计入的应评维度 key（适用性待复核） */
+  historical: string[];
+  /** 完整已评且灯号为 healthy —— 部门「完整达标人数」唯一计数口径 */
+  qualified: boolean;
+  /** 分母是否可算（模型未配置 → false） */
+  computable: boolean;
+  /** 是否存在未解决冲突（存在数据问题） */
+  dataIssue: boolean;
 }
 
 export interface CompetencySummary {
   employeeId: string;
-  /** 由已评维度的 group 派生（取首个已评维度 group；跨组取评估数多者）；无评估 → null。仅 UI 分组用，不影响 overall 计算。 */
+  /** 当前分类分组（提供 expectedGroup 时 = expectedGroup）；无评估且无分组 → null。仅 UI 分组用，不影响 overall 计算。 */
   group: CompetencyGroup | null;
   dimensions: CompetencyDimensionDerived[];
   /** 缺全部有效维度 → null（整体未评估） */
@@ -141,6 +470,24 @@ export interface CompetencySummary {
   notCompetentCandidate: boolean; // overall.status === 'danger'（worstGap ≥ 2）
   assessedBy: string[]; // 评分人去重
   latestAssessedAt: string | null;
+  /** v2.3 M2：完整度（应评/已评/冲突/历史），与灯号分开表达 */
+  completeness: CompetencyCompleteness;
+}
+
+/** 未评占位完整度（模型可算、0 已评）。 */
+function completenessOf(expected: number, assessed: number, conflicted: string[], historical: string[]): CompetencyCompleteness {
+  const status: CompletenessStatus =
+    expected === 0 ? 'model-unconfigured' : assessed === 0 ? 'unrated' : assessed < expected ? 'partial' : 'complete';
+  return {
+    status,
+    expected,
+    assessed,
+    conflicted,
+    historical,
+    qualified: false,
+    computable: expected > 0,
+    dataIssue: conflicted.length > 0,
+  };
 }
 
 /** 已评维度的 group 派生：取评估数多的 group；平局取首个已评维度 group（model 顺序）。 */
@@ -158,38 +505,58 @@ function deriveGroup(dimensions: CompetencyDimensionDerived[]): CompetencyGroup 
   return best;
 }
 
-/** 纯函数入口：只算「enabled:true」维度的 supervisor 最新分；未评估维度不参与；无有效评估 → null。
- *  软删维度（enabled:false）的历史评估不进当前灯号/总分（由 listAssessmentHistory 呈现）。 */
+/** 应评维度（契约 §4.3）：当前分类下启用的模型维度，按 model 顺序。 */
+export function expectedDimensions(model: CompetencyModel, group?: CompetencyGroup) {
+  return model.dimensions
+    .filter((d) => d.enabled !== false && (group === undefined || d.group === group))
+    .slice()
+    .sort((a, b) => a.order - b.order);
+}
+
+/** 纯函数入口：按「当前分类的应评维度」取唯一有效且适用的 supervisor 评分；
+ *  未评估/不适用/冲突维度不进入灯号与完整度分子；无任何有效评估 → null。
+ *  ctx 省略时退化为旧行为（应评 = 全部启用维度，不按岗位适用性筛选）。 */
 export function computeCompetencySummary(
   assessments: Assessment[],
   employeeId: string,
   model: CompetencyModel,
+  ctx?: CompetencyScopeContext,
 ): CompetencySummary | null {
+  const expected = expectedDimensions(model, ctx?.expectedGroup);
   const derived: CompetencyDimensionDerived[] = [];
   const effective: Assessment[] = [];
-  for (const dim of model.dimensions) {
-    if (dim.enabled === false) continue; // B2：软删维度不进当前灯号/总分
-    const a = latestSupervisorAssessment(assessments, employeeId, dim.key);
+  const conflicted: string[] = [];
+  const historical: string[] = [];
+  for (const dim of expected) {
+    const resolved = resolveSupervisorAssessment(assessments, employeeId, dim.key, ctx);
+    if (resolved.conflict) { conflicted.push(dim.key); continue; }
+    if (resolved.historicalOnly) { historical.push(dim.key); continue; }
+    const a = resolved.effective;
     if (!a) continue; // 未评估维度不参与（未评估 ≠ 0）
-    const gap = dimensionGap(a.score, a.requirement);
-    derived.push({
-      dimension: dim.key,
-      label: dim.label,
-      definition: dim.definition,
-      group: dim.group,
-      score: a.score,
-      requirement: a.requirement,
-      gap,
-      status: gapStatusFromWorstGap(gap),
-    });
+    derived.push(deriveDimension(dim, a, resolved, latestHrbpAssessment(assessments, employeeId, dim.key)));
     effective.push(a);
   }
-  if (derived.length === 0) return null; // 缺全部有效维度 → 整体未评估
 
-  const weights = normalizedWeights(
-    model,
-    new Set(derived.map((d) => d.dimension)),
-  );
+  const completeness = completenessOf(expected.length, derived.length, conflicted, historical);
+  if (derived.length === 0) {
+    if (expected.length === 0 && historical.length === 0 && conflicted.length === 0 && ctx?.expectedGroup === undefined) {
+      return null; // 旧调用：模型无启用维度 → 整体未评估
+    }
+    if (ctx?.expectedGroup === undefined) return null;
+    // 有明确分类语境：返回完整度占位（未评/模型未配置/仅历史），由 UI 表达，不伪装绿/红
+    return {
+      employeeId,
+      group: ctx.expectedGroup,
+      dimensions: [],
+      overall: null,
+      notCompetentCandidate: false,
+      assessedBy: [],
+      latestAssessedAt: null,
+      completeness,
+    };
+  }
+
+  const weights = normalizedWeights(model, new Set(derived.map((d) => d.dimension)));
   let scoreSum = 0;
   let reqSum = 0;
   let worstGap = Number.NEGATIVE_INFINITY;
@@ -211,34 +578,54 @@ export function computeCompetencySummary(
 
   return {
     employeeId,
-    group: deriveGroup(derived),
+    group: ctx?.expectedGroup ?? deriveGroup(derived),
     dimensions: derived,
     overall: { score: scoreSum, gap: reqSum - scoreSum, worstGap, status },
     notCompetentCandidate: status === 'danger',
     assessedBy,
     latestAssessedAt,
+    completeness: {
+      ...completeness,
+      qualified: completeness.status === 'complete' && status === 'healthy',
+    },
   };
 }
 
-/** 批量：全量员工 → CompetencySummary[]（**每个员工都返回一条**；
- *  无评估员工 → `group:null / dimensions:[] / overall:null / notCompetentCandidate:false`，UI 直接渲染「未评估」灰态，不伪装绿/红）。 */
+/** 未评估/不可算员工的占位汇总（不伪装绿/红）。 */
+export function emptyCompetencySummary(
+  employeeId: string,
+  group: CompetencyGroup | null,
+  completeness: CompetencyCompleteness,
+): CompetencySummary {
+  return {
+    employeeId,
+    group,
+    dimensions: [],
+    overall: null,
+    notCompetentCandidate: false,
+    assessedBy: [],
+    latestAssessedAt: null,
+    completeness,
+  };
+}
+
+/** 批量：全量员工 → CompetencySummary[]（**每个员工都返回一条**）。
+ *  `contextFor` 提供当前分类与人岗语境；省略时退化为旧行为。 */
 export function computeCompetencyStates(
   assessments: Assessment[],
   employees: Employee[],
   model: CompetencyModel,
+  contextFor?: (employee: Employee) => CompetencyScopeContext,
 ): CompetencySummary[] {
   return employees.map((e) => {
-    const s = computeCompetencySummary(assessments, e.id, model);
-    return (
-      s ?? {
-        employeeId: e.id,
-        group: null,
-        dimensions: [],
-        overall: null,
-        notCompetentCandidate: false,
-        assessedBy: [],
-        latestAssessedAt: null,
-      }
+    const ctx = contextFor?.(e);
+    const s = computeCompetencySummary(assessments, e.id, model, ctx);
+    if (s) return s;
+    const expected = expectedDimensions(model, ctx?.expectedGroup).length;
+    return emptyCompetencySummary(
+      e.id,
+      ctx?.expectedGroup ?? null,
+      completenessOf(expected, 0, [], []),
     );
   });
 }
@@ -306,23 +693,15 @@ export function buildLeadershipDossier(
   employeeId: string,
   model: CompetencyModel,
   targetLevel?: string,
+  ctx?: CompetencyScopeContext,
 ): LeadershipDossier | null {
   const derived: CompetencyDimensionDerived[] = [];
   for (const dim of model.dimensions) {
     if (dim.group !== 'leadership' || dim.enabled === false) continue;
-    const a = latestSupervisorAssessment(assessments, employeeId, dim.key);
-    if (!a) continue;
-    const gap = dimensionGap(a.score, a.requirement);
-    derived.push({
-      dimension: dim.key,
-      label: dim.label,
-      definition: dim.definition,
-      group: dim.group,
-      score: a.score,
-      requirement: a.requirement,
-      gap,
-      status: gapStatusFromWorstGap(gap),
-    });
+    const resolved = resolveSupervisorAssessment(assessments, employeeId, dim.key, ctx);
+    const a = resolved.effective;
+    if (resolved.conflict || !a) continue; // 冲突维度不进结论，历史可查
+    derived.push(deriveDimension(dim, a, resolved, latestHrbpAssessment(assessments, employeeId, dim.key)));
   }
   if (derived.length === 0) return null;
 

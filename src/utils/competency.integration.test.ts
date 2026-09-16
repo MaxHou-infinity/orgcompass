@@ -97,12 +97,13 @@ describe('胜任度全链路集成（v2 迁移 → 评估 → 候选/确认 → 
   it('链路完整：迁移回填 → 评估 → danger 候选 → 确认 → not_competent → 未评估灰态', () => {
     // 1) 迁移：v2 fixture → parseProject → v3，三张表就位
     const project = parseProject(serializeProject(v2Fixture()))!;
-    expect(project.version).toBe(3);
+    expect(project.version).toBe(4);
     const sc = project.scenarios[0];
     const model = sc.competencyModel!;
     expect(model.dimensions.length).toBe(6);
     expect(sc.assessments).toEqual([]);
-    expect(sc.positionAssignments).toEqual([]);
+    expect(sc.positionAssignments!.length).toBeGreaterThan(0);
+    expect(sc.positionAssignments!.every((a) => !a.startDate && a.source === 'legacy')).toBe(true);
 
     // 2) 添加 supervisor 评估：e1 某维度 worstGap=2（business: score1 req3）→ danger 候选
     //    e2 全绿（含 hrbp 低分干扰：hrbp 不参与灯号）；e5 候选（未确认）
@@ -146,10 +147,11 @@ describe('胜任度全链路集成（v2 迁移 → 评估 → 候选/确认 → 
 
     // 4) 人工确认：e1（p1 不胜任）+ e6（p2 超编位确认）→ confirmedNotCompetentSet
     const assignments: PositionAssignment[] = [
-      { id: 'asg1', employeeId: 'e1', positionId: 'p1', type: 'primary', startDate: '2026-08-01', status: 'not_competent', confirmedBy: 'hrbp1', confirmedAt: '2026-09-05T00:00:00Z', createdAt: '2026-09-05T00:00:00Z', updatedAt: '2026-09-05T00:00:00Z' },
-      { id: 'asg2', employeeId: 'e6', positionId: 'p2', type: 'primary', startDate: '2026-08-01', status: 'not_competent', confirmedBy: 'hrbp1', confirmedAt: '2026-09-05T00:00:00Z', createdAt: '2026-09-05T00:00:00Z', updatedAt: '2026-09-05T00:00:00Z' },
+      ...sc.positionAssignments!,
+      { relationId: sc.positionAssignments!.find((a) => a.employeeId === 'e1' && a.type === 'primary')!.id, id: 'asg1', employeeId: 'e1', positionId: 'p1', type: 'primary', startDate: '2026-08-01', status: 'not_competent', confirmedBy: 'hrbp1', confirmedAt: '2026-09-05T00:00:00Z', createdAt: '2026-09-05T00:00:00Z', updatedAt: '2026-09-05T00:00:00Z' },
+      { relationId: sc.positionAssignments!.find((a) => a.employeeId === 'e6' && a.type === 'primary')!.id, id: 'asg2', employeeId: 'e6', positionId: 'p2', type: 'primary', startDate: '2026-08-01', status: 'not_competent', confirmedBy: 'hrbp1', confirmedAt: '2026-09-05T00:00:00Z', createdAt: '2026-09-05T00:00:00Z', updatedAt: '2026-09-05T00:00:00Z' },
     ];
-    const confirmed = confirmedNotCompetentSet(assignments);
+    const confirmed = confirmedNotCompetentSet(assignments, sc.allEmployeesFlat);
     expect(Array.from(confirmed).sort()).toEqual(['e1', 'e6']);
 
     // 5) computeMatchStates（缺省前四态逻辑不变 + 确认优先 overstaffed + unassigned 仍最高）
@@ -182,7 +184,7 @@ describe('胜任度全链路集成（v2 迁移 → 评估 → 候选/确认 → 
     const sc = project.scenarios[0];
     sc.assessments = [asm('a1', 'e1', 'business', 2, 3)];
     sc.positionAssignments = [
-      { id: 'asg1', employeeId: 'e1', positionId: 'p1', type: 'primary', startDate: '2026-08-01', status: 'active', createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z' },
+      { relationId: sc.positionAssignments!.find((a) => a.employeeId === 'e1' && a.type === 'primary')!.id, id: 'asg1', employeeId: 'e1', positionId: 'p1', type: 'primary', startDate: '2026-08-01', status: 'active', createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z' },
     ];
 
     const again = parseProject(serializeProject(project))!;

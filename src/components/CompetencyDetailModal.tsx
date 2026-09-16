@@ -8,10 +8,11 @@ import {
   listAssessmentHistory,
   positionBandRequirement,
 } from '../utils/competency';
+import type { ReviewEvent } from '../utils/assignment';
 import { parseLevelNumber } from '../utils/analytics';
 import { COMPETENCY_STYLE, COMPETENCY_LABEL, fmt } from '../utils/statusUI';
 import { CompetencyCapsule, CompetencyRing } from './CompetencyDrawer';
-import { Info, History, UserCheck, CalendarClock } from 'lucide-react';
+import { Info, History, UserCheck, CalendarClock, ClipboardCheck, AlertTriangle } from 'lucide-react';
 
 /**
  * —— v2.2.0 胜任度详情弹窗（design §9 = ux §2.2 = od §1.3）——
@@ -29,6 +30,21 @@ const MATCH_DOT_LABEL: Record<MatchStatus, string> = {
   not_competent: '不胜任（已确认）',
 };
 
+/** v2.3 M2：完整度状态文案（与能力灯号分开表达） */
+const COMPLETENESS_LABEL: Record<CompetencySummary['completeness']['status'], string> = {
+  'model-unconfigured': '模型未配置（分母不可算）',
+  unrated: '未评',
+  partial: '部分已评',
+  complete: '完整已评',
+};
+
+/** v2.3 M2：评价来源文案（能力信号可追溯） */
+const APPLICABILITY_LABEL: Record<'current' | 'current-position' | 'general', string> = {
+  current: '当前任职',
+  'current-position': '按当前岗位核对（旧记录，未绑定具体任职）',
+  general: '通用评价（不限岗位）',
+};
+
 function formatDateTime(iso: string | null): string {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -38,6 +54,9 @@ function formatDateTime(iso: string | null): string {
 }
 
 interface CompetencyDetailModalProps {
+  assignments?: import('../types').PositionAssignment[];
+  /** v2.3 M2：该员工的全部人工复核事件（含已撤销与历史确认） */
+  reviews?: ReviewEvent[];
   open: boolean;
   onClose: () => void;
   employee: Employee | null;
@@ -53,6 +72,8 @@ interface CompetencyDetailModalProps {
   matchStatus?: MatchStatus;
   /** employeeId → 姓名（评分人可追溯展示） */
   resolveName: (id: string) => string;
+  /** v2.3 M2：人工复核（确认/撤销）录入；复核人必填，依据/原因可留痕 */
+  onReview?: (employeeId: string, confirmed: boolean, payload: { reviewer: string; reason?: string }) => void;
 }
 
 /** 基准口径「?」说明：Gap 相对什么基准（可点开，不黑盒） */
@@ -107,10 +128,17 @@ export function CompetencyDetailModal({
   history,
   matchStatus,
   resolveName,
+  assignments = [],
+  reviews = [],
+  onReview,
 }: CompetencyDetailModalProps) {
   const status = summary?.overall?.status ?? 'unrated';
   const score = summary?.overall?.score ?? null;
   const threshold = summary?.overall != null ? summary.overall.score + summary.overall.gap : null;
+  const [reviewer, setReviewer] = useState('');
+  const [reason, setReason] = useState('');
+  const activeReview = reviews.find((r) => !r.revoked && r.appliesToCurrentRelation) ?? null;
+  const canReview = Boolean(onReview && employee && assignments.some((a) => a.status === 'active' && a.type === 'primary' && !a.endDate));
 
   return (
     <AppModal
@@ -128,12 +156,135 @@ export function CompetencyDetailModal({
         <div className="py-8 text-center text-sm text-slate-500">未找到员工</div>
       ) : (
         <div className="space-y-4">
+          <section className="rounded-xl border border-slate-200 p-4">
+            <h3 className="font-semibold text-sm text-slate-800 mb-2">任职记录</h3>
+            {assignments.length === 0 ? <p className="text-xs text-slate-500">尚无任职记录；旧数据不会补造到岗时间。</p> :
+              <ul className="space-y-2 text-xs text-slate-600">{assignments.filter((a) => a.status !== 'not_competent').map((a) => <li key={a.id}>
+                <span className="font-medium">{a.positionName || a.positionId}</span> · {a.type === 'primary' ? '主岗' : '兼岗'} ·
+                {a.status === 'ended' ? '已结束' : '当前任职'}
+                <span> · {a.startDate ? formatDateTime(a.startDate) : '到岗时间未知'} → {a.endDate ? formatDateTime(a.endDate) : '至今'}{a.source === 'legacy' ? ' · 旧快照' : ' · 本次调整生效时点'}</span>
+              </li>)}</ul>}
+          </section>
+
+          {/* v2.3 M2：人工复核（确认/撤销分别留痕；原确认在撤销后仍保留） */}
+          <section className="rounded-xl border border-slate-200 p-4">
+            <h3 className="font-semibold text-sm text-slate-800 mb-2 flex items-center gap-1.5">
+              <ClipboardCheck className="w-4 h-4 text-slate-500" />
+              人工复核记录
+              <span className="text-[10px] font-normal text-slate-500">（复核绑定具体人岗关系，不改变任职状态）</span>
+            </h3>
+            {reviews.length === 0 ? (
+              <p className="text-xs text-slate-500">尚无人工确认记录。能力风险是派生信号，需人工确认后才成为复核结论。</p>
+            ) : (
+              <ul className="space-y-2 text-xs text-slate-600">
+                {reviews.map((r) => (
+                  <li key={r.id} className="rounded-lg bg-slate-50 px-2.5 py-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${r.revoked ? 'bg-slate-200 text-slate-600' : 'bg-red-50 text-red-700'}`}>
+                        {r.revoked ? '确认已撤销（原记录保留）' : '人工确认不胜任'}
+                      </span>
+                      <span className="font-medium">{r.positionName || r.positionId}</span>
+                      {!r.relationActive && <span className="px-1 rounded bg-slate-100 text-slate-500">关联任职已结束（仅历史）</span>}
+                      {r.relationActive && !r.appliesToCurrentRelation && <span className="px-1 rounded bg-slate-100 text-slate-500">非当前任职，不继承</span>}
+                      {r.staleAfterNewAssessment && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[10px] font-semibold">
+                          <AlertTriangle className="w-3 h-3" />
+                          确认依据之后有新评分，待复核
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 text-[11px] text-slate-500">
+                      确认人：{r.confirmedBy || '历史/当前记录未提供确认人'} · 确认于 {formatDateTime(r.confirmedAt ?? null)}
+                      {' · '}关系：{r.relationId || '未关联任职'}
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      依据说明：{r.note || '未填写'} · 引用评分：
+                      {r.assessmentIds.length > 0 ? r.assessmentIds.join('、') : '未记录'}
+                    </div>
+                    {r.revoked && (
+                      <div className="text-[11px] text-slate-500">
+                        撤销人：{r.revokedBy || '未提供'} · 撤销于 {formatDateTime(r.revokedAt ?? null)} · 原因：{r.revokeReason || '未填写'}
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {canReview && (
+              <div className="mt-3 border-t border-slate-100 pt-3 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="text"
+                    value={reviewer}
+                    onChange={(e) => setReviewer(e.target.value)}
+                    placeholder="复核人（必填）"
+                    aria-label="复核人"
+                    className="w-36 px-2 py-1 rounded-lg border border-slate-200 text-xs focus-ring"
+                  />
+                  <input
+                    type="text"
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    placeholder={activeReview ? '撤销原因' : '确认依据说明'}
+                    aria-label={activeReview ? '撤销原因' : '确认依据说明'}
+                    className="flex-1 min-w-[160px] px-2 py-1 rounded-lg border border-slate-200 text-xs focus-ring"
+                  />
+                  <button
+                    type="button"
+                    disabled={!reviewer.trim()}
+                    onClick={() => {
+                      onReview?.(employee.id, !activeReview, {
+                        reviewer: reviewer.trim(),
+                        ...(reason.trim() ? { reason: reason.trim() } : {}),
+                      });
+                      setReason('');
+                    }}
+                    title={!reviewer.trim() ? '请填写复核人（本地录入身份，不声称经过认证）' : undefined}
+                    className={`px-3 py-1 rounded-lg text-xs font-medium text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${activeReview ? 'bg-slate-500 hover:bg-slate-600' : 'bg-red-500 hover:bg-red-600'}`}
+                  >
+                    {activeReview ? '撤销确认' : '确认不胜任'}
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-500 leading-snug">
+                  「撤销确认」保留业务记录（原确认与撤销事实都可查），与编辑器「撤销刚才操作」不同；
+                  系统不自动撤销人工结论，也不会把未复核的新评分展示为已复核。
+                </p>
+              </div>
+            )}
+          </section>
           {/* 当前灯 + 评分人 + 时间 */}
           <div className="rounded-2xl bg-white/70 backdrop-blur-xl border border-white/50 shadow-card p-4">
             <div className="flex items-center justify-between">
               <span className="text-sm font-semibold text-slate-700">当前灯</span>
               <CompetencyCapsule status={status} score={score} />
             </div>
+            {/* v2.3 M2：完整度与灯号分开（部分达标不算完整达标） */}
+            {summary && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-medium">
+                  完整度：{COMPLETENESS_LABEL[summary.completeness.status]}
+                  {summary.completeness.computable ? ` ${summary.completeness.assessed}/${summary.completeness.expected}` : ''}
+                </span>
+                {summary.completeness.qualified && (
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium">完整达标</span>
+                )}
+                {summary.completeness.status === 'partial' && summary.overall?.status === 'healthy' && (
+                  <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">已评维度达标，整体仍为部分已评</span>
+                )}
+                {summary.completeness.historical.length > 0 && (
+                  <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                    {summary.completeness.historical.length} 个维度仅有历史岗位评价，适用性待复核
+                  </span>
+                )}
+                {summary.completeness.dataIssue && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-50 text-red-700 font-medium">
+                    <AlertTriangle className="w-3 h-3" />
+                    存在数据问题：{summary.completeness.conflicted.length} 个维度评分冲突待核对
+                  </span>
+                )}
+              </div>
+            )}
             <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs text-slate-500">
               <span className="inline-flex items-center gap-1.5">
                 <UserCheck className="w-3.5 h-3.5 text-slate-500" />
@@ -172,6 +323,7 @@ export function CompetencyDetailModal({
                     <th className="text-center px-2 py-2 font-medium">基准</th>
                     <th className="text-right px-2 py-2 font-medium">Gap</th>
                     <th className="text-center px-2 py-2 font-medium">灯</th>
+                    <th className="text-left px-2 py-2 font-medium">来源 / 评分依据</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -192,6 +344,27 @@ export function CompetencyDetailModal({
                       </td>
                       <td className="px-2 py-2 text-center">
                         <CompetencyRing status={d.status} score={d.score} threshold={d.requirement} />
+                      </td>
+                      <td className="px-2 py-2">
+                        <div className="flex flex-wrap items-center gap-1 text-[10px] text-slate-500">
+                          <span className="px-1 rounded bg-slate-100 text-slate-600">{APPLICABILITY_LABEL[d.applicability]}</span>
+                          <span>{formatDateTime(d.assessedAt)}</span>
+                          {d.assessorId && <span>· {resolveName(d.assessorId)}</span>}
+                          {d.revised && <span className="px-1 rounded bg-amber-50 text-amber-700">同日修订（旧分保留）</span>}
+                          {d.duplicate && <span className="px-1 rounded bg-slate-100 text-slate-600">重复记录已折叠</span>}
+                          <span className="text-slate-400">· {d.assessmentId}</span>
+                        </div>
+                        {d.hrbpCalibration && (
+                          <div className="mt-0.5 flex items-center gap-1 text-[10px]">
+                            <span className="px-1 rounded bg-violet-50 text-violet-700">HRBP 校准</span>
+                            <span className="tabular-nums text-slate-600">
+                              {d.hrbpCalibration.score} / 要求 {d.hrbpCalibration.requirement}
+                            </span>
+                            <span className="text-slate-400">{formatDateTime(d.hrbpCalibration.assessedAt)}</span>
+                            {d.hrbpCalibration.assessorId && <span className="text-slate-500">· {resolveName(d.hrbpCalibration.assessorId)}</span>}
+                            <span className="text-slate-400">（并列对照，不参与灯号）</span>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}

@@ -170,14 +170,15 @@ describe('assignmentsToProjection（恢复路径：只重建 active 投影，有
 /** —— §7.2 confirmedNotCompetentSet —— */
 
 describe('confirmedNotCompetentSet（已确认不胜任 employeeId 集合）', () => {
-  it('只收集 status=not_competent 的记录并去重', () => {
+  it('只收集当前主岗任职的有效确认', () => {
     const records = [
-      asg({ employeeId: 'a', positionId: 'p1', status: 'not_competent' }),
+      asg({ id: 'active-a', employeeId: 'a', positionId: 'p1', status: 'active' }),
+      asg({ relationId: 'active-a', employeeId: 'a', positionId: 'p1', status: 'not_competent' }),
       asg({ employeeId: 'a', positionId: 'p2', type: 'secondary', status: 'not_competent' }),
       asg({ employeeId: 'b', positionId: 'p1', status: 'active' }),
       asg({ employeeId: 'c', positionId: 'p1', status: 'ended', endDate: '2026-01-31' }),
     ];
-    const s = confirmedNotCompetentSet(records);
+    const s = confirmedNotCompetentSet(records, [emp('a', { positionId: 'p1' })]);
     expect(Array.from(s).sort()).toEqual(['a']);
   });
   it('空表 → 空集合', () => {

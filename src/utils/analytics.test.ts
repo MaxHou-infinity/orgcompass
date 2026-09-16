@@ -1495,7 +1495,7 @@ describe('v2.1.1 状态机接入（computeMatchStates 复用，data-eng 已建 m
     expect(typeof computeMatchStates).toBe('function');
   });
 
-  it('满编 → placed；超编 1 后进者 → overstaffed', () => {
+  it('岗位超额 1；日期未知不指定后进者', () => {
     const positions = [pos('p1', 'd1', '工程师', { headcount: 2 })];
     const employees = [
       empAssigned('e1', 'L1.1', 'p1'),
@@ -1505,7 +1505,7 @@ describe('v2.1.1 状态机接入（computeMatchStates 复用，data-eng 已建 m
     const states: MatchResult[] = computeMatchStates(employees, positions);
     expect(states.find((s) => s.employeeId === 'e1')!.status).toBe('placed');
     expect(states.find((s) => s.employeeId === 'e2')!.status).toBe('placed');
-    expect(states.find((s) => s.employeeId === 'e3')!.status).toBe('overstaffed');
+    expect(states.find((s) => s.employeeId === 'e3')).toMatchObject({ status: 'placed', positionOverflow: 1, overflowUnresolved: true });
   });
 
   it('未套岗 → unassigned；archived 岗位等同未套岗', () => {

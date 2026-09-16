@@ -35,6 +35,7 @@ export function PositionOpsModal({
   onSetPositionHeadcount,
   onAssignEmployeeToPosition,
   onCreateVirtualForPosition,
+  onArchivePosition,
 }: {
   open: boolean;
   onClose: () => void;
@@ -46,6 +47,7 @@ export function PositionOpsModal({
   onSetPositionHeadcount: (deptId: string, positionId: string, headcount: number) => void;
   onAssignEmployeeToPosition: (empId: string, positionId: string) => void;
   onCreateVirtualForPosition: (deptId: string, positionId: string, empId: string) => void;
+  onArchivePosition?: (deptId: string, positionId: string) => void;
 }) {
   const deptOpts = useMemo(() => flattenDepts(departments), [departments]);
   const [deptId, setDeptId] = useState('');
@@ -86,7 +88,7 @@ export function PositionOpsModal({
 
   if (!open) return null;
 
-  const positions = dept?.positions ?? [];
+  const positions = (dept?.positions ?? []).filter((p) => p.status !== 'archived');
   const levelOptions = levelConfigs.map((c) => ({ value: fullCode(c), label: fullCode(c) }));
 
   const create = () => {
@@ -135,6 +137,8 @@ export function PositionOpsModal({
           </span>
         </div>
         <div className="mt-1 flex items-center gap-1">
+          {onArchivePosition && <button onClick={() => onArchivePosition(dept!.id, pos.id)}
+            className="px-2 py-1 text-[11px] text-slate-500 hover:text-red-600">归档岗位</button>}
           <button
             onClick={() => setOpenAssignPos(openAssignPos === pos.id ? null : pos.id)}
             className="flex-1 text-left px-2 py-1 rounded-md text-[11px] text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors"
@@ -180,7 +184,7 @@ export function PositionOpsModal({
       open={open}
       onClose={onClose}
       title="岗位操作"
-      subtitle="先选目标部门，再新建岗位 / 套岗 / 建虚拟兼岗（已从部门卡片移到此处）"
+      subtitle="先选目标部门，再新建岗位或调整人员。套岗会同时调整所属部门；本次调整即刻生效。"
       maxWidth="max-w-2xl"
     >
       <div className="space-y-3">
