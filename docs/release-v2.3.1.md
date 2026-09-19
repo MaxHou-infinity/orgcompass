@@ -34,7 +34,11 @@ v2.3.1 定位为「**事实与口径收口**」：不改产品能力、不改文
 - **版本一致性门禁**：`package.json` / `package-lock.json` / `tauri.conf.json` / `Cargo.toml` / `Cargo.lock` 五处版本由 `npm run version:check` 机器校验（v2.3.0 曾出现 lockfile 滞留旧版本一个发布周期）。CI 与发布流程都会执行。
 - **测试文件纳入类型检查**：此前测试文件被 `tsconfig` 排除，从未被 `tsc` 检查 —— 打开后当场发现 21 处既有类型错误（含从不存在的模块引入类型、缺失导入、调用已移除的 props）。现由 `npm run typecheck` 覆盖。
 - **覆盖率门槛**：新增 `npm run test:coverage` 与门槛（statements 68 / branches 58 / functions 58 / lines 70），CI 执行。
-- **CI 矩阵**：Node 20.19 / 22 / 24 三档运行 lint + 类型 + 测试 + 构建；发布流程同样跑版本一致性与类型检查。
+- **CI 矩阵**：Node 20.19 / 22 / 24 三档运行 lint + 类型 + 构建；**测试在 Node 22 / 24 上运行**。
+  原因：测试环境 jsdom 30 依赖的 undici 在 Node 20.19 上会于加载期报错（`webidl.util.markAsUncloneable is not a function`），
+  所有 jsdom 用例直接失败。Node 20.19 仍可正常开发、构建与打包（这正是 `engines` 的承诺），只是不能跑单测，README 已注明。
+- **门禁的跨平台健壮性**：版本一致性校验脚本按 CRLF 归一化读取 —— Windows runner 默认 CRLF 检出，
+  首版门禁曾因此在 Windows 发布构建上失败（macOS/Linux 不受影响），已修复并保留 CRLF 容错的正则双保险。
 - **性能**：看板派生不再逐员工重建复核索引（1000 人规模下由 26ms 降到约 5ms 量级）；常驻抽屉/弹窗在关闭态不再空跑昂贵派生；批量评估的干部判定与评分预填改为一次建索引（旧实现每个员工调用两次 `isManager` 并各做一次全表扫描）。
 - **反馈一致性**：导出的错误提示从原生 `alert` 统一为应用内提示（保留错误细节），提示区域补充无障碍 live region。
 - **测试有效性修复**：修正了两处**不可能失败**的断言（缺口清单导出仅断言「函数存在」、画布居中断言代数恒等），并为撤销确认读侧、搜索展开、偏好持久化、镜像缺失/过期（T09 类）补齐有判别力的回归断言。

@@ -13,7 +13,13 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const read = (rel) => readFileSync(join(root, rel), 'utf8')
+/**
+ * 统一换行符后再解析。
+ * Windows runner 默认以 CRLF 检出（无 .gitattributes），而 Cargo.lock 的块匹配用的是字面 `\n`
+ * —— v2.3.1 首次带门禁的 Windows 发布构建正是因此失败（macOS/Linux 不受影响）。
+ * 这里在读入时归一化，保证门禁在三平台行为一致。
+ */
+const read = (rel) => readFileSync(join(root, rel), 'utf8').replace(/\r\n/g, '\n')
 const readJson = (rel) => JSON.parse(read(rel))
 
 /** 从 Cargo.toml 的 [package] 段取 version（不误取 [dependencies] 里的版本） */
@@ -27,7 +33,7 @@ function cargoTomlVersion(source) {
 
 /** 从 Cargo.lock 取 name = "orgcompass" 的版本 */
 function cargoLockVersion(source) {
-  const block = /\[\[package\]\]\nname = "orgcompass"\nversion = "([^"]+)"/.exec(source)
+  const block = /\[\[package\]\]\r?\nname = "orgcompass"\r?\nversion = "([^"]+)"/.exec(source)
   if (!block) throw new Error('src-tauri/Cargo.lock 未找到 orgcompass 包版本')
   return block[1]
 }

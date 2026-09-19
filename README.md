@@ -159,6 +159,9 @@ OrgCompass 当前使用透明、可配置的规则口径，不使用不可解释
 Web 版目前提供源码运行与自行部署，不代表已有公开在线服务。
 
 > 前置要求：**Node `^20.19.0` 或 `>=22.12.0`**（Vite 8 的最低要求）。
+>
+> 注意：**运行测试需要 Node `>=22`** —— 测试环境 jsdom 30 依赖的 undici 在 Node 20.19 上无法加载。
+> Node 20.19 可以正常开发（`npm run dev`）、构建（`npm run build`）与打包桌面端，只是不能跑单测。
 
 ```bash
 git clone https://github.com/MaxHou-infinity/orgcompass.git

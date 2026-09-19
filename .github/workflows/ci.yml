@@ -35,8 +35,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # engines 允许 ^20.19.0 || >=22.12.0：下限 + 两个 LTS 都要真实跑过
-        node: [ '20.19.0', '22', '24' ]
+        # engines 允许 ^20.19.0 || >=22.12.0：下限 + 两个 LTS 都要真实跑过。
+        #
+        # 但**运行测试**需要 Node ≥ 22：测试环境的 jsdom 30 依赖的 undici 在 Node 20.19 上
+        # 会在加载期抛 `webidl.util.markAsUncloneable is not a function`，导致所有 jsdom 用例
+        # 直接失败（v2.3.1 首次引入矩阵时实测）。因此 Node 20.19 只验证 lint / 类型 / 构建
+        # ——即「能否在 Node 20 上开发与打包」这一 engines 承诺——测试在 22 / 24 上跑。
+        include:
+          - node: '20.19.0'
+            run_tests: false
+          - node: '22'
+            run_tests: true
+          - node: '24'
+            run_tests: true
     steps:
       - uses: actions/checkout@v4
 
@@ -59,10 +70,11 @@ jobs:
 
       # 覆盖率带门槛（v2.3.1 T-07）：无度量时「覆盖率回流」不会有人发现
       - name: 单元测试 + 覆盖率门槛
+        if: matrix.run_tests
         run: npm run test:coverage
 
       - name: 上传覆盖率报告（HTML，便于定位未覆盖分支）
-        if: always()
+        if: always() && matrix.run_tests
         uses: actions/upload-artifact@v4
         with:
           name: coverage-node${{ matrix.node }}
