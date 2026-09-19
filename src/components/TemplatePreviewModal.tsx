@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { X, LayoutTemplate } from 'lucide-react';
 import { INDUSTRY_TEMPLATES, IndustryTemplate } from '../utils/industryTemplates';
+import { useDialogFocus } from '../utils/useDialogFocus';
 
 interface TemplatePreviewModalProps {
   open: boolean;
@@ -57,10 +58,21 @@ export function TemplatePreviewModal({
   onLoadTemplate,
   onToast,
 }: TemplatePreviewModalProps) {
+  // v2.3.1（F-14）：补对话框语义 —— App 用 [role="dialog"] 判断是否在弹窗内，
+  // 缺它会让 Ctrl+Z 穿透到底层画布，静默撤销用户看不见的编辑。
+  const dialogRef = useDialogFocus(open, onClose);
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[95] flex items-center justify-center p-4" onClick={onClose}>
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="行业模板"
+      tabIndex={-1}
+      className="fixed inset-0 z-[95] flex items-center justify-center p-4"
+      onClick={onClose}
+    >
       <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" />
       <div
         className="relative w-[720px] max-w-full max-h-[82vh] overflow-y-auto rounded-3xl bg-white/95 backdrop-blur-xl shadow-2xl p-6 animate-fadeInUp"

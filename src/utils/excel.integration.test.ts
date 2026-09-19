@@ -159,9 +159,11 @@ describe('真实富字段文件集成：员工富字段 + 岗位表 → 岗位�
     const tree = buildDepartmentTree(employees, [], positions);
 
     const 技术部 = tree.find((d) => d.name === '技术部')!;
+    // v2.3.1（T-08）：Department.positions 为可选字段，先取本地列表再做断言。
+    const 技术部岗位 = 技术部.positions ?? [];
     // 岗位表先建岗（2 个岗位，编制=3 / 1；序列/带宽正确）
-    expect(技术部.positions).toHaveLength(2);
-    const 前端 = 技术部.positions.find((p) => p.name === '前端工程师')!;
+    expect(技术部岗位).toHaveLength(2);
+    const 前端 = 技术部岗位.find((p) => p.name === '前端工程师')!;
     expect(前端.headcount).toBe(3);
     expect(前端.jobFamily).toBe('技术');
     expect(前端.levelBandMin).toBe('L1');
@@ -173,7 +175,7 @@ describe('真实富字段文件集成：员工富字段 + 岗位表 → 岗位�
     const 王五 = 技术部.employees.find((e) => e.employeeId === 'E003')!;
     expect(张三.positionId).toBe(前端.id);
     expect(李四.positionId).toBe(前端.id);
-    const 研发经理 = 技术部.positions.find((p) => p.name === '研发经理')!;
+    const 研发经理 = 技术部岗位.find((p) => p.name === '研发经理')!;
     expect(王五.positionId).toBe(研发经理.id);
 
     // 销售部：岗位名不在岗位表（只查不建）→ 保持未套岗，且不新建岗位

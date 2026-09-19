@@ -4,7 +4,7 @@ import { DEFAULT_LEVELS } from './levels';
 import { computeCompetencyStates, computeCompetencySummary } from './competency';
 import { confirmedNotCompetentSet } from './assignment';
 import { computeMatchStates } from './match';
-import type { Assessment, PositionAssignment, ProjectFile, Scenario } from '../types';
+import type { Assessment, Position, PositionAssignment, ProjectFile, Scenario } from '../types';
 
 /**
  * —— v2.2.0 全链路集成测试（design doc §6 / §10 / §13 出口）——
@@ -19,8 +19,8 @@ import type { Assessment, PositionAssignment, ProjectFile, Scenario } from '../t
  *  注意 allEmployeesFlat 顺序：e5/e6 在前（v2.1.1 用数组序近似套岗时间序，超编后进者判定依赖此序）。 */
 function v2Fixture(): ProjectFile {
   const now = '2026-08-01T00:00:00Z';
-  const posP1 = { id: 'p1', departmentId: 'd1', name: '岗位一', headcount: 3, status: 'active', createdAt: now, updatedAt: now };
-  const posP2 = { id: 'p2', departmentId: 'd1', name: '岗位二', headcount: 1, status: 'active', createdAt: now, updatedAt: now };
+  const posP1: Position = { id: 'p1', departmentId: 'd1', name: '岗位一', headcount: 3, status: 'active', createdAt: now, updatedAt: now };
+  const posP2: Position = { id: 'p2', departmentId: 'd1', name: '岗位二', headcount: 1, status: 'active', createdAt: now, updatedAt: now };
   const scenario: Scenario = {
     id: 's1',
     name: '基线',

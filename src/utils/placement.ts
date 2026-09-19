@@ -127,9 +127,24 @@ export function seedLegacyAssignments(
     }
   }
   const currentKeys = new Set(currentRelations(employees, departments).map(key));
+  // v2.3.1（F-13）：遗留确认（无 relationId）不得复用到「曾离岗再回」的新关系上。
+  //
+  // 场景：员工曾在岗位 P（旧关系已 ended），当前又重新入岗 P（新关系 R2，active），
+  // 且存在一条 v2.2 时代遗留的 `not_competent` 记录（无 relationId —— 这正是 linkConfirmations
+  // 存在的意义）。旧实现只按 (employeeId, positionId, type) 匹配 active 记录 → 把旧确认挂到 R2 上，
+  // 随后被 confirmedNotCompetentSet 判为**生效** → 「离岗重入后旧确认复活」，违反 v2.3 M1 的 F02。
+  //
+  // 同语义在评分侧已有守卫（competency.ts 的 assessmentApplicability：曾离岗再回 → historical），
+  // 此处补齐缺失的一半。守卫条件：该 (员工, 岗位, 类型) 存在任何带 endDate 的历史 primary 记录。
+  const revisitedKeys = new Set(
+    out.filter((a) => a.type === 'primary' && a.endDate).map((a) => key(a)),
+  );
   for (const a of out) {
     const active = activeByKey.get(key(a));
-    if (linkConfirmations && currentKeys.has(key(a)) && active?.length === 1 && a.status === 'not_competent' && !a.relationId && !a.endDate) a.relationId = active[0].id;
+    if (linkConfirmations && currentKeys.has(key(a)) && active?.length === 1 && a.status === 'not_competent'
+      && !a.relationId && !a.endDate && !revisitedKeys.has(key(a))) {
+      a.relationId = active[0].id;
+    }
   }
   return out;
 }

@@ -177,28 +177,61 @@ function assessmentRecordedAt(a: Assessment): string {
   return a.createdAt || a.assessedAt;
 }
 
-/** 收集某员工的全部人工复核事件（含已撤销、已结束任职的历史确认），按确认时间倒序。 */
-export function listReviewEvents(
+/**
+ * 复核事件索引（v2.3.1 F-15）。
+ *
+ * 背景：`listReviewEvents` 每次调用都会重建 `activeRelations` 并全表扫描 `assessments`；
+ * 而看板派生对**每个员工**各调一次 → O(员工 × 关系) 的重复索引构建。
+ * 实测 1000 人 / 1000 关系 / 4000 评分下，该循环占 `deriveBoard` 26ms 中的 21ms（82%）。
+ *
+ * 本索引把「按员工分组」的工作一次性做完，调用方复用即可，结果与逐员工调用完全一致。
+ */
+export interface ReviewEventIndex {
+  activeRelations: Map<string, PositionAssignment>;
+  notCompetentByEmployee: Map<string, PositionAssignment[]>;
+  assessmentsByEmployee: Map<string, Assessment[]>;
+}
+
+export function buildReviewEventIndex(
   assignments: PositionAssignment[],
   assessments: Assessment[],
-  employeeId?: string,
-): ReviewEvent[] {
-  const activeRelations = new Map(
-    assignments.filter((a) => a.status === 'active' && !a.endDate).map((a) => [a.id, a]),
-  );
-  const out: ReviewEvent[] = [];
+): ReviewEventIndex {
+  const activeRelations = new Map<string, PositionAssignment>();
+  const notCompetentByEmployee = new Map<string, PositionAssignment[]>();
   for (const a of assignments) {
-    if (a.status !== 'not_competent') continue;
-    if (employeeId && a.employeeId !== employeeId) continue;
-    const relation = a.relationId ? activeRelations.get(a.relationId) : undefined;
+    if (a.status === 'active' && !a.endDate) activeRelations.set(a.id, a);
+    if (a.status === 'not_competent') {
+      const rows = notCompetentByEmployee.get(a.employeeId) ?? [];
+      rows.push(a);
+      notCompetentByEmployee.set(a.employeeId, rows);
+    }
+  }
+  const assessmentsByEmployee = new Map<string, Assessment[]>();
+  for (const x of assessments) {
+    if (x.assessorRole !== 'supervisor') continue;
+    const rows = assessmentsByEmployee.get(x.employeeId) ?? [];
+    rows.push(x);
+    assessmentsByEmployee.set(x.employeeId, rows);
+  }
+  return { activeRelations, notCompetentByEmployee, assessmentsByEmployee };
+}
+
+/** 从预建索引取某员工的复核事件（无 employeeId = 全部员工）。 */
+export function listReviewEventsFromIndex(index: ReviewEventIndex, employeeId?: string): ReviewEvent[] {
+  const records = employeeId
+    ? index.notCompetentByEmployee.get(employeeId) ?? []
+    : [...index.notCompetentByEmployee.values()].flat();
+  const out: ReviewEvent[] = [];
+  for (const a of records) {
+    const relation = a.relationId ? index.activeRelations.get(a.relationId) : undefined;
     const relationActive = Boolean(relation);
     const appliesToCurrentRelation =
       relationActive && relation!.employeeId === a.employeeId && relation!.positionId === a.positionId;
     // 「依据之后有新评分」：同一员工、时刻晚于确认时刻、且适用范围覆盖本次任职的 supervisor 评分
     const after = a.confirmedAt
-      ? assessments.filter((x) => x.employeeId === a.employeeId && x.assessorRole === 'supervisor'
-          && assessmentRecordedAt(x) > a.confirmedAt!
-          && (!x.positionId || x.positionId === a.positionId))
+      ? (index.assessmentsByEmployee.get(a.employeeId) ?? []).filter(
+          (x) => assessmentRecordedAt(x) > a.confirmedAt! && (!x.positionId || x.positionId === a.positionId),
+        )
       : [];
     out.push({
       id: a.id,
@@ -221,4 +254,14 @@ export function listReviewEvents(
     });
   }
   return out.sort((x, y) => (y.confirmedAt ?? '').localeCompare(x.confirmedAt ?? ''));
+}
+
+/** 收集某员工的全部人工复核事件（含已撤销、已结束任职的历史确认），按确认时间倒序。
+ *  单次调用场景保持原 API；批量（看板派生）请先用 `buildReviewEventIndex` 建索引再复用。 */
+export function listReviewEvents(
+  assignments: PositionAssignment[],
+  assessments: Assessment[],
+  employeeId?: string,
+): ReviewEvent[] {
+  return listReviewEventsFromIndex(buildReviewEventIndex(assignments, assessments), employeeId);
 }

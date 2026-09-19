@@ -474,7 +474,9 @@ export function computeScenarioTotals(s: Scenario, thresholds?: HealthThresholds
     }
   }
   for (const row of l3) {
-    if (l1ById.has(row.deptId) && row.gap !== null) totalGapCost += row.gapCost;
+    // v2.3.1（F-11）：gapCost 现在可为 null（无法估算），缺依据的部门不并入合计，
+    // 避免把「不知道」当成 0 参与净差计算。
+    if (l1ById.has(row.deptId) && row.gap !== null && row.gapCost !== null) totalGapCost += row.gapCost;
   }
 
   const seen = new Set<string>();

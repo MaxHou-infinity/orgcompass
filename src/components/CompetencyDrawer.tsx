@@ -176,25 +176,32 @@ export function CompetencyDrawer({
   const [expandedPosIds, setExpandedPosIds] = useState<Set<string>>(() => new Set());
 
   const emptyModel: CompetencyModel = useMemo(() => ({ dimensions: [] }), []);
-  /** v2.3 M3：本次看板唯一派生结果（汇总、下钻、导出共用） */
+  const emptySummaries = useMemo(() => new Map<string, CompetencySummary>(), []);
+  /**
+   * v2.3 M3：本次看板唯一派生结果（汇总、下钻、导出共用）。
+   * v2.3.1（Q-23）：抽屉在 App 里是**常驻挂载**的，关闭态也要重渲染；
+   * 旧实现把 deriveBoard 写在 `if (!open) return null` 之前且不看 open，
+   * 于是每次无关重渲染都白付一次全量派生（实测约 27ms/次）。
+   * 关闭时按空输入派生（近似零成本），打开时再算真实数据。
+   */
   const board = useMemo(
     () => deriveBoard({
-      departments,
-      allEmployees,
-      allPositions,
-      assessments,
+      departments: open ? departments : [],
+      allEmployees: open ? allEmployees : [],
+      allPositions: open ? allPositions : [],
+      assessments: open ? assessments : [],
       competencyModel: competencyModel ?? emptyModel,
-      positionAssignments,
-      levelConfigs,
-      competencySummaries,
-      matchStates,
+      positionAssignments: open ? positionAssignments : [],
+      levelConfigs: open ? levelConfigs : [],
+      competencySummaries: open ? competencySummaries : emptySummaries,
+      matchStates: open ? matchStates : [],
       ...(confirmedNotCompetent ? { confirmedNotCompetent } : {}),
       scopeDeptId: selectedDeptId,
       includeChildren,
       filter,
     }),
-    [departments, allEmployees, allPositions, assessments, competencyModel, emptyModel, positionAssignments,
-      levelConfigs, competencySummaries, matchStates, confirmedNotCompetent, selectedDeptId, includeChildren, filter],
+    [open, departments, allEmployees, allPositions, assessments, competencyModel, emptyModel, positionAssignments,
+      levelConfigs, competencySummaries, emptySummaries, matchStates, confirmedNotCompetent, selectedDeptId, includeChildren, filter],
   );
 
   const dialogRef = useDialogFocus(open, onClose);

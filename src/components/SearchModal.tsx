@@ -3,6 +3,7 @@ import { Search, X, Building2, User, CornerDownLeft } from 'lucide-react';
 import { Department } from '../types';
 import { searchOrg, SearchMatch, SearchResult } from '../utils/search';
 import { SearchHighlight } from './SearchContext';
+import { useDialogFocus } from '../utils/useDialogFocus';
 
 interface SearchModalProps {
   open: boolean;
@@ -27,6 +28,8 @@ export function SearchModal({
   onJump,
   onCloseKeepHighlight,
 }: SearchModalProps) {
+  // v2.3.1（F-14）：对话框语义 + 焦点陷阱 + Esc 关闭（与其它弹窗统一）
+  const dialogRef = useDialogFocus(open, onClose);
   const [query, setQuery] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -78,7 +81,17 @@ export function SearchModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[110] flex items-start justify-center pt-[12vh]">
+    // v2.3.1（F-14）：补 role="dialog"。App 用 `document.querySelector('[role="dialog"]')`
+    // 判断「是否在弹窗内」来决定是否放行 Ctrl+Z；缺这个属性时，在本弹窗里按 Ctrl+Z
+    // 会穿透到底层画布执行 undo() —— 静默撤销用户看不见的编辑。
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="搜索"
+      tabIndex={-1}
+      className="fixed inset-0 z-[110] flex items-start justify-center pt-[12vh]"
+    >
       {/* 半透明遮罩 */}
       <div className="absolute inset-0 bg-slate-900/20 backdrop-blur-[2px]" onClick={onClose} />
 

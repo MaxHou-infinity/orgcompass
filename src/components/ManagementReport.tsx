@@ -18,6 +18,7 @@ import {
   type GapListRow,
 } from '../utils/gapList';
 import { deriveBoard } from '../utils/boardScope';
+import type { CompetencySummary } from '../utils/competency';
 import { STATUS_STYLE, fmt, fmtCost } from '../utils/statusUI';
 import { APP_VERSION } from '../version';
 
@@ -220,24 +221,25 @@ export function ManagementReport({
   const diff: ScenarioDiffResult = useMemo(() => computeScenarioDiff(baseline, target), [baseline, target]);
 
   // —— v2.3 M4：岗位缺口清单（与界面岗位明细表使用同一份 deriveBoard 派生，Excel 同源）——
-  const emptySummaries = useMemo(() => new Map(), []);
+  // v2.3.1：去掉 `as never`，用带类型的空 Map（类型本就匹配 BoardInput.competencySummaries）。
+  const emptySummaries = useMemo(() => new Map<string, CompetencySummary>(), []);
   const gapBoard = useMemo(
     () => deriveBoard({
-      departments: target.departments,
-      allEmployees: target.allEmployeesFlat,
+      departments: open ? target.departments : [],
+      allEmployees: open ? target.allEmployeesFlat : [],
       // v2.3 M4 修复：岗位以部门树为结构来源；Scenario.positions 仅作兜底（可能过期）
-      allPositions: target.positions ?? [],
-      assessments: target.assessments ?? [],
+      allPositions: open ? target.positions ?? [] : [],
+      assessments: open ? target.assessments ?? [] : [],
       competencyModel: target.competencyModel ?? { dimensions: [] },
-      positionAssignments: target.positionAssignments ?? [],
-      levelConfigs,
-      competencySummaries: emptySummaries as never,
+      positionAssignments: open ? target.positionAssignments ?? [] : [],
+      levelConfigs: open ? levelConfigs : [],
+      competencySummaries: emptySummaries,
       matchStates: [],
       scopeDeptId: null,
       includeChildren: true,
       filter: 'all',
     }),
-    [target, levelConfigs, emptySummaries],
+    [open, target, levelConfigs, emptySummaries],
   );
   /** 目标场景岗位缺口清单（界面与 Excel 逐行同源） */
   const gapRows = useMemo(() => buildGapListRows(gapBoard, target.name), [gapBoard, target.name]);

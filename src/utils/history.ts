@@ -1,4 +1,4 @@
-import { useRef, useSyncExternalStore } from 'react';
+import { useMemo, useRef, useSyncExternalStore } from 'react';
 import type { Assessment, CompetencyModel, Department, Employee, PositionAssignment } from '../types';
 
 /**
@@ -17,7 +17,12 @@ export class HistoryStore<T> {
   private limit: number;
   private listeners = new Set<() => void>();
 
-  constructor(initial: T, limit = 50) {
+  /**
+   * v2.3.1（Q-20）：`preserve(restored, current)` 在撤销/重做落地前做一次合并，
+   * 用于让「不可回退的事实」（如人工复核确认记录）不被一次 Ctrl+Z 无痕抹掉 ——
+   * 复核事实是合规留痕，删除必须走显式撤销确认（带撤销人/时间/原因），不能靠编辑器快捷键。
+   */
+  constructor(initial: T, limit = 50, private preserve?: (restored: T, current: T) => T) {
     this.present = initial;
     this.limit = limit;
   }
@@ -61,7 +66,8 @@ export class HistoryStore<T> {
     if (this.past.length === 0) return;
     const prev = this.past.pop()!;
     this.future.push(this.present);
-    this.present = prev;
+    // v2.3.1（Q-20）：撤销前允许「保留不可回退的事实」（人工复核留痕）。
+    this.present = this.preserve ? this.preserve(prev, this.present) : prev;
     this.emit();
   }
 
@@ -69,7 +75,7 @@ export class HistoryStore<T> {
     if (this.future.length === 0) return;
     const next = this.future.pop()!;
     this.past.push(this.present);
-    this.present = next;
+    this.present = this.preserve ? this.preserve(next, this.present) : next;
     this.emit();
   }
 
@@ -114,22 +120,47 @@ export interface HistorySnapshot {
  * @param initial 初始快照
  * @param limit 栈深上限
  */
-export function useHistoryState<S>(initial: S, limit = 50) {
+export function useHistoryState<S>(
+  initial: S,
+  limit = 50,
+  /** v2.3.1（Q-20）：撤销/重做前的事实保留钩子（见 HistoryStore.preserve） */
+  preserve?: (restored: S, current: S) => S,
+) {
   const storeRef = useRef<HistoryStore<S> | null>(null);
-  if (!storeRef.current) storeRef.current = new HistoryStore<S>(initial, limit);
+  const preserveRef = useRef(preserve);
+  preserveRef.current = preserve;
+  if (!storeRef.current) {
+    storeRef.current = new HistoryStore<S>(initial, limit, (restored, current) =>
+      preserveRef.current ? preserveRef.current(restored, current) : restored,
+    );
+  }
   const store = storeRef.current;
 
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
 
+  // v2.3.1（Q-25）：这几个方法必须保持**稳定引用**。
+  // `store.set.bind(store)` 每次渲染都会产生新函数，而 App 的全局键盘 effect 依赖 [undo, redo] →
+  // 每次无关重渲染都重新 addEventListener/removeEventListener（实测 20 次重渲染 = 20 次绑定）。
+  // store 实例在组件生命周期内不变，因此这里可以安全地用 useMemo 固定身份。
+  const actions = useMemo(
+    () => ({
+      /** 提交新快照（入历史栈） */
+      set: store.set.bind(store),
+      /** 替换快照（清空历史，用于载入/重置） */
+      replace: store.replace.bind(store),
+      undo: store.undo.bind(store),
+      redo: store.redo.bind(store),
+    }),
+    [store],
+  );
+
   return {
     state,
     getSnapshot: store.getSnapshot,
-    /** 提交新快照（入历史栈） */
-    set: store.set.bind(store),
-    /** 替换快照（清空历史，用于载入/重置） */
-    replace: store.replace.bind(store),
-    undo: store.undo.bind(store),
-    redo: store.redo.bind(store),
+    set: actions.set,
+    replace: actions.replace,
+    undo: actions.undo,
+    redo: actions.redo,
     canUndo: store.canUndo(),
     canRedo: store.canRedo(),
     undoDepth: store.undoDepth,

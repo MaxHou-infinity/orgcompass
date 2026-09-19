@@ -22,12 +22,12 @@ import { CompetencyModelModal } from './components/CompetencyModelModal';
 import { GapListModal } from './components/GapListModal';
 import { computeUnassignedEmployees } from './utils/analytics';
 import { SearchHighlight } from './components/SearchContext';
-import { Employee, Department, OrgTemplate, Position, Assessment, COMPETENCY_SCALE } from './types';
+import { Employee, Department, OrgTemplate, Position, Assessment, COMPETENCY_SCALE, LeaderType } from './types';
 import { expandDepartments, SearchMatch } from './utils/search';
 import { computePositionSummary } from './utils/analytics';
 import { computeMatchStates } from './utils/match';
 import { flattenAllPositions } from './components/positionUtils';
-import { uid, decodeStoredProject, PROJECT_STORAGE_KEY } from './utils/project';
+import { uid, decodeStoredProject, PROJECT_STORAGE_KEY, listProjectBackups } from './utils/project';
 import { assignPrimary, indexPlacements, inspectPlacements, seedLegacyAssignments } from './utils/placement';
 import { moveEmployeesBetween } from './utils/departments';
 import { findIndustryTemplate, loadIndustryTemplate } from './utils/industryTemplates';
@@ -49,6 +49,8 @@ import {
   benchmarkFor,
   revisionChainIssue,
   currentRevisionEndpoint,
+  computeManagerIdSet,
+  localDayOf,
   CompetencySummary,
   CompetencyScopeContext,
 } from './utils/competency';
@@ -154,6 +156,7 @@ export default function App() {
     renameProject,
     exportProjectJson,
     importProjectJson,
+    restoreProjectBackup,
     resetWorkspace,
     project,
     currentScenario,
@@ -228,9 +231,19 @@ export default function App() {
   }, []);
 
 
+  // v2.3.1（Q-27）：定时器必须可清理。旧实现每次都新建 timer 且不清理上一个 →
+  // 连续操作时「上一条 toast 的 timer」会提前把新 toast 清掉，关键提示（如「N 条被拒绝」）闪现即逝。
+  const toastTimerRef = useRef<number | null>(null);
   const showToast = useCallback((msg: string) => {
     setToast(msg);
-    window.setTimeout(() => setToast(null), 2200);
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => {
+      toastTimerRef.current = null;
+      setToast(null);
+    }, 2200);
+  }, []);
+  useEffect(() => () => {
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
   }, []);
 
   // v2.0.7 首次进入引导：画布默认显示岗位/职级，提示可在左侧「画布显示」开关
@@ -356,6 +369,31 @@ export default function App() {
     });
   }, [setDepartments]);
 
+  /**
+   * v2.3.1（Q-07）：设置负责人类型。
+   *
+   * `leaderType` 自 v2.1.1 起已建模、已持久化、已被管理者比与空缺提示消费，
+   * 但全仓**没有任何写入点** → 「副职/挂名精确剔除」与「负责人空缺」对真实用户数据永远不可达
+   * （analytics 只能靠「负责人不在名册」推断外部，工号笔误即被静默剔除）。
+   * 这里补上写入口，让已承诺的口径真正生效。
+   */
+  const handleUpdateLeaderType = useCallback((deptId: string, leaderType: LeaderType | undefined) => {
+    setDepartments((prev) => {
+      const update = (depts: Department[]): Department[] =>
+        depts.map((dept) => {
+          if (dept.id === deptId) {
+            const next = { ...dept };
+            if (leaderType === undefined) delete next.leaderType;
+            else next.leaderType = leaderType;
+            return next;
+          }
+          if (dept.children.length > 0) return { ...dept, children: update(dept.children) };
+          return dept;
+        });
+      return update(prev);
+    });
+  }, [setDepartments]);
+
   const requestMoveEmployees = useCallback((empIds: string[], toDeptId: string) => {
     const index = indexPlacements(departments);
     if (!index.departments.has(toDeptId)) return;
@@ -403,25 +441,8 @@ export default function App() {
   // 全量员工 → CompetencySummary（每个员工一条；未评/不可算也有完整度占位，不伪装绿/红）
   // v2.3 M2：按「当前分类应评维度 + 人岗适用范围（relationId/岗位核对）」取数
   const managerIds = useMemo(() => {
-    const out = new Set<string>();
-    const idsByEmployeeId = new Map<string, string[]>();
-    for (const e of allEmployeesFlat) {
-      if (e.isVirtual || !e.employeeId) continue;
-      idsByEmployeeId.set(e.employeeId, [...(idsByEmployeeId.get(e.employeeId) ?? []), e.id]);
-    }
-    const resolve = (v: string) => idsByEmployeeId.get(v) ?? [v];
-    const walk = (list: Department[]) => {
-      for (const d of list) {
-        if (d.leaderId) for (const id of resolve(d.leaderId)) out.add(id);
-        walk(d.children);
-      }
-    };
-    walk(departments);
-    for (const e of allEmployeesFlat) {
-      if (e.isVirtual || !e.reportsToEmployeeId) continue;
-      for (const id of resolve(e.reportsToEmployeeId)) if (id !== e.id) out.add(id);
-    }
-    return out;
+    // v2.3.1（Q-33）：与批量评估共用同一份判定实现，避免「按干部评分、按员工算完整度」的双实现漂移。
+    return computeManagerIdSet(departments, allEmployeesFlat);
   }, [allEmployeesFlat, departments]);
 
   const activePrimaryByEmployee = useMemo(() => {
@@ -812,7 +833,8 @@ export default function App() {
     } catch (error) {
       console.error('导出PNG失败:', error);
       const detail = error instanceof Error ? error.message : String(error);
-      alert(`导出PNG失败：${detail}`);
+      // v2.3.1（Q-26）：与其余 41 处反馈统一走 toast（原生 alert 会中断桌面端交互、且样式不可控）
+      showToast(`导出 PNG 失败：${detail}`);
     }
   }, [showToast]);
 
@@ -822,7 +844,7 @@ export default function App() {
       showToast('Excel 已导出');
     } catch (error) {
       console.error('导出Excel失败:', error);
-      alert('导出Excel失败');
+      showToast(`导出 Excel 失败：${error instanceof Error ? error.message : '未知错误'}`);
     }
   }, [departments, showToast]);
 
@@ -837,18 +859,18 @@ export default function App() {
       await generateSampleEmployeeTemplate();
     } catch (error) {
       console.error('下载员工信息模板失败:', error);
-      alert('下载员工信息模板失败');
+      showToast(`下载员工信息模板失败：${error instanceof Error ? error.message : '未知错误'}`);
     }
-  }, []);
+  }, [showToast]);
 
   const handleDownloadOrgTemplate = useCallback(async () => {
     try {
       await generateSampleOrgTemplate();
     } catch (error) {
       console.error('下载组织架构模板失败:', error);
-      alert('下载组织架构模板失败');
+      showToast(`下载组织架构模板失败：${error instanceof Error ? error.message : '未知错误'}`);
     }
-  }, []);
+  }, [showToast]);
 
   // 创建新部门
   const handleCreateDepartment = useCallback((name: string, level: number, parentId: string | null, leaderId?: string, leaderName?: string) => {
@@ -967,9 +989,17 @@ export default function App() {
   const handleImportProject = useCallback((json: string) => {
     try {
       const ok = importProjectJson(json);
-      showToast(ok ? '已导入项目文件' : '导入失败：文件格式无效或保存失败');
+      showToast(ok ? '已导入项目文件（原工作区已留快照，可在项目管理中恢复）' : '导入失败：文件格式无效或保存失败');
     } catch (error) { showToast(error instanceof Error ? error.message : '项目读取失败'); }
   }, [importProjectJson, showToast]);
+
+  // v2.3.1（F-12）：从历史快照恢复
+  const handleRestoreBackup = useCallback((key: string) => {
+    try {
+      const ok = restoreProjectBackup(key);
+      showToast(ok ? '已恢复到所选快照（恢复前状态也已留快照）' : '恢复失败：该快照无法读取');
+    } catch (error) { showToast(error instanceof Error ? error.message : '恢复快照失败'); }
+  }, [restoreProjectBackup, showToast]);
 
   const handleOpenReport = useCallback(() => {
     flushCurrent();
@@ -1049,6 +1079,8 @@ export default function App() {
           ...(r.assessorId ? { assessorId: r.assessorId } : {}),
           ...(r.enteredBy ? { enteredBy: r.enteredBy } : {}),
           assessedAt: r.assessedAt,
+          // v2.3.1（F-08）：显式记录评估自然日，作为同日判定的唯一键
+          assessmentDay: localDayOf(r.assessedAt),
           source: r.source,
           ...(r.note ? { note: r.note } : {}),
           ...(endpoint ? { revisionOf: endpoint.id, revisionNote: '同日修改评分，显式关联被修订记录' } : {}),
@@ -1130,6 +1162,7 @@ export default function App() {
               assessorRole: 'supervisor',
               ...(row.assessorName ? { assessorId: row.assessorName } : {}),
               assessedAt,
+              assessmentDay: localDayOf(assessedAt),
               source: 'import',
               ...(row.note ? { note: row.note } : {}),
               createdAt: now,
@@ -1195,6 +1228,34 @@ export default function App() {
   const handleConfirmNotCompetent = useCallback(
     (empId: string, confirmed: boolean, payload: { reviewer: string; reason?: string }) => {
       const now = new Date().toISOString();
+      // v2.3.1（Q-19）：先在**当前状态**上判定前置条件，失败时给出可行动提示而不是假报成功。
+      // 旧实现在 setBoth 的 updater 里 `return prev`，而 toast 无条件报「已确认/已撤销，留痕」——
+      // 用户会以为合规记录已写入，实际状态未变（可复现：画布与名册岗位引用不一致时点确认，
+      // 或对 legacy 无 relationId 的确认点撤销）。
+      const precheckRecords = seedLegacyAssignments(allEmployeesFlat, departments, positionAssignments, now, false);
+      const precheckEmp = allEmployeesFlat.find((e) => !e.isVirtual && e.id === empId);
+      const precheckActive = precheckRecords.filter(
+        (a) => a.employeeId === empId && a.positionId === precheckEmp?.positionId && a.type === 'primary' && a.status === 'active' && !a.endDate,
+      );
+      if (precheckActive.length !== 1) {
+        showToast('无法执行：该员工当前没有唯一的在任主岗，请先在画布/名册核对人岗关系');
+        return;
+      }
+      const precheckRelation = precheckActive[0];
+      if (!confirmed) {
+        const current = precheckRecords.find(
+          (a) => a.status === 'not_competent' && a.relationId === precheckRelation.id && !a.revokedAt,
+        );
+        if (!current) {
+          showToast('没有可撤销的确认：该员工在当前岗位没有生效中的人工确认');
+          return;
+        }
+      } else if (precheckRecords.some(
+        (a) => a.status === 'not_competent' && a.relationId === precheckRelation.id && !a.revokedAt,
+      )) {
+        showToast('无需重复确认：该员工在当前岗位已有生效中的人工确认');
+        return;
+      }
       setBoth((prev) => {
         const records = seedLegacyAssignments(prev.allEmployeesFlat, prev.departments, prev.positionAssignments, now, false);
         const emp = prev.allEmployeesFlat.find((e) => !e.isVirtual && e.id === empId);
@@ -1227,7 +1288,7 @@ export default function App() {
       });
       showToast(confirmed ? `已确认不胜任（复核人：${payload.reviewer}，留痕）` : `已撤销确认（撤销人：${payload.reviewer}，原确认保留）`);
     },
-    [setBoth, showToast, assessments],
+    [setBoth, showToast, assessments, allEmployeesFlat, departments, positionAssignments],
   );
 
   // —— v2.0.9 场景差异比较 ——
@@ -1438,6 +1499,7 @@ export default function App() {
             onToggleExpand={handleToggleExpand}
             onUpdateDepartment={handleUpdateDepartment}
             onUpdateLeader={handleUpdateLeader}
+            onUpdateLeaderType={handleUpdateLeaderType}
             onMoveEmployee={handleMoveEmployee}
             onMoveMultiple={handleMoveMultiple}
             onMoveDepartment={handleMoveDepartment}
@@ -1476,7 +1538,13 @@ export default function App() {
       )}
 
       {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[120] px-4 py-2.5 rounded-xl bg-slate-900/90 text-white text-sm font-medium shadow-xl animate-fadeInUp">
+        // v2.3.1（Q-28）：toast 是导入/保存/导出/冲突拒绝的唯一反馈通道，必须有 live region，
+        // 否则读屏用户完全感知不到（全仓此前 aria-live = 0）。
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[120] px-4 py-2.5 rounded-xl bg-slate-900/90 text-white text-sm font-medium shadow-xl animate-fadeInUp"
+        >
           {toast}
         </div>
       )}
@@ -1512,6 +1580,8 @@ export default function App() {
         onSwitchScenario={switchScenario}
         onImport={handleImportProject}
         onExport={handleExportProject}
+        onListBackups={listProjectBackups}
+        onRestoreBackup={handleRestoreBackup}
       />
 
       <DiagnosticReport

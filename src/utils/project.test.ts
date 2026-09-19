@@ -14,6 +14,7 @@ import {
 } from './project';
 import { computeL2 } from './analytics';
 import { Scenario, Department, Employee, DEFAULT_COMPETENCY_MODEL } from '../types';
+import type { ProjectFile } from '../types';
 
 function emp(id: string): Employee {
   return { id, name: id, employeeId: id, level: 'L1.1' };

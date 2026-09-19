@@ -10,7 +10,7 @@ import {
   revisionChainIssue,
   revisionLinkIssue,
 } from './competency';
-import { listReviewEvents } from './assignment';
+import { confirmedNotCompetentSet, listReviewEvents } from './assignment';
 import { parseProject, serializeProject, createProject } from './project';
 import type {
   Assessment,
@@ -290,8 +290,10 @@ describe('A16—A18 同日修订与冲突（R06、F03）', () => {
       .toBe('修订不能跨维度');
     expect(revisionChainIssue(all, asm({ employeeId: 'b', dimension: 'business', score: 3, assessedAt: T, revisionOf: 'other', assessorRole: 'hrbp' })))
       .toBe('修订不能跨评分角色');
+    // v2.3.1（F-08）：同日判定的键从「时刻」改为「自然日」，文案随之更新；断言意图不变 ——
+    // 跨自然日的修订必须被拒绝。
     expect(revisionChainIssue(all, asm({ employeeId: 'b', dimension: 'business', score: 3, assessedAt: '2026-10-01T00:00:00.000Z', revisionOf: 'other' })))
-      .toBe('修订不能跨评估时点');
+      .toBe('修订不能跨评估日');
     expect(revisionChainIssue(all, asm({ employeeId: 'b', dimension: 'business', score: 3, assessedAt: T, revisionOf: 'missing' })))
       .toBe('被修订记录不存在');
 
@@ -375,6 +377,20 @@ describe('A20—A21 人工复核留痕（R03、D04）', () => {
     expect(events[0].assessmentIds).toEqual(['sup-1']);
     // 当前确认取消 → 不再作用于在任关系
     expect(events[0].appliesToCurrentRelation).toBe(true); // 任职仍在，但确认已撤销（由 revoked 表达）
+
+    // v2.3.1（T-06）：原用例到此为止，读侧（confirmedNotCompetentSet）零保护 ——
+    // 去掉 assignment.ts 里 `a.revokedAt` 过滤后，m2.evaluation 27/27、m2.app 4/4 仍全绿。
+    // 这里补上真正的读侧断言：撤销后不得再把该员工投影为「不胜任」。
+    const employees = [{ id: 'a', name: 'A', employeeId: 'E1', level: 'L1', positionId: 'p1' }];
+    expect(confirmedNotCompetentSet([relation, revoked], employees).has('a')).toBe(false);
+    // 对照：未撤销时确实会被投影（证明上面的 false 不是「永远为 false」）
+    expect(confirmedNotCompetentSet([relation, confirmed], employees).has('a')).toBe(true);
+    // 撤销后即使出现新评分，也不应重新生效（人工结论只能由显式确认产生）
+    const later = { id: 'sup-2', employeeId: 'a', dimension: 'business', score: 2, scale: COMPETENCY_SCALE,
+      requirement: 3, assessorRole: 'supervisor' as const, assessedAt: '2026-09-09T00:00:00.000Z',
+      source: 'manual' as const, createdAt: '2026-09-09T00:00:00.000Z', updatedAt: '2026-09-09T00:00:00.000Z' };
+    expect(confirmedNotCompetentSet([relation, revoked], employees).has('a')).toBe(false);
+    expect(listReviewEvents([relation, revoked], [later], 'a')[0].staleAfterNewAssessment).toBe(false);
   });
 
   it('未撤销的确认作用于当前在任关系', () => {

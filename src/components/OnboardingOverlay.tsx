@@ -1,5 +1,6 @@
 import { X, Download, Sparkles, FileSpreadsheet, MousePointerClick, Share2 } from 'lucide-react';
 import { APP_VERSION } from '../version';
+import { useDialogFocus } from '../utils/useDialogFocus';
 
 interface OnboardingOverlayProps {
   open: boolean;
@@ -13,6 +14,9 @@ interface OnboardingOverlayProps {
  * 三步走（导入 → 拖拽 → 导出），帮助新用户快速上手。
  */
 export function OnboardingOverlay({ open, onClose, onDownloadTemplate, onLoadTemplate }: OnboardingOverlayProps) {
+  // v2.3.1（F-14）：补对话框语义 —— App 用 [role="dialog"] 判断是否在弹窗内，
+  // 缺它会让 Ctrl+Z 穿透到底层画布，静默撤销用户看不见的编辑。
+  const dialogRef = useDialogFocus(open, onClose);
   if (!open) return null;
 
   const steps = [
@@ -37,7 +41,14 @@ export function OnboardingOverlay({ open, onClose, onDownloadTemplate, onLoadTem
   ];
 
   return (
-    <div className="fixed inset-0 z-[130] flex items-center justify-center p-6">
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="首次使用引导"
+      tabIndex={-1}
+      className="fixed inset-0 z-[130] flex items-center justify-center p-6"
+    >
       <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm" onClick={onClose} />
       <div className="relative w-[560px] max-w-[92vw] rounded-3xl glass shadow-2xl overflow-hidden animate-fadeInUp">
         <div className="bg-indigo-700 p-7 text-white relative">

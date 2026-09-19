@@ -231,6 +231,6 @@ PR #7 只把 `tailwindcss` 升到 4.3，**未迁移 PostCSS 与 CSS 入口**，�
 
 | 视角 | 文档 | 内容 |
 | --- | --- | --- |
-| 产品 | [docs/v208-product-scope.md](docs/v208-product-scope.md) | 范围/验收/风险边界/用户话术 |
-| 安全·健壮·构建 | [docs/v208-security-build.md](docs/v208-security-build.md) | xlsx 处置/Tailwind 4/Vite 8/CI 硬化明细 |
-| HR | [docs/v208-hr-value-audit.md](docs/v208-hr-value-audit.md) | 指标口径审计/阶段基准/HR 价值优先级 |
+| 产品 | [v208-product-scope.md](v208-product-scope.md) | 范围/验收/风险边界/用户话术 |
+| 安全·健壮·构建 | [v208-security-build.md](v208-security-build.md) | xlsx 处置/Tailwind 4/Vite 8/CI 硬化明细 |
+| HR | [v208-hr-value-audit.md](v208-hr-value-audit.md) | 指标口径审计/阶段基准/HR 价值优先级 |

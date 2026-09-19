@@ -4,7 +4,7 @@ import { DEFAULT_LEVELS } from './levels';
 import { DEFAULT_COMPETENCY_MODEL } from '../types';
 import { computeL2, computeL3 } from './analytics';
 import { computeMatchStates } from './match';
-import type { ProjectFile, Scenario } from '../types';
+import type { Position, ProjectFile, Scenario } from '../types';
 
 /**
  * —— v2.2.0 迁移 E2E（design doc §4 / §13 出口）——
@@ -19,8 +19,8 @@ import type { ProjectFile, Scenario } from '../types';
 /** v2 项目 fixture：d1(编制5)、d2(编制3，有员工)、d3(未配置编制，有员工)——真实 v2 结构（部门内岗位镜像 + 员工套岗），无胜任度字段 */
 function v2ProjectFixture(): ProjectFile {
   const now = '2026-08-01T00:00:00Z';
-  const posD1 = { id: 'pos-d1', departmentId: 'd1', name: '默认岗位', headcount: 5, status: 'active', createdAt: now, updatedAt: now };
-  const posD2 = { id: 'pos-d2', departmentId: 'd2', name: '默认岗位', headcount: 3, status: 'active', createdAt: now, updatedAt: now };
+  const posD1: Position = { id: 'pos-d1', departmentId: 'd1', name: '默认岗位', headcount: 5, status: 'active', createdAt: now, updatedAt: now };
+  const posD2: Position = { id: 'pos-d2', departmentId: 'd2', name: '默认岗位', headcount: 3, status: 'active', createdAt: now, updatedAt: now };
   const scenario: Scenario = {
     id: 's1',
     name: '基线',

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Department, Employee, PositionAssignment } from '../types';
-import { DEFAULT_COMPETENCY_MODEL } from '../types';
+import type { Assessment, Department, Employee, PositionAssignment } from '../types';
+import { COMPETENCY_SCALE, DEFAULT_COMPETENCY_MODEL } from '../types';
 import { assignPrimary, inspectPlacements, reconcilePlacementChange, seedLegacyAssignments } from './placement';
 import type { HistorySnapshot } from './history';
 import { confirmedNotCompetentSet } from './assignment';
@@ -114,8 +114,10 @@ describe('M1 当前关系与历史', () => {
   it('孤立评分、冲突在任关系明确提示，冲突不算正常套岗', () => {
     const a = confirm(fixture());
     const rows = [...a.positionAssignments, { ...a.positionAssignments[0], id: 'other', positionId: 'pb' }];
-    const orphan = { id: 'score', employeeId: 'missing', dimension: 'business', score: 2, scale: { min: 1, max: 5 }, requirement: 3,
-      assessorRole: 'supervisor' as const, assessedAt: t0, source: 'manual' as const, createdAt: t0, updatedAt: t0 };
+    // v2.3.1（T-08）：scale 需为 COMPETENCY_SCALE 的字面量类型（1/5 常量），
+    // 否则测试文件被 tsc 检查时报 TS2322 —— 此前因测试未纳入类型检查而静默存在。
+    const orphan: Assessment = { id: 'score', employeeId: 'missing', dimension: 'business', score: 2, scale: COMPETENCY_SCALE, requirement: 3,
+      assessorRole: 'supervisor', assessedAt: t0, source: 'manual', createdAt: t0, updatedAt: t0 };
     const issues = inspectPlacements(a.allEmployeesFlat, a.departments, rows, [orphan]);
     expect(issues.some((i) => i.includes('多条在任主岗'))).toBe(true);
     expect(confirmedNotCompetentSet(rows, a.allEmployeesFlat).size).toBe(0);

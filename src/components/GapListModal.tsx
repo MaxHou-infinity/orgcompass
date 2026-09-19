@@ -40,24 +40,25 @@ export function GapListModal({ open, onClose, projectName, scenario, onLocateDep
   const [exporting, setExporting] = useState(false);
   const dialogRef = useDialogFocus(open, onClose);
 
+  // v2.3.1（Q-23）：常驻挂载的弹窗关闭态也会重渲染；旧实现不看 open 就全量派生。
   const board = useMemo(
     () => deriveBoard({
-      departments: scenario.departments,
-      allEmployees: scenario.allEmployeesFlat,
+      departments: open ? scenario.departments : [],
+      allEmployees: open ? scenario.allEmployeesFlat : [],
       // v2.3 M4 修复：岗位以 scenario.departments 为结构来源（契约 §2.2）；
       // scenario.positions 是可能过期的历史镜像，只作树内无岗位时的兜底。
-      allPositions: scenario.positions ?? [],
-      assessments: scenario.assessments ?? [],
+      allPositions: open ? scenario.positions ?? [] : [],
+      assessments: open ? scenario.assessments ?? [] : [],
       competencyModel: scenario.competencyModel ?? { dimensions: [] },
-      positionAssignments: scenario.positionAssignments ?? [],
-      levelConfigs: scenario.levelConfigs,
+      positionAssignments: open ? scenario.positionAssignments ?? [] : [],
+      levelConfigs: open ? scenario.levelConfigs : [],
       competencySummaries: new Map(),
       matchStates: [],
       scopeDeptId,
       includeChildren,
       filter: 'all',
     }),
-    [scenario, scopeDeptId, includeChildren],
+    [open, scenario, scopeDeptId, includeChildren],
   );
 
   const allRows = useMemo(() => buildGapListRows(board, scenario.name), [board, scenario.name]);

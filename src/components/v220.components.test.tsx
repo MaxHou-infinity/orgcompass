@@ -11,15 +11,11 @@ import { BatchAssessmentModal } from './BatchAssessmentModal';
 import { CompetencyDetailModal } from './CompetencyDetailModal';
 import { CompetencyModelModal } from './CompetencyModelModal';
 import { DEFAULT_COMPETENCY_MODEL, COMPETENCY_SCALE } from '../types';
-import type {
-  Employee,
-  Department,
-  Position,
-  Assessment,
-  CompetencySummary,
-  LeadershipDossier,
-  MatchResult,
-} from '../types';
+import type { Employee, Department, Position, Assessment } from '../types';
+// v2.3.1（T-08）：这三个类型由派生模块导出，此前误从 ../types 引入（类型层并不存在）。
+// 因为测试文件长期不被 tsc 检查，这个错误一直静默存在；现在由 tsconfig.test.json 拦截。
+import type { CompetencySummary, LeadershipDossier } from '../utils/competency';
+import type { MatchResult } from '../utils/match';
 
 afterEach(cleanup); // testing-library 默认不自动清理（vitest globals 关闭），显式清理防 DOM 累积
 
@@ -129,7 +125,6 @@ describe('v2.2.0 组件交互冒烟', () => {
         onOpenDetail={vi.fn()}
         onStartBatch={vi.fn()}
         onOpenModelConfig={vi.fn()}
-        onConfirmNotCompetent={vi.fn()}
         confirmedNotCompetent={new Set()}
       />,
     );

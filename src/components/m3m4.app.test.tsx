@@ -61,10 +61,51 @@ beforeEach(() => {
   });
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   Element.prototype.scrollIntoView = vi.fn();
+  tauriMock.saveFile.mockReset();
+  tauriMock.saveFile.mockResolvedValue(true);
+  tauriMock.saveTextFile.mockReset();
+  tauriMock.saveTextFile.mockResolvedValue(true);
   vi.useFakeTimers();
 });
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+// v2.3.1（T-01）：resetModules 保证每个用例的 `vi.doMock('../utils/tauri')` 真正生效
+// （不重置时，前一个用例已经加载过的真实模块会被缓存，mock 形同虚设）。
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.resetModules(); });
+/**
+ * v2.3.1（T-01）：`../utils/tauri` 在 App 里是**静态导入**的，模块在文件加载时就已进入注册表，
+ * 用例内的 `vi.doMock` 对它无效（mock 形同虚设，导出断言因此长期零保护）。
+ * 这里改用顶层 `vi.hoisted` + `vi.mock`，静态与动态导入都会拿到同一个 mock 实例。
+ */
+const tauriMock = vi.hoisted(() => ({ saveFile: vi.fn(), saveTextFile: vi.fn() }));
+vi.mock('../utils/tauri', () => ({
+  saveFile: tauriMock.saveFile,
+  saveTextFile: tauriMock.saveTextFile,
+  isTauri: () => false,
+}));
+
 const save = () => act(() => vi.advanceTimersByTime(850));
+
+/**
+ * v2.3.1（T-01 稳定性）：导出内部是异步链（动态 import xlsx → 生成 workbook → 调 saveFile）。
+ * 若不在本用例内把它排空，这次 saveFile 调用会落到下一个用例的 await 窗口里，
+ * 污染其 mock 调用记录。
+ *
+ * 注意：纯 `await Promise.resolve()` 的微任务排空**不够** —— 动态 import 与 workbook 生成
+ * 需要真实时间推进（覆盖率插桩下尤其明显），因此这里临时切回真实定时器轮询等待，
+ * 结束后恢复假定时器（用例其余部分依赖 800ms 自动保存的假时钟）。
+ */
+async function drainExport(expectedCalls: number): Promise<void> {
+  vi.useRealTimers();
+  try {
+    for (let i = 0; i < 200; i++) {
+      if (tauriMock.saveFile.mock.calls.length >= expectedCalls) break;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      });
+    }
+  } finally {
+    vi.useFakeTimers();
+  }
+}
 
 describe('M3 看板：统一范围、筛选与下钻', () => {
   it('展示五类口径，且筛选与下钻联动', () => {
@@ -161,6 +202,10 @@ describe('T09 回归：缺口清单与胜任度看板同源（岗位只存在于
     await act(async () => {
       fireEvent.click(within(modal).getByRole('button', { name: '导出 Excel' }));
     });
+    // v2.3.1（T-01）：把导出内部的异步链（xlsx 动态导入 → 写文件）在本用例内跑完
+    await drainExport(1);
+    expect(tauriMock.saveFile).toHaveBeenCalledTimes(1);
+    tauriMock.saveFile.mockClear(); // 用后清空，保证不泄漏到后续用例
     // 导出不应抛错，且页面仍显示 1 行（导出消费与界面同一份 rows）
     expect(within(modal).getByText(/岗位 1 \/ 1/)).toBeTruthy();
     expect(loadProject()!.scenarios).toHaveLength(1);
@@ -192,8 +237,6 @@ describe('M4 岗位缺口清单：当前场景直读与导出', () => {
 
   it('按部门筛选后导出 Excel，消费与界面同一份结果', async () => {
     seed(); render(<App />);
-    const saveFile = vi.fn().mockResolvedValue(true);
-    vi.doMock('../utils/tauri', () => ({ saveFile, saveTextFile: vi.fn() }));
     fireEvent.click(screen.getByRole('button', { name: '缺口清单' }));
     const modal = screen.getByRole('dialog', { name: '岗位缺口清单' });
 
@@ -205,11 +248,38 @@ describe('M4 岗位缺口清单：当前场景直读与导出', () => {
     await act(async () => {
       fireEvent.click(within(modal).getByRole('button', { name: '导出 Excel' }));
     });
-    await act(async () => { await Promise.resolve(); });
-    const { saveFile: realSave } = await import('../utils/tauri');
-    // 导出路径被真实调用（未 mock 成功时至少不应抛错并给出提示）
-    expect(typeof realSave).toBe('function');
+    await drainExport(1);
+
+    // v2.3.1（T-01）：旧断言是 `expect(typeof realSave).toBe('function')` —— 恒真、零保护，
+    // 把 buildGapListExcelBytes 改成必抛异常后本文件仍 6/6 全绿。
+    // 现在断言真实行为：确实调用了保存、文件名/字节/MIME 正确、且逐行对应当前筛选范围。
+    // 按「本用例的场景名」筛选调用，避免任何跨用例的异步泄漏影响判别力。
+    const expectedName = `岗位缺口清单-${loadProject()!.scenarios[0].name}.xlsx`;
+    const ownCalls = tauriMock.saveFile.mock.calls.filter((c) => c[0] === expectedName);
+    expect(ownCalls).toHaveLength(1);
+    const [, bytes, mime] = ownCalls[0] as [string, Uint8Array, string];
+    expect(mime).toBe('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    expect(bytes.byteLength).toBeGreaterThan(0);
+    // 筛选后的导出只含研发部岗位（销售岗被排除），与界面同一份 rows
+    const XLSX = await import('xlsx');
+    const wb = XLSX.read(bytes, { type: 'array' });
+    const sheet = XLSX.utils.sheet_to_json<Record<string, string>>(wb.Sheets['岗位缺口清单']);
+    expect(sheet.map((r) => r['岗位']).sort()).toEqual(['后端岗', '无依据岗']);
+    expect(sheet.some((r) => r['岗位'] === '销售岗')).toBe(false); // 筛选范围外的岗位不得出现在导出里
     expect(loadProject()!.scenarios).toHaveLength(1); // 导出不改动项目
     save();
+  });
+
+  it('v2.3.1 T-01：导出失败必须给出可见错误提示，不得静默', async () => {
+    seed(); render(<App />);
+    tauriMock.saveFile.mockRejectedValue(new Error('disk full'));
+    fireEvent.click(screen.getByRole('button', { name: '缺口清单' }));
+    const modal = screen.getByRole('dialog', { name: '岗位缺口清单' });
+    await act(async () => {
+      fireEvent.click(within(modal).getByRole('button', { name: '导出 Excel' }));
+    });
+    await act(async () => { await Promise.resolve(); });
+    const toasts = screen.getAllByRole('status').map((el) => el.textContent ?? '').join(' | ');
+    expect(toasts).toContain('导出岗位缺口清单失败');
   });
 });

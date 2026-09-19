@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, ChevronRight, ChevronUp, User, Users, Building2, Briefcase } from 'lucide-react';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
-import { Department, Employee, MatchStatus } from '../types';
+import { Department, Employee, MatchStatus, LeaderType } from '../types';
 import { useLevelConfigs, getLevelColor } from '../utils/levels';
 import { useSearchHighlight } from './SearchContext';
 import { employeeLevelGap } from '../utils/analytics';
@@ -18,6 +18,8 @@ interface DepartmentCardProps {
   onToggleExpand: (id: string) => void;
   onUpdateDepartment: (id: string, name: string) => void;
   onUpdateLeader: (deptId: string, employee: Employee | null) => void;
+  /** v2.3.1（Q-07）：负责人类型写入口 */
+  onUpdateLeaderType: (deptId: string, leaderType: LeaderType | undefined) => void;
   onDeleteEmployee: (deptId: string, empId: string) => void;
   onCreateVirtualFromEmployee: (deptId: string, empId: string) => void;
   onChangeDepartmentLevel: (deptId: string, newLevel: number, newParentId: string | null) => void;
@@ -425,6 +427,7 @@ export function DepartmentCard({
   onToggleExpand,
   onUpdateDepartment,
   onUpdateLeader,
+  onUpdateLeaderType,
   onDeleteEmployee,
   onCreateVirtualFromEmployee,
   onChangeDepartmentLevel,
@@ -625,6 +628,26 @@ export function DepartmentCard({
               {leader && (showTitle || showLevel) ? ` · ${[(showTitle && leader.title) ? leader.title : null, (showLevel && leader.level) ? leader.level : null].filter(Boolean).join(' · ')}` : ''}
             </span>
           </button>
+          {/* v2.3.1（Q-07）：负责人类型写入口。此前 leaderType 无任何写入点 →
+              「副职/挂名精确剔除」与「负责人空缺」对真实数据不可达。 */}
+          <select
+            aria-label="负责人类型"
+            title="负责人类型：正职计入管理者比分子；副职/代理/外部仅展示；空缺用于标记岗位在编但暂无在任负责人"
+            value={department.leaderType ?? (department.leaderId || department.leaderName ? 'owner' : '')}
+            onPointerDown={(e) => e.stopPropagation()}
+            onChange={(e) => {
+              const v = e.target.value;
+              onUpdateLeaderType(department.id, v === '' ? undefined : (v as LeaderType));
+            }}
+            className="ml-auto shrink-0 text-[10px] px-1 py-0.5 rounded border border-gray-200 text-gray-600 bg-white focus-ring"
+          >
+            <option value="">未标注</option>
+            <option value="owner">正职</option>
+            <option value="deputy">副职</option>
+            <option value="acting">代理</option>
+            <option value="external">外部/挂名</option>
+            <option value="vacant">空缺</option>
+          </select>
         </div>
         
         {showLeaderSearch && (

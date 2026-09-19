@@ -1,7 +1,8 @@
 import { useDialogFocus } from '../utils/useDialogFocus';
 import { useRef, useState } from 'react';
-import { X, FileDown, FileUp, Plus, Copy, Trash2, Check, FolderOpen, Pencil } from 'lucide-react';
+import { X, FileDown, FileUp, Plus, Copy, Trash2, Check, FolderOpen, Pencil, AlertTriangle, History } from 'lucide-react';
 import { ProjectFile } from '../types';
+import type { ProjectBackupInfo } from '../utils/project';
 
 interface ProjectModalProps {
   open: boolean;
@@ -16,6 +17,10 @@ interface ProjectModalProps {
   onSwitchScenario: (id: string) => void;
   onImport: (json: string) => void;
   onExport: () => void;
+  /** v2.3.1 F-12：列出现有可恢复快照 */
+  onListBackups: () => ProjectBackupInfo[];
+  /** v2.3.1 F-12：恢复某一份快照 */
+  onRestoreBackup: (key: string) => void;
 }
 
 function fmtTime(iso?: string): string {
@@ -23,6 +28,76 @@ function fmtTime(iso?: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
   return d.toLocaleString('zh-CN');
+}
+
+/**
+ * v2.3.1（F-12）历史快照区：导入 .orgproj / 清空工作区 / 恢复快照前，
+ * 系统都会把当时的自动保存原样留档，这里提供可恢复入口 —— 否则「有备份但拿不回来」。
+ */
+function BackupSection({
+  onListBackups,
+  onRestoreBackup,
+}: {
+  onListBackups: () => ProjectBackupInfo[];
+  onRestoreBackup: (key: string) => void;
+}) {
+  const [pendingKey, setPendingKey] = useState<string | null>(null);
+  const backups = onListBackups();
+  return (
+    <section>
+      <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+        <History className="w-3.5 h-3.5" />
+        历史快照（{backups.length}）
+      </h3>
+      {backups.length === 0 ? (
+        <p className="text-xs text-slate-400">
+          暂无快照。导入 .orgproj、清空工作区或恢复快照时，系统会自动把当时的工作区留档（保留最近 5 份）。
+        </p>
+      ) : (
+        <ul className="space-y-2">
+          {backups.map((b) => (
+            <li key={b.key} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 px-3 py-2">
+              <div className="text-xs text-slate-600">
+                <div className="font-medium text-slate-700">{fmtTime(b.at)}</div>
+                <div className="text-slate-400">{b.reason}</div>
+              </div>
+              {pendingKey === b.key ? (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setPendingKey(null)}
+                    className="px-2.5 py-1 rounded-lg text-xs border border-slate-200 text-slate-600 hover:bg-slate-100 transition-colors"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={() => {
+                      setPendingKey(null);
+                      onRestoreBackup(b.key);
+                    }}
+                    className="px-2.5 py-1 rounded-lg text-xs bg-amber-600 text-white hover:bg-amber-700 transition-colors"
+                  >
+                    确认恢复
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setPendingKey(b.key)}
+                  className="px-2.5 py-1 rounded-lg text-xs border border-slate-200 text-slate-600 hover:bg-slate-100 transition-colors"
+                >
+                  恢复这一份
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {pendingKey && (
+        <p role="alert" className="mt-2 text-xs text-amber-700">
+          恢复会用该快照整体替换当前工作区（恢复前会再把当前状态留一份快照，可再次回退）。
+        </p>
+      )}
+    </section>
+  );
 }
 
 export function ProjectModal({
@@ -38,9 +113,13 @@ export function ProjectModal({
   onSwitchScenario,
   onImport,
   onExport,
+  onListBackups,
+  onRestoreBackup,
 }: ProjectModalProps) {
   const dialogRef = useDialogFocus(open, onClose);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // v2.3.1（F-12）：导入前二次确认（整体替换当前工作区，且此前无备份）
+  const [confirmImportOpen, setConfirmImportOpen] = useState(false);
   // v2.1.1：场景内联重命名（替代原生 window.prompt）
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -210,13 +289,45 @@ export function ProjectModal({
                 另存为 .orgproj
               </button>
               <button
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => setConfirmImportOpen(true)}
                 className="flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 transition-colors"
               >
                 <FileUp className="w-4 h-4" />
                 导入 .orgproj
               </button>
             </div>
+            {/* v2.3.1（F-12）：导入会整体替换当前工作区 → 先确认，并提示先导出备份 */}
+            {confirmImportOpen && (
+              <div role="alert" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="font-semibold">导入会整体替换当前工作区</p>
+                    <p>
+                      当前 {project.scenarios.length} 个场景会被导入文件中的场景取代（系统会先自动留一份可恢复快照）。
+                      如需保留现有内容的独立文件，请先「另存为 .orgproj」。
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-2 flex justify-end gap-2">
+                  <button
+                    onClick={() => setConfirmImportOpen(false)}
+                    className="px-3 py-1.5 rounded-lg border border-amber-200 bg-white text-amber-900 hover:bg-amber-100 transition-colors"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={() => {
+                      setConfirmImportOpen(false);
+                      fileInputRef.current?.click();
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-amber-600 text-white hover:bg-amber-700 transition-colors"
+                  >
+                    继续导入
+                  </button>
+                </div>
+              </div>
+            )}
             <input
               ref={fileInputRef}
               type="file"
@@ -228,6 +339,9 @@ export function ProjectModal({
               }}
             />
           </section>
+
+          {/* v2.3.1（F-12）：历史快照 —— 导入 / 清空 / 恢复前都会自动留档，可回退 */}
+          <BackupSection onListBackups={onListBackups} onRestoreBackup={onRestoreBackup} />
         </div>
 
         <div className="flex items-center justify-end px-6 py-4 border-t border-slate-100 bg-slate-50/50">

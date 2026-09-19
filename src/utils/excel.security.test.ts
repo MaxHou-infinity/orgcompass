@@ -59,21 +59,20 @@ describe('Excel 导入输入加固（SEC-1..7）', () => {
     expect((Object.prototype as Record<string, unknown>).polluted).toBeUndefined();
   });
 
-  it('SEC-2 超大文件触发 size-exceeded；超大 sheet 被 sheetRows 限制', async () => {
+  it('SEC-2 超大文件触发 size-exceeded；超大 sheet 被拒绝（v2.3.1 F-10：不再静默截断）', async () => {
     // 大小硬上限护栏（在读取前触发）
     const bigFile = { name: 'huge.xlsx', size: MAX_IMPORT_FILE_BYTES + 1 };
     await expect(
       parseEmployeeExcel(bigFile as unknown as File),
     ).rejects.toMatchObject({ kind: 'size-exceeded' });
 
-    // 单表行数上限：超过 MAX_IMPORT_ROWS 只解析到上限
+    // 单表行数上限：超过 MAX_IMPORT_ROWS 必须**显式拒绝**。
+    // v2.3.0 只解析到上限并静默丢弃其余行（60001 行只导入 49999 行且无任何提示），
+    // 用户会以为数据完整 → 人数/编制/健康度全部失真。
     const aoa: unknown[][] = [['姓名', '一级部门']];
     for (let i = 0; i < MAX_IMPORT_ROWS + 100; i++) aoa.push([`员工${i}`, '技术部']);
     const buf = buildWorkbookBytes(aoa);
-    const rows = await parseExcelFromBuffer(buf);
-    expect(rows.length).toBeLessThanOrEqual(MAX_IMPORT_ROWS);
-    // 行数确实被截断（而非全部解析）
-    expect(rows.length).toBeLessThan(MAX_IMPORT_ROWS + 100);
+    await expect(parseExcelFromBuffer(buf)).rejects.toMatchObject({ kind: 'invalid-structure' });
   });
 
   it('SEC-3 缺必填列 → missing-columns，message 可行动且含缺失列', async () => {

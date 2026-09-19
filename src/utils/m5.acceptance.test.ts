@@ -178,6 +178,10 @@ describe('M5 规模验收：1000 人 / 52 部门 / 6000 条评分', () => {
     });
     const elapsed = Date.now() - started;
     expect(board.summary.employeeCount).toBe(1000);
+    // v2.3.1（T-09）：原护栏写的是 `elapsed < 15000`，而 vitest 默认 testTimeout = 5000 ——
+    // 一旦真的超过 5s，测试会先以超时失败，这条断言**永远不可达**（形同虚设）。
+    // 改为在超时预算内、且对性能回流真正敏感的阈值（旧实现 1000 人约 26ms，留足 CI 余量）。
+    expect(elapsed).toBeLessThan(3000);
     expect(board.scopeDeptIds).toHaveLength(52);
     expect(board.positions).toHaveLength(f.positions.length);
     expect(board.dataIssues).toEqual([]);
@@ -185,8 +189,6 @@ describe('M5 规模验收：1000 人 / 52 部门 / 6000 条评分', () => {
     expect(board.rows).toHaveLength(board.summary.employeeCount);
     expect(board.summary.risk.healthy + board.summary.risk.warn + board.summary.risk.danger + board.summary.risk.unrated)
       .toBe(board.summary.employeeCount);
-    // 规模回归护栏（1000 人应在数秒内完成；显著劣化即视为性能回归）
-    expect(elapsed).toBeLessThan(15000);
   });
 
   it('父部门下钻与子部门范围一致，不重复累计', () => {

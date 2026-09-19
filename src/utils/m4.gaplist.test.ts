@@ -54,6 +54,52 @@ function build(fixture: Fixture, scopeDeptId: string | null = null) {
 
 const LEVELS: LevelConfig[] = DEFAULT_LEVELS.map((c) => ({ ...c }));
 
+/**
+ * v2.3.1（T-05）：T09 类回退保护。
+ *
+ * v2.3.0 的真实用户侧阻断（T09）根因是：`Scenario.positions` 扁平镜像从未被保存路径回写，
+ * 而 M4 曾把它当作岗位唯一来源 → 缺口清单变成「岗位 0 / 0」。
+ * 修复后 `deriveBoard` 以部门树为唯一结构来源、镜像只在树内完全没有岗位时兜底。
+ *
+ * 现有 m4/m5 套件的 fixture 让镜像与部门树**同源**，因此「回退到只用扁平镜像」这类回归
+ * 在其下全绿（实测 m4.gaplist 8/8、m5.acceptance 6/6 均不受影响）。这里显式构造
+ * 「镜像过期/缺失」的形态，让该回退必然被抓到。
+ */
+describe('v2.3.1 T-05：镜像缺失/过期时岗位仍以部门树为准', () => {
+  const dept: Department = {
+    id: 'd1',
+    name: '研发部',
+    level: 1,
+    expanded: true,
+    children: [],
+    employees: [emp('e1', '张三', { positionId: 'p1' })],
+    positions: [pos('p1', 'd1', 3), pos('p2', 'd1', 0)],
+  };
+  const base: Fixture = {
+    departments: [dept],
+    allEmployees: [emp('e1', '张三', { positionId: 'p1' })],
+    positions: [pos('p1', 'd1', 3), pos('p2', 'd1', 0)],
+    assessments: [],
+    positionAssignments: [],
+    levelConfigs: DEFAULT_LEVELS.map((c) => ({ ...c })),
+  };
+
+  it('镜像为空（历史形态：保存路径未回写）→ 仍从部门树取到全部岗位', () => {
+    const rows = buildGapListRows(build({ ...base, positions: [] }), '基线');
+    expect(rows.map((r) => r.position).sort()).toEqual(['岗位-p1', '岗位-p2']);
+    // 待补 2（编制 3 − 主岗占用 1）；未配置编制岗位不产生待补
+    expect(summarizeGapList(rows).pendingTotal).toBe(2);
+  });
+
+  it('镜像过期（只剩一个已归档岗位）→ 仍以部门树为准，不被镜像带偏', () => {
+    const stale = [pos('old', 'd1', 99, { status: 'archived' })];
+    const rows = buildGapListRows(build({ ...base, positions: stale }), '基线');
+    expect(rows.map((r) => r.position).sort()).toEqual(['岗位-p1', '岗位-p2']);
+    expect(rows.some((r) => r.position === '岗位-old')).toBe(false);
+    expect(summarizeGapList(rows).pendingTotal).toBe(2);
+  });
+});
+
 describe('A28 待补与超额分别表达，净额只作补充', () => {
   const fixture: Fixture = (() => {
     const pA = pos('pA', 'd1', 3, { name: '甲岗' });

@@ -63,7 +63,10 @@ export function useDisplaySettings(): DisplaySettings {
   return useSyncExternalStore(subscribe, getDisplaySettings, getDisplaySettings);
 }
 
-/** 仅测试用：重置模块缓存并回默认（不写 localStorage）。 */
+/** 仅测试用：清空内存缓存，使下一次读取重新从 localStorage 载入。
+ *  v2.3.1（T-04）：原注释写「回默认」与实现不符 —— 有持久化值时重新载入的就是持久化值；
+ *  只有存储不可用/无记录时才回默认。 */
+
 export function resetDisplaySettingsCache(): void {
   cache = null;
   listeners.clear();

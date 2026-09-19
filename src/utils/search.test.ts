@@ -79,15 +79,37 @@ describe('searchOrg（搜索，P0-2）', () => {
 });
 
 describe('expandDepartments（展开祖先链，P0-2）', () => {
+  const flatten = (list: Department[]): Department[] => list.flatMap((d) => [d, ...flatten(d.children)]);
+
   it('展开目标及其祖先；其余节点保持原样', () => {
-    const tree = build(); // 所有 expanded=true 默认
+    // v2.3.1（T-03）：原 fixture 里所有节点本来就是 expanded=true，
+    // 「目标链仍为 expanded」在任何实现下都成立（把 mapList 改成 return list 也全绿）。
+    // 现在从**全部折叠**出发，并要求未在 ids 内的节点保持折叠。
+    const collapsed = (list: Department[]): Department[] =>
+      list.map((d) => ({ ...d, expanded: false, children: collapsed(d.children) }));
+    const tree = collapsed(build());
     const result = expandDepartments(tree, new Set(['d-backend', 'd-rd', 'd-tech']));
-    // 目标链上的节点仍为 expanded
-    const flatten = (list: Department[]): Department[] => list.flatMap((d) => [d, ...flatten(d.children)]);
     const flat = flatten(result);
     expect(flat.find((d) => d.id === 'd-tech')!.expanded).toBe(true);
     expect(flat.find((d) => d.id === 'd-rd')!.expanded).toBe(true);
     expect(flat.find((d) => d.id === 'd-backend')!.expanded).toBe(true);
+    // 未被请求展开的节点必须保持折叠（否则等于「全展开」而不是「展开祖先链」）
+    expect(flat.find((d) => d.id === 'd-sales')!.expanded).toBe(false);
+    // 未命中的 id 不产生任何变化 → 返回原引用（不污染历史栈）
+    expect(expandDepartments(tree, new Set(['no-such-id']))).toBe(tree);
+  });
+
+  it('展开时保持结构不变，只改 expanded 字段（浅拷贝节点，children 引用按需替换）', () => {
+    const collapsed = (list: Department[]): Department[] =>
+      list.map((d) => ({ ...d, expanded: false, children: collapsed(d.children) }));
+    const tree = collapsed(build());
+    const result = expandDepartments(tree, new Set(['d-rd']));
+    const before = flatten(tree);
+    const after = flatten(result);
+    expect(after.map((d) => d.id)).toEqual(before.map((d) => d.id));
+    expect(after.map((d) => d.name)).toEqual(before.map((d) => d.name));
+    // 未被触碰的子树保持原引用（避免整树重建）
+    expect(result.find((d) => d.id === 'd-sales')).toBe(tree.find((d) => d.id === 'd-sales'));
   });
 
   it('无任何展开变化时返回原引用（避免空历史）', () => {

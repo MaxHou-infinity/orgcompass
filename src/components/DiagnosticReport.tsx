@@ -373,9 +373,16 @@ export function DiagnosticReport({
                       )}
                     </td>
                     <td className="py-2 text-right">
-                      <span className={p.gapCost > 0 ? 'text-amber-600' : p.gapCost < 0 ? 'text-red-600' : 'text-slate-500'}>
-                        {fmtCost(p.gapCost)}
-                      </span>
+                      {/* v2.3.1 F-11：找不到成本依据 → 「无法估算」，不写成 0w */}
+                      {p.gapCost === null ? (
+                        <span className="text-slate-500" title="找不到成本依据（无在岗人员且无职级成本映射），缺口成本无法估算">
+                          无法估算
+                        </span>
+                      ) : (
+                        <span className={p.gapCost > 0 ? 'text-amber-600' : p.gapCost < 0 ? 'text-red-600' : 'text-slate-500'}>
+                          {fmtCost(p.gapCost)}
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}

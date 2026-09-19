@@ -1,4 +1,4 @@
-name: PR 检查（lint / test / build / audit）
+name: PR 检查（版本一致性 / 类型 / lint / test / build / audit）
 
 on:
   pull_request:
@@ -9,18 +9,41 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # v2.3.1 新增：版本一致性门禁。v2.3.0 曾出现 package-lock.json 滞留 2.2.1 一个发布周期
+  # 而无人发现（提交信息还宣称已统一），此处把「多处版本源」变成机器校验。
+  version:
+    name: 版本一致性（5 处版本源）
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 校验 package.json / package-lock.json / tauri.conf.json / Cargo.toml / Cargo.lock
+        run: node scripts/check-versions.mjs
+
   checks:
-    name: 前端检查（lint + 单测 + 构建 + 运行时依赖审计）
+    name: 前端检查（Node ${{ matrix.node }}）
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # engines 允许 ^20.19.0 || >=22.12.0：下限 + 两个 LTS 都要真实跑过
+        node: [ '20.19.0', '22', '24' ]
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装 Node.js
+      - name: 安装 Node.js ${{ matrix.node }}
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
           cache: npm
 
       - name: 安装前端依赖
@@ -29,19 +52,59 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: 单元测试
-        run: npm run test
+      # typecheck 同时覆盖 src 与测试文件（tsconfig.test.json）；
+      # v2.3.1 之前测试文件被 tsconfig 排除，从未被类型检查。
+      - name: 类型检查（含测试文件）
+        run: npm run typecheck
 
-      - name: 构建（tsc + vite build）
-        run: npm run build
+      # 覆盖率带门槛（v2.3.1 T-07）：无度量时「覆盖率回流」不会有人发现
+      - name: 单元测试 + 覆盖率门槛
+        run: npm run test:coverage
 
-      - name: 运行时依赖安全审计（生产依赖高危=0）
-        run: npm audit --omit=dev --audit-level=high
-
-      - name: 上传构建产物（用于排查）
+      - name: 上传覆盖率报告（HTML，便于定位未覆盖分支）
         if: always()
         uses: actions/upload-artifact@v4
+        with:
+          name: coverage-node${{ matrix.node }}
+          path: coverage/
+          if-no-files-found: ignore
+
+      - name: 构建（vite build）
+        run: npm run build
+
+  security:
+    name: 依赖安全审计（生产依赖高危=0）
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: 安装前端依赖
+        run: npm ci
+      # 注意边界：xlsx 通过 cdn.sheetjs.com URL 依赖引入，npm advisory 不覆盖它；
+      # URL 依赖的可信度由 package-lock.json 中的 integrity 哈希保证（见 SECURITY.md）。
+      - name: 运行时依赖安全审计
+        run: npm audit --omit=dev --audit-level=high
+
+  artifact:
+    name: 构建产物归档（排查用）
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: checks
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
           if-no-files-found: ignore
+

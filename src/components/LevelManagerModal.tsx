@@ -14,6 +14,7 @@ import {
   autoColor,
 } from '../utils/level';
 import { LevelConfig } from '../types';
+import { useDialogFocus } from '../utils/useDialogFocus';
 
 interface LevelManagerModalProps {
   open: boolean;
@@ -28,6 +29,9 @@ function emptyDraft(): Draft {
 }
 
 export function LevelManagerModal({ open, onClose }: LevelManagerModalProps) {
+  // v2.3.1（F-14）：补对话框语义 —— App 用 [role="dialog"] 判断是否在弹窗内，
+  // 缺它会让 Ctrl+Z 穿透到底层画布，静默撤销用户看不见的编辑。
+  const dialogRef = useDialogFocus(open, onClose);
   const configs = useLevelConfigs();
   const [drafts, setDrafts] = useState<Draft[]>(() =>
     configs.map((c) => ({ ...c })),
@@ -100,7 +104,14 @@ export function LevelManagerModal({ open, onClose }: LevelManagerModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="职级管理"
+      tabIndex={-1}
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+    >
       {/* 遮罩 */}
       <div
         className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm animate-fadeIn"

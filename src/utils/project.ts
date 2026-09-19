@@ -152,6 +152,38 @@ function isDepartmentLike(v: unknown): v is Department {
   );
 }
 
+/**
+ * 把源对象里「不在已知字段清单内」的字段原样带回目标对象（v2.3.1 Q-10）。
+ *
+ * 背景：`sanitize*` 系列都是**重建**对象并只拷贝白名单字段，未知字段被静默丢弃；
+ * 而 `allEmployeesFlat` 却是原样 filter 保留 —— 同一份文件里两种态度。
+ * 后果：未来在同一格式（format 4）下给某实体加字段时，旧版应用打开并保存一次就会**丢掉新字段**。
+ *
+ * 安全边界（避免绕过清洗）：
+ * - 只有 `known` 清单里**没有**的键才会被带回，因此任何已知字段（含校验失败的）仍走各自清洗逻辑，
+ *   不会被原始值直接透传；
+ * - `__proto__` / `constructor` / `prototype` 一律不带回（不做原型链注入的搬运工）。
+ */
+function carryUnknownFields<T extends object>(target: T, source: object, known: readonly string[]): T {
+  const knownSet = new Set(known);
+  const src = source as Record<string, unknown>;
+  for (const key of Object.keys(src)) {
+    if (knownSet.has(key) || UNSAFE_KEYS.has(key)) continue;
+    (target as Record<string, unknown>)[key] = src[key];
+  }
+  return target;
+}
+
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/** Department 的已知持久化字段（不在其中的视为「未来新增字段」，原样带回） */
+const DEPARTMENT_KEYS = ['id', 'name', 'level', 'parentId', 'children', 'employees', 'expanded', 'headcount', 'leaderId', 'leaderName', 'leaderType', 'positions'] as const;
+const POSITION_KEYS = ['id', 'departmentId', 'name', 'jobFamily', 'levelBandMin', 'levelBandMax', 'headcount', 'status', 'createdAt', 'updatedAt'] as const;
+const LEVEL_CONFIG_KEYS = ['code', 'number', 'label', 'color', 'cost'] as const;
+const SCENARIO_KEYS = ['id', 'name', 'createdAt', 'updatedAt', 'departments', 'allEmployeesFlat', 'levelConfigs', 'canvas', 'positions', 'competencyModel', 'assessments', 'positionAssignments', 'seedLegacyRelations'] as const;
+const PROJECT_KEYS = ['id', 'name', 'version', 'currentScenarioId', 'scenarios', 'meta'] as const;
+const META_KEYS = ['createdAt', 'updatedAt', 'version'] as const;
+
 /** 递归清洗部门树（丢弃非法节点，归一化缺失字段） */
 function sanitizeDepartments(list: unknown[]): Department[] {
   const out: Department[] = [];
@@ -160,7 +192,7 @@ function sanitizeDepartments(list: unknown[]): Department[] {
     const children = Array.isArray(item.children) ? sanitizeDepartments(item.children) : [];
     const now = new Date().toISOString();
     const leaderType = isLeaderType(item.leaderType) ? item.leaderType : undefined;
-    out.push({
+    out.push(carryUnknownFields({
       id: item.id,
       name: item.name,
       level: item.level,
@@ -179,7 +211,7 @@ function sanitizeDepartments(list: unknown[]): Department[] {
       // —— v2.1.1 岗位化 ——
       positions: Array.isArray(item.positions) ? sanitizePositions(item.positions, now) : [],
       ...(leaderType !== undefined ? { leaderType } : {}),
-    });
+    }, item, DEPARTMENT_KEYS));
   }
   return out;
 }
@@ -195,7 +227,7 @@ function sanitizePositions(list: unknown[], now: string): Position[] {
     const p = item as Record<string, unknown>;
     if (typeof p.id !== 'string' || typeof p.name !== 'string') continue;
     const status = p.status === 'active' || p.status === 'frozen' || p.status === 'archived' ? p.status : 'active';
-    out.push({
+    out.push(carryUnknownFields({
       id: p.id,
       departmentId: typeof p.departmentId === 'string' ? p.departmentId : '',
       name: p.name,
@@ -206,7 +238,7 @@ function sanitizePositions(list: unknown[], now: string): Position[] {
       status,
       createdAt: typeof p.createdAt === 'string' ? p.createdAt : now,
       updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : now,
-    });
+    }, p, POSITION_KEYS));
   }
   return out;
 }
@@ -217,13 +249,13 @@ function sanitizeLevelConfigs(list: unknown[]): LevelConfig[] {
     if (!item || typeof item !== 'object') continue;
     const c = item as Record<string, unknown>;
     if (typeof c.code !== 'string' || typeof c.number !== 'string' || typeof c.label !== 'string' || typeof c.color !== 'string') continue;
-    out.push({
+    out.push(carryUnknownFields({
       code: c.code,
       number: c.number,
       label: c.label,
       color: c.color,
       cost: typeof c.cost === 'number' && Number.isFinite(c.cost) ? c.cost : undefined,
-    });
+    }, c, LEVEL_CONFIG_KEYS));
   }
   return out.length > 0 ? out : DEFAULT_LEVELS.map((c) => ({ ...c }));
 }
@@ -313,6 +345,10 @@ function sanitizeAssessments(raw: unknown, now: string): Assessment[] {
     if (typeof a.revisionOf === 'string' && a.revisionOf) assessment.revisionOf = a.revisionOf;
     if (typeof a.revisionNote === 'string') assessment.revisionNote = a.revisionNote;
     if (typeof a.enteredBy === 'string') assessment.enteredBy = a.enteredBy;
+    // v2.3.1（F-08）：保留评估自然日；缺失不回填（由 assessmentDayOf 按 assessedAt 本地回推，不伪造事实）。
+    if (typeof a.assessmentDay === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(a.assessmentDay)) {
+      assessment.assessmentDay = a.assessmentDay;
+    }
     out.push(assessment);
   }
   return out;
@@ -362,6 +398,44 @@ function sanitizePositionAssignments(raw: unknown, now: string): PositionAssignm
   return out;
 }
 
+/**
+ * 以部门树为准，把树内已有岗位引用同步到名册中**缺失**的同一员工（v2.3.1 F-09）。
+ *
+ * 背景：v2.1.1 的 v1→v2 迁移只给部门树里的员工套岗，从未触碰名册 `allEmployeesFlat`；
+ * 而 v3→v4 迁移的 legacy 任职种子却以名册为准 → 老用户升级后：
+ *   ① 首屏弹「画布与名册的岗位引用不一致」；② 匹配三态把全员判成「未套岗」；
+ *   ③ 一条 legacy 任职关系都建不出来（旧任职历史被静默判为「从未任职」）。
+ *
+ * 边界（与「迁移不伪造事实」一致）：
+ * - 只补**缺失**的 positionId，绝不覆盖名册里已存在的值 —— 名册与树真正冲突时
+ *   仍由 `inspectPlacements` 如实报给用户，不静默抹平；
+ * - 树内没有该员工（未入架构）时不补，保持「未知」。
+ */
+function alignRosterPositionsFromTree(departments: Department[], roster: Employee[]): void {
+  if (roster.length === 0) return;
+  const positionByEmployeeId = new Map<string, string>();
+  const walk = (list: Department[]) => {
+    for (const d of list) {
+      for (const e of d.employees) {
+        if (e.isVirtual) continue;
+        if (typeof e.id === 'string' && typeof e.positionId === 'string' && !positionByEmployeeId.has(e.id)) {
+          positionByEmployeeId.set(e.id, e.positionId);
+        }
+      }
+      walk(d.children ?? []);
+    }
+  };
+  walk(departments);
+  if (positionByEmployeeId.size === 0) return;
+  for (const e of roster) {
+    if (e.isVirtual) continue;
+    if (e.positionId == null) {
+      const pid = positionByEmployeeId.get(e.id);
+      if (pid) e.positionId = pid;
+    }
+  }
+}
+
 function sanitizeScenario(raw: Record<string, unknown>, index: number): Scenario | null {
   const now = new Date().toISOString();
   const id = typeof raw.id === 'string' ? raw.id : uid('scene');
@@ -370,6 +444,8 @@ function sanitizeScenario(raw: Record<string, unknown>, index: number): Scenario
   const allEmployeesFlat = Array.isArray(raw.allEmployeesFlat)
     ? (raw.allEmployeesFlat as Employee[]).filter((e) => e && typeof e.id === 'string')
     : [];
+  // v2.3.1（F-09）：先对齐名册的岗位引用（只补缺失），再做 legacy 任职种子。
+  alignRosterPositionsFromTree(departments, allEmployeesFlat);
   const levelConfigs = Array.isArray(raw.levelConfigs) ? sanitizeLevelConfigs(raw.levelConfigs) : DEFAULT_LEVELS.map((c) => ({ ...c }));
 
   const canvasRaw = raw.canvas && typeof raw.canvas === 'object' ? (raw.canvas as Record<string, unknown>) : {};
@@ -381,7 +457,7 @@ function sanitizeScenario(raw: Record<string, unknown>, index: number): Scenario
     lastFocusedDeptId: typeof canvasRaw.lastFocusedDeptId === 'string' ? canvasRaw.lastFocusedDeptId : undefined,
   };
 
-  return {
+  return carryUnknownFields({
     id,
     name,
     createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : now,
@@ -397,7 +473,7 @@ function sanitizeScenario(raw: Record<string, unknown>, index: number): Scenario
     positionAssignments: raw.seedLegacyRelations === true
       ? seedLegacyAssignments(allEmployeesFlat, departments, sanitizePositionAssignments(raw.positionAssignments, now), now)
       : sanitizePositionAssignments(raw.positionAssignments, now),
-  };
+  }, raw, SCENARIO_KEYS);
 }
 
 /** —— v2.1.1：显式迁移链（.orgproj 数据模型版本升级）—— */
@@ -418,9 +494,25 @@ const MIGRATIONS: Record<number, Migration> = {
   },
 };
 
+/**
+ * 从文件读取数据模型版本（v2.3.1 Q-11）。
+ * - 数字 → 原值；
+ * - 纯数字字符串（如 "5"）→ 按数字处理，**不得绕过「高版本拒绝」**；
+ * - 缺失 / 非数字 → undefined（意为「按当前格式对待」，不做任何迁移与推断）。
+ */
+export function readProjectVersion(data: Record<string, unknown>): number | undefined {
+  const v = data.version;
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string' && /^\d+$/.test(v.trim())) return Number(v.trim());
+  return undefined;
+}
+
 /** 将已支持版本迁移到当前 PROJECT_VERSION；更高版本在 parseProject 入口拒绝。 */
 function migrateToCurrent(data: Record<string, unknown>): Record<string, unknown> {
-  let v = typeof data.version === 'number' ? data.version : 1;
+  // v2.3.1（Q-11）：旧实现把「缺失/非数字版本」当作 v1 → 会跑 v1→v2 迁移，
+  // 把「已有岗位引用」的员工按部门默认岗位重新套岗（**伪造人岗关联**）。
+  // 没有版本号不等于最老的版本，按当前格式对待才是不臆造事实的做法。
+  let v = readProjectVersion(data) ?? PROJECT_VERSION;
   let out = data;
   while (v < PROJECT_VERSION) {
     const fn = MIGRATIONS[v];
@@ -527,8 +619,9 @@ export function parseProject(raw: string): ProjectFile | null {
     return null;
   }
   if (!data || typeof data !== 'object') return null;
-  const inputVersion = (data as Record<string, unknown>).version;
-  if (typeof inputVersion === 'number' && inputVersion > PROJECT_VERSION) throw new UnsupportedProjectVersionError(inputVersion);
+  // v2.3.1（Q-11）：字符串版本 "5" 也必须被识别并拒绝（旧实现只认 number → 被当成无版本而放行）。
+  const inputVersion = readProjectVersion(data as Record<string, unknown>);
+  if (inputVersion !== undefined && inputVersion > PROJECT_VERSION) throw new UnsupportedProjectVersionError(inputVersion);
   const migratedRaw = migrateToCurrent(data as Record<string, unknown>);
   const p = migratedRaw;
 
@@ -553,18 +646,18 @@ export function parseProject(raw: string): ProjectFile | null {
   const version = typeof p.version === 'number' ? p.version : PROJECT_VERSION;
   const metaRaw = p.meta && typeof p.meta === 'object' ? (p.meta as Record<string, unknown>) : {};
 
-  return {
+  return carryUnknownFields({
     id: typeof p.id === 'string' ? p.id : uid('proj'),
     name,
     version,
     currentScenarioId,
     scenarios,
-    meta: {
+    meta: carryUnknownFields({
       createdAt: typeof metaRaw.createdAt === 'string' ? metaRaw.createdAt : now,
       updatedAt: typeof metaRaw.updatedAt === 'string' ? metaRaw.updatedAt : now,
       version,
-    },
-  };
+    }, metaRaw, META_KEYS),
+  }, p, PROJECT_KEYS);
 }
 
 /** —— localStorage IO —— */
@@ -590,6 +683,86 @@ export function loadProject(): ProjectFile | null {
 export function decodeStoredProject(raw: string): string | null {
   return raw.startsWith(COMPRESSED_STORAGE_PREFIX)
     ? decompressFromUTF16(raw.slice(COMPRESSED_STORAGE_PREFIX.length)) : raw;
+}
+
+/** —— v2.3.1（F-12）：破坏性写入前的可恢复快照 —— */
+
+const BACKUP_INDEX_KEY = `${PROJECT_BACKUP_KEY}.index`;
+/** 最多保留的快照份数（超出按时间从旧到新淘汰，避免 localStorage 无限增长）。 */
+const MAX_SNAPSHOTS = 5;
+
+export interface ProjectBackupInfo {
+  /** localStorage key */
+  key: string;
+  /** 快照时间（ISO） */
+  at: string;
+  /** 触发原因（导入 / 清空 / 恢复） */
+  reason: string;
+}
+
+/** 读取快照索引（损坏时回退为空数组，不阻塞主流程）。 */
+export function listProjectBackups(): ProjectBackupInfo[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(BACKUP_INDEX_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (x): x is ProjectBackupInfo =>
+        !!x && typeof x === 'object' && typeof (x as ProjectBackupInfo).key === 'string' && typeof (x as ProjectBackupInfo).at === 'string',
+    );
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 破坏性写入（导入 .orgproj / 清空工作区 / 恢复快照）前，把当前自动保存**原样**快照一份。
+ *
+ * 背景（v2.3.1 F-12）：导入与清空会整体覆盖 `PROJECT_STORAGE_KEY`（唯一持久化副本），
+ * 而此前的备份只在「存量格式 < 4 且本次 ≥ 4」这个一次性迁移窗口里发生 →
+ * 误选一个 .orgproj 就会把多个场景的工作区覆盖且不可回退。
+ *
+ * @returns 是否真的写入了快照（没有现存数据 / 存储不可用时为 false）
+ */
+export function snapshotCurrentProject(reason: string): boolean {
+  if (typeof localStorage === 'undefined') return false;
+  try {
+    const raw = localStorage.getItem(PROJECT_STORAGE_KEY);
+    if (!raw) return false;
+    const at = new Date().toISOString();
+    // 快照键必须唯一：同一毫秒内连续快照（导入后立刻恢复等）若复用同名键，
+    // 淘汰旧项时会把仍被索引引用的键删掉，导致「有记录、无内容」。
+    const key = `${PROJECT_BACKUP_KEY}.${at}.${uid('bk')}`;
+    localStorage.setItem(key, raw);
+    const index = listProjectBackups();
+    index.unshift({ key, at, reason });
+    while (index.length > MAX_SNAPSHOTS) {
+      const dropped = index.pop();
+      if (dropped) localStorage.removeItem(dropped.key);
+    }
+    localStorage.setItem(BACKUP_INDEX_KEY, JSON.stringify(index));
+    return true;
+  } catch (error) {
+    console.error('写入项目快照失败:', error);
+    return false;
+  }
+}
+
+/** 读取快照并解析为 ProjectFile（不可解析/不存在返回 null）。 */
+export function readProjectBackup(key: string): ProjectFile | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const json = decodeStoredProject(raw);
+    if (!json) return null;
+    return parseProject(json);
+  } catch (error) {
+    console.error('读取项目快照失败:', error);
+    return null;
+  }
 }
 
 export function persistProject(project: ProjectFile): boolean {

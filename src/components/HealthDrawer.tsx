@@ -350,13 +350,16 @@ export function HealthDrawer({
   const [stage, setStage] = useState<OrganizationStage>(DEFAULT_STAGE);
   // v2.1.1：L3 部门→岗位展开（已展开的部门 id 集合）
   const [expandedPosDepts, setExpandedPosDepts] = useState<Set<string>>(() => new Set());
+  // v2.3.1（Q-23）：抽屉常驻挂载，关闭态也会重渲染；
+  // 旧实现不看 open 就做全量组织指标派生，每次无关重渲染白付一次。
+  // 关闭时按空部门派生（近似零成本）。
   const report = useMemo(
-    () => computeHealthReport(departments, configs, focusDeptId, thresholds),
-    [departments, configs, focusDeptId, thresholds],
+    () => computeHealthReport(open ? departments : [], configs, focusDeptId, thresholds),
+    [open, departments, configs, focusDeptId, thresholds],
   );
   const suggestions = useMemo(
-    () => collectAllSuggestions(report, departments, thresholds),
-    [report, departments, thresholds],
+    () => (open ? collectAllSuggestions(report, departments, thresholds) : []),
+    [open, report, departments, thresholds],
   );
   const positionsByDept = useMemo(() => {
     const m = new Map<string, PositionSummary[]>();
@@ -741,9 +744,16 @@ export function HealthDrawer({
                           <td className="px-2 py-2.5 text-right text-slate-600">{fmtCost(r.avgCost)}</td>
                           <td className="px-2 py-2.5 text-right text-slate-600">{fmtCost(r.actualCost)}</td>
                           <td className="px-2 py-2.5 text-right">
-                            <span className={r.gapCost > 0 ? 'text-amber-600' : r.gapCost < 0 ? 'text-red-600' : 'text-slate-500'}>
-                              {fmtCost(r.gapCost)}
-                            </span>
+                            {/* v2.3.1 F-11：找不到成本依据 → 「无法估算」，不写成 0w */}
+                            {r.gapCost === null ? (
+                              <span className="text-slate-500" title="找不到成本依据（无在岗人员且无职级成本映射），缺口成本无法估算">
+                                无法估算
+                              </span>
+                            ) : (
+                              <span className={r.gapCost > 0 ? 'text-amber-600' : r.gapCost < 0 ? 'text-red-600' : 'text-slate-500'}>
+                                {fmtCost(r.gapCost)}
+                              </span>
+                            )}
                           </td>
                         </tr>
                         {isExpanded &&
@@ -781,9 +791,13 @@ export function HealthDrawer({
                               <td className="px-2 py-1.5 text-right text-slate-500 text-xs">{fmtCost(p.avgCost)}</td>
                               <td className="px-2 py-1.5 text-right text-slate-500 text-xs">—</td>
                               <td className="px-2 py-1.5 text-right">
-                                <span className={`text-xs ${p.gapCost > 0 ? 'text-amber-600' : p.gapCost < 0 ? 'text-red-600' : 'text-slate-500'}`}>
-                                  {fmtCost(p.gapCost)}
-                                </span>
+                                {p.gapCost === null ? (
+                                  <span className="text-slate-500 text-xs" title="找不到成本依据，缺口成本无法估算">无法估算</span>
+                                ) : (
+                                  <span className={`text-xs ${p.gapCost > 0 ? 'text-amber-600' : p.gapCost < 0 ? 'text-red-600' : 'text-slate-500'}`}>
+                                    {fmtCost(p.gapCost)}
+                                  </span>
+                                )}
                               </td>
                             </tr>
                           ))}

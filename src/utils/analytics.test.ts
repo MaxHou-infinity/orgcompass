@@ -445,13 +445,13 @@ describe('computeL3 边界', () => {
     expect(computeL3([d], COSTS)[0].status).toBe('danger');
   });
 
-  it('gapCost 在无成本配置时按 0 计（avgCost=0）', () => {
-    // 员工职级未配置任何 cost → avgCost=0，gapCost=0，但缺口存在
+  it('v2.3.1 F-11：有缺口但无成本依据 → gapCost 为 null（无法估算），不写成 0', () => {
+    // 员工职级未配置任何 cost → avgCost=0，缺口存在但成本依据缺失 → null
     const root = dept('t', 'T', 1, { headcount: 3, employees: [emp('e1', 'ZZ1')] });
     const row = computeL3([root], COSTS)[0];
     expect(row.gap).toBe(2);
     expect(row.avgCost).toBe(0);
-    expect(row.gapCost).toBe(0);
+    expect(row.gapCost).toBeNull(); // ← v2.3.0 是 0（界面会印出 0w）
     expect(row.actualCost).toBe(0);
   });
 
@@ -518,13 +518,30 @@ describe('computeHealthReport 边界', () => {
     expect(report.totals.configuredHeadcount).toBe(0);
   });
 
-  it('聚焦不存在的部门 id → 回退全公司口径', () => {
+  it('v2.3.1 F-06：聚焦不存在的部门 id → 空范围报告，不再静默回退全公司', () => {
     const a = dept('a', 'A', 1, { employees: [emp('x', 'L1.1')], headcount: 1 });
     const b = dept('b', 'B', 1, { employees: [emp('y', 'L1.1')], headcount: 1 });
     const report = computeHealthReport([a, b], COSTS, 'no-such-id');
     expect(report.scopeDeptId).toBe('no-such-id');
-    expect(report.totals.totalEmployees).toBe(2);
-    expect(report.l1).toHaveLength(2);
+    // v2.3.1 F-06：旧实现把「范围里没有数据」显示成「全公司 2 人」；现在按空范围处理，口径诚实。
+    expect(report.totals.totalEmployees).toBe(0);
+    expect(report.totals.totalDepartments).toBe(0);
+    expect(report.totals.totalGap).toBeNull();
+    expect(report.l1).toHaveLength(0);
+    expect(report.l3).toHaveLength(0);
+  });
+
+  it('v2.3.1 F-06：includeChildren=false 时组织指标只算该部门自身', () => {
+    const child = dept('c', 'C', 2, { employees: [emp('x', 'L1.1')], headcount: 2 });
+    const root = dept('r', 'R', 1, { employees: [emp('y', 'L1.1')], headcount: 1, children: [child] });
+    const withChildren = computeHealthReport([root], COSTS, 'r');
+    const onlySelf = computeHealthReport([root], COSTS, 'r', undefined, { includeChildren: false });
+    expect(withChildren.totals.totalDepartments).toBe(2);
+    expect(withChildren.totals.totalEmployees).toBe(2);
+    expect(onlySelf.totals.totalDepartments).toBe(1);
+    expect(onlySelf.totals.totalEmployees).toBe(1);
+    expect(onlySelf.l1).toHaveLength(1);
+    expect(onlySelf.l1[0].actual).toBe(1);
   });
 
   it('虚拟兼岗不计入实际人数与成本，但计入职级分布', () => {

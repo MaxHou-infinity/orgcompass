@@ -126,18 +126,22 @@ export function searchOrg(depts: Department[], rawQuery: string): SearchResult {
  */
 export function expandDepartments(depts: Department[], ids: Set<string>): Department[] {
   if (ids.size === 0) return depts;
-  let rootChanged = false;
+  // v2.3.1（T-03）：未发生任何变化的层必须**返回原数组引用**。
+  // 旧实现 list.map(...) 每次都会新建数组，于是 children !== d.children 恒为 true →
+  // 即使目标 id 一个都没命中，也会重建整棵树并返回新引用（调用方会误以为状态变了，
+  // 进而产生无意义的历史快照 / 人岗重算）。这与该函数自己的注释「避免空历史」相矛盾。
   const mapList = (list: Department[]): Department[] => {
-    return list.map((d) => {
+    let changed = false;
+    const next = list.map((d) => {
       const children = mapList(d.children);
       const expanded = ids.has(d.id) ? true : d.expanded;
-      const changed = children !== d.children || expanded !== d.expanded;
-      if (changed) rootChanged = true;
-      return changed ? { ...d, children, expanded } : d;
+      if (children === d.children && expanded === d.expanded) return d;
+      changed = true;
+      return { ...d, children, expanded };
     });
+    return changed ? next : list;
   };
-  const result = mapList(depts);
-  return rootChanged ? result : depts;
+  return mapList(depts);
 }
 
 /** 员工 id → 所属部门 id 的工具（批量移动用）：给定组织树与员工集合，返回 empId→deptId。 */

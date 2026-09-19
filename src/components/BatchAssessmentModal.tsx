@@ -14,7 +14,7 @@ import {
   benchmarkFor,
   dimensionGap,
   gapStatusFromWorstGap,
-  isManager,
+  computeManagerIdSet,
   latestSupervisorAssessment,
   normalizedWeights,
 } from '../utils/competency';
@@ -166,6 +166,22 @@ export function BatchAssessmentModal({
     return m;
   }, [departments]);
 
+  /**
+   * v2.3.1（Q-24）：两处批量索引，各建一次。
+   * - `managerIdSet`：干部集合（旧实现每个员工调两次 isManager，每次都 find + 递归整树 + 全表扫描）；
+   * - `resolvedByKey`：员工×维度 → 当前有效上级评分（含修订链/冲突解析结果）。
+   *   旧实现在「只看未评」过滤与「上一轮预填」两处各做一次全表扫描，同一份取数算两遍。
+   */
+  const managerIdSet = useMemo(() => computeManagerIdSet(departments, allEmployees), [departments, allEmployees]);
+  const resolvedByKey = useMemo(() => {
+    const m = new Map<string, Assessment | null>();
+    for (const e of allEmployees) {
+      if (e.isVirtual) continue;
+      for (const d of dims) m.set(`${e.id}\u0000${d.key}`, latestSupervisorAssessment(assessments, e.id, d.key));
+    }
+    return m;
+  }, [allEmployees, dims, assessments]);
+
   // 范围员工（干部/员工 + 部门 + 只看未评 + 排除虚拟副本）
   const scopeEmployees = useMemo(() => {
     let emps: Employee[] = allEmployees.filter((e) => !e.isVirtual);
@@ -181,20 +197,20 @@ export function BatchAssessmentModal({
       emps = dept ? collectDeptEmployees(dept, includeChildren).filter((e) => !e.isVirtual) : [];
       emps = [...new Map(emps.map((e) => [e.id, e])).values()];
     }
+    // v2.3.1（Q-24）：一次算出干部集合后复用 —— 旧实现每个员工要调两次 isManager
+    // （三元两个分支各一次），而 isManager 每次都要 find + 递归整树 + 全表扫描。
     emps = emps.filter((e) =>
-      assessType === 'leadership'
-        ? isManager(e.id, departments, allEmployees)
-        : !isManager(e.id, departments, allEmployees),
+      assessType === 'leadership' ? managerIdSet.has(e.id) : !managerIdSet.has(e.id),
     );
     // v2.3 M2：岗位评价只对已套岗人员成立；未套岗人员不在岗位评价批次内
     if (scope === 'position') emps = emps.filter((e) => !!e.positionId);
     if (onlyUnrated) {
-      emps = emps.filter((e) => {
-        return dims.some((d) => !latestSupervisorAssessment(assessments, e.id, d.key));
-      });
+      // v2.3.1（Q-24）：复用已解析的索引判断「该人该维度是否已有有效上级评分」。
+      // 注意必须是 effective（解析后）而非「存在任意记录」：冲突未解决时 effective 为 null，仍算未评。
+      emps = emps.filter((e) => dims.some((d) => !resolvedByKey.get(`${e.id}\u0000${d.key}`)));
     }
     return emps.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
-  }, [allEmployees, departments, deptId, includeChildren, assessType, onlyUnrated, dims, assessments, scope]);
+  }, [allEmployees, departments, deptId, includeChildren, assessType, onlyUnrated, dims, scope, managerIdSet, resolvedByKey]);
 
   /** v2.3 M2：范围内已套岗/未套岗人数（说明岗位评价为何排除某些人） */
   const unplacedInScope = useMemo(() => {
@@ -213,9 +229,9 @@ export function BatchAssessmentModal({
       emps = emps.filter((e) => inDept.has(e.id));
     }
     return emps.filter((e) =>
-      assessType === 'leadership' ? isManager(e.id, departments, allEmployees) : !isManager(e.id, departments, allEmployees),
+      assessType === 'leadership' ? managerIdSet.has(e.id) : !managerIdSet.has(e.id),
     ).length;
-  }, [scope, allEmployees, departments, deptId, includeChildren, assessType]);
+  }, [scope, allEmployees, departments, deptId, includeChildren, assessType, managerIdSet]);
 
   // 打开时重置临时态（未评 = 空，绝不预填伪中立分）
   useEffect(() => {
@@ -294,14 +310,14 @@ export function BatchAssessmentModal({
             row[d.key] = prevRow; // 保留本次已输入
             continue;
           }
-          const latest = latestSupervisorAssessment(assessments, emp.id, d.key);
+          const latest = resolvedByKey.get(`${emp.id}\u0000${d.key}`) ?? null;
           row[d.key] = latest ? latest.score : '';
         }
         next[emp.id] = row;
       }
       return { ...prev, ...next };
     });
-  }, [scopeEmployees, dims, assessments]);
+  }, [scopeEmployees, dims, resolvedByKey]);
 
   /** 清除选中行（一键清空预填/输入） */
   const clearSelectedRows = useCallback(() => {

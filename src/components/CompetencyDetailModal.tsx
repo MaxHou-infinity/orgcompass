@@ -363,6 +363,15 @@ export function CompetencyDetailModal({
                             <span className="text-slate-400">{formatDateTime(d.hrbpCalibration.assessedAt)}</span>
                             {d.hrbpCalibration.assessorId && <span className="text-slate-500">· {resolveName(d.hrbpCalibration.assessorId)}</span>}
                             <span className="text-slate-400">（并列对照，不参与灯号）</span>
+                            {/* v2.3.1（Q-18）：与上级分同样标注岗位适用性 */}
+                            {d.hrbpCalibration.applicability && d.hrbpCalibration.applicability !== 'historical' && (
+                              <span className="px-1 rounded bg-slate-100 text-slate-600">
+                                {APPLICABILITY_LABEL[d.hrbpCalibration.applicability]}
+                              </span>
+                            )}
+                            {d.hrbpCalibration.applicability === 'historical' && (
+                              <span className="px-1 rounded bg-amber-100 text-amber-800">历史岗位校准，适用性待复核</span>
+                            )}
                           </div>
                         )}
                       </td>

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, useSensor, useSensors, PointerSensor } from '@dnd-kit/core';
 import { DepartmentCard } from './DepartmentCard';
-import { Department, Employee } from '../types';
+import { Department, Employee, LeaderType } from '../types';
 import { accumZoomWheel, applyZoomSteps } from '../utils/zoom';
 import { employeeDeptMap, expandedMembersForSearch } from '../utils/search';
 import { SearchHighlight, SearchHighlightContext } from './SearchContext';
@@ -14,6 +14,8 @@ interface OrgChartProps {
   onToggleExpand: (id: string) => void;
   onUpdateDepartment: (id: string, name: string) => void;
   onUpdateLeader: (deptId: string, employee: Employee | null) => void;
+  /** v2.3.1（Q-07）：负责人类型（正职/副职/代理/外部/空缺）—— 此前无写入点，精确剔除与空缺提示不可达 */
+  onUpdateLeaderType: (deptId: string, leaderType: LeaderType | undefined) => void;
   onMoveEmployee: (empId: string, fromDeptId: string, toDeptId: string) => void;
   onMoveMultiple: (empIds: string[], toDeptId: string) => void;
   onMoveDepartment: (deptId: string, targetDeptId: string | null) => void;
@@ -260,6 +262,7 @@ const renderTreeRecursive = (
   onToggleExpand: (id: string) => void,
   onUpdateDepartment: (id: string, name: string) => void,
   onUpdateLeader: (deptId: string, employee: Employee | null) => void,
+  onUpdateLeaderType: (deptId: string, leaderType: LeaderType | undefined) => void,
   onDeleteEmployee: (deptId: string, empId: string) => void,
   onCreateVirtualFromEmployee: (deptId: string, empId: string) => void,
   onChangeDepartmentLevel: (deptId: string, newLevel: number, newParentId: string | null) => void,
@@ -295,6 +298,7 @@ const renderTreeRecursive = (
             onToggleExpand={onToggleExpand}
             onUpdateDepartment={onUpdateDepartment}
             onUpdateLeader={onUpdateLeader}
+            onUpdateLeaderType={onUpdateLeaderType}
             onDeleteEmployee={onDeleteEmployee}
             onCreateVirtualFromEmployee={onCreateVirtualFromEmployee}
             onChangeDepartmentLevel={onChangeDepartmentLevel}
@@ -403,6 +407,7 @@ export function OrgChart({
   onToggleExpand,
   onUpdateDepartment,
   onUpdateLeader,
+  onUpdateLeaderType,
   onMoveEmployee,
   onMoveMultiple,
   onMoveDepartment,
@@ -852,6 +857,7 @@ export function OrgChart({
               onToggleExpand,
               onUpdateDepartment,
               onUpdateLeader,
+              onUpdateLeaderType,
               onDeleteEmployee,
               onCreateVirtualFromEmployee,
               onChangeDepartmentLevel,

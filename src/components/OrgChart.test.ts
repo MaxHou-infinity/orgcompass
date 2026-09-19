@@ -129,23 +129,47 @@ describe('calculateTreeLayout（方案A 绝对定位布局）', () => {
     expect(countLeaves(leaf)).toBe(1);
   });
 
-  it('多个根部门水平排列且不重叠', () => {
+  it('多个根部门水平排列且**带宽**互不重叠（v2.3.1 T-02：旧断言只验 x 递增）', () => {
     const nodes = calculateTreeLayout(treeOf(), 0, 0, 100);
     expect(nodes.length).toBeGreaterThan(1);
+    // 带宽左/右缘（band = 子树占用宽度；卡片居中于带内）
+    const bandLeft = (n: (typeof nodes)[number]) => n.x + CARD_WIDTH / 2 - n.width / 2;
+    const bandRight = (n: (typeof nodes)[number]) => n.x + CARD_WIDTH / 2 + n.width / 2;
     for (let i = 1; i < nodes.length; i++) {
       expect(nodes[i].x).toBeGreaterThan(nodes[i - 1].x);
+      // 真正的「不重叠」：后一个根部门的带宽左缘不得早于前一个的右缘
+      expect(bandLeft(nodes[i])).toBeGreaterThanOrEqual(bandRight(nodes[i - 1]));
     }
   });
 
-  it('父卡片水平居中于其子部门块中点（引导线对齐，视觉层级清晰）', () => {
-    const nodes = calculateTreeLayout(treeOf(), 0, 0, 100);
+  /**
+   * v2.3.1（T-02）：原用例是**代数恒真**的 —— pc 与 blockCenter 都由同一个 n.x/n.width 推出，
+   * 任何输入都相等（已验证：把根节点整体偏移 37px 该用例仍通过，仅根节点 x+37 也通过）。
+   * 现在改为三条**有判别力**的独立断言：
+   * 1) 绝对锚点：带宽左缘必须落在调用方给定的 parentX 上；
+   * 2) 子部门真实span 必须与父部门声明的带宽一致（用子节点坐标反推，不复用 n.width）；
+   * 3) 父卡中心必须等于子部门真实 span 的中点。
+   */
+  it('父卡片水平居中于其子部门块中点（用子节点坐标独立校验，非恒等式）', () => {
+    const START_X = 400;
+    const nodes = calculateTreeLayout(treeOf(), START_X, 0, 100);
+    const bandLeft = (n: ReturnType<typeof calculateTreeLayout>[number]) => n.x + CARD_WIDTH / 2 - n.width / 2;
+    const bandRight = (n: ReturnType<typeof calculateTreeLayout>[number]) => n.x + CARD_WIDTH / 2 + n.width / 2;
+
+    // 1) 绝对锚点：根部门的带宽左缘 = 调用方给定坐标
+    expect(Math.abs(bandLeft(nodes[0]) - START_X)).toBeLessThan(1);
+
     const check = (list: ReturnType<typeof calculateTreeLayout>) => {
       for (const n of list) {
         if (n.children.length > 0) {
-          const pc = parentCenter(n); // 父卡中心 = 子树带左缘 + 带宽/2
-          const bandLeft = n.x + CARD_WIDTH / 2 - n.width / 2; // 子树带左缘
-          const blockCenter = bandLeft + n.width / 2; // 子部门块（占据整个带）中点 = 子树带中点
-          expect(Math.abs(pc - blockCenter)).toBeLessThan(1);
+          const first = n.children[0];
+          const last = n.children[n.children.length - 1];
+          // 2) 子部门整体占用的 span 与父部门声明的带宽一致
+          expect(Math.abs(bandLeft(first) - bandLeft(n))).toBeLessThan(1);
+          expect(Math.abs(bandRight(last) - bandRight(n))).toBeLessThan(1);
+          // 3) 父卡中心 = 子部门真实 span 的中点（独立于父节点的 width 字段）
+          const childrenMid = (bandLeft(first) + bandRight(last)) / 2;
+          expect(Math.abs(parentCenter(n) - childrenMid)).toBeLessThan(1);
         }
         check(n.children);
       }

@@ -20,6 +20,9 @@ import {
   persistProject,
   projectLoadIssue,
   getCurrentScenario,
+  // v2.3.1（F-12）：破坏性写入前的可恢复快照
+  snapshotCurrentProject,
+  readProjectBackup,
 } from './project';
 import { reconcilePlacementChange, seedLegacyAssignments } from './placement';
 import { flattenPositions } from './positions';
@@ -70,6 +73,19 @@ export function useOrgWorkspace() {
       positionAssignments: initialScenario.positionAssignments ?? [],
     },
     50,
+    // v2.3.1（Q-20）：人工复核确认是**合规留痕**，不能被一次 Ctrl+Z 无痕抹掉。
+    // 撤销/重做落地前，把当前状态里存在、而目标快照里缺失的 not_competent 记录并回去；
+    // 取消确认必须走显式「撤销确认」（带撤销人/时间/原因），保持 D04「原确认仍可查」。
+    (restored, current) => {
+      const byId = new Map(restored.positionAssignments.map((a) => [a.id, a]));
+      let added = false;
+      for (const a of current.positionAssignments) {
+        if (a.status !== 'not_competent' || byId.has(a.id)) continue;
+        byId.set(a.id, a);
+        added = true;
+      }
+      return added ? { ...restored, positionAssignments: [...byId.values()] } : restored;
+    },
   );
   const { state: live, getSnapshot, set: setSnapshot, replace: replaceSnapshot, undo, redo, canUndo, canRedo } = history;
   const { departments, allEmployeesFlat, assessments, competencyModel, positionAssignments } = live;
@@ -166,6 +182,31 @@ export function useOrgWorkspace() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [departments, allEmployeesFlat, zoom, levelConfigs, assessments, competencyModel, positionAssignments]);
+
+  /**
+   * v2.3.1（Q-09）：离开页面前把待写快照落盘。
+   *
+   * 旧实现只有 800ms debounce：编辑后 800ms 内关闭窗口/刷新/WebView 被系统回收 →
+   * 最后一次编辑直接丢失（内存状态与磁盘不一致，且用户没有任何补救手段）。
+   * 这里补 pagehide（覆盖刷新/关闭/前进后退）与 visibilitychange→hidden（覆盖切后台被杀）。
+   */
+  useEffect(() => {
+    const flushPending = () => {
+      if (dirtyTimer.current === null) return; // 无待写内容 → 不打扰
+      clearTimeout(dirtyTimer.current);
+      dirtyTimer.current = null;
+      patchCurrentScenario();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flushPending();
+    };
+    window.addEventListener('pagehide', flushPending);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('pagehide', flushPending);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [patchCurrentScenario]);
 
   /** —— 快照更新器（历史感知） —— */
 
@@ -417,11 +458,38 @@ export function useOrgWorkspace() {
     return serializeProject(projectRef.current);
   }, [flushCurrent]);
 
-  /** 导入 .orgproj JSON 字符串。成功返回 true。 */
+  /** 导入 .orgproj JSON 字符串。成功返回 true，并把导入前的工作区快照留档（v2.3.1 F-12）。 */
   const importProjectJson = useCallback(
     (json: string): boolean => {
       const parsed = parseProject(json);
       if (!parsed) return false;
+      // 解析成功后才快照：避免「文件本身不可用」也写一份无意义快照。
+      const snapshotted = snapshotCurrentProject('导入 .orgproj');
+      if (!persistProject(parsed)) return false;
+      if (!snapshotted) console.warn('导入前未能写入快照（可能无现存数据或存储不可用）');
+      projectRef.current = parsed;
+      setProjectState(parsed);
+      const first = getCurrentScenario(parsed);
+      loadSnapshot({
+        departments: first.departments,
+        allEmployeesFlat: first.allEmployeesFlat,
+        levelConfigs: first.levelConfigs,
+        canvas: first.canvas,
+        assessments: first.assessments ?? [],
+        competencyModel: structuredClone(first.competencyModel ?? DEFAULT_COMPETENCY_MODEL),
+        positionAssignments: first.positionAssignments ?? [],
+      });
+      return true;
+    },
+    [loadSnapshot],
+  );
+
+  /** 恢复某一份历史快照（恢复前同样先给当前状态留一份快照）。 */
+  const restoreProjectBackup = useCallback(
+    (key: string): boolean => {
+      const parsed = readProjectBackup(key);
+      if (!parsed) return false;
+      snapshotCurrentProject('恢复历史快照');
       if (!persistProject(parsed)) return false;
       projectRef.current = parsed;
       setProjectState(parsed);
@@ -440,9 +508,11 @@ export function useOrgWorkspace() {
     [loadSnapshot],
   );
 
-  /** 清空当前工作区（重置，保留职级配置偏好）。v2.2.0：三字段重置为 空评估 / 默认模型 / 空时态表。 */
+  /** 清空当前工作区（重置，保留职级配置偏好）。v2.2.0：三字段重置为 空评估 / 默认模型 / 空时态表。
+   *  v2.3.1（F-12）：清空前留一份可恢复快照。 */
   const resetWorkspace = useCallback(() => {
     flushCurrent();
+    snapshotCurrentProject('清空工作区');
     replaceSnapshot({
       departments: [],
       allEmployeesFlat: [],
@@ -491,6 +561,7 @@ export function useOrgWorkspace() {
 
     exportProjectJson,
     importProjectJson,
+    restoreProjectBackup,
     resetWorkspace,
     flushCurrent,
   };

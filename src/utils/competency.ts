@@ -104,18 +104,48 @@ export function assessmentScopeOf(a: { scope?: AssessmentScope; positionId?: str
   return a.positionId ? 'position' : 'general';
 }
 
-/** 同一人 / 范围 / 维度 / 角色 / 评估时点的当前修订链终点（写入层关联 revisionOf 用）。 */
+/**
+ * 评估「自然日」——同日判定的唯一键（v2.3.1 F-08 新增）。
+ *
+ * 背景：`assessedAt` 是**时刻**，却被当作「同一评估时点」的判定键，而全仓存在两种写入语义：
+ * - 批量评估（`BatchAssessmentModal`）：`new Date(\`${date}T12:00:00\`).toISOString()` —— 本地正午归一；
+ * - 评分导入（`App.handleImportAssessmentExcel`）：日期列留空时用 `new Date().toISOString()` —— 真实时刻。
+ *
+ * 后果（与直觉相反）：**同一自然日不被判定为同日**。本地正午可能晚于真实时钟
+ * （UTC+8 上午 9 点写入 = 04:00Z，10 点的真实写入 = 02:00Z），于是后写入的记录被当作更早，
+ * 既不建立修订边、也不进 `latest` 分组 → **用户刚录入/导入的分数在所有派生视图里永不生效，
+ * 且没有任何提示**。
+ *
+ * 这里用「自然日」做同日键，`assessedAt` 退化为记录时刻：
+ * - 新记录写入时显式带上 `assessmentDay`（本地自然日）；
+ * - 旧记录没有该字段 → 由 `assessedAt` 按**本地时区**回推自然日（不改写数据、不伪造事实）。
+ */
+export function assessmentDayOf(a: Pick<Assessment, 'assessmentDay' | 'assessedAt'>): string {
+  if (typeof a.assessmentDay === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(a.assessmentDay)) return a.assessmentDay;
+  return localDayOf(a.assessedAt);
+}
+
+/** ISO 时刻 → 本地自然日 `YYYY-MM-DD`（无法解析时退化为原字符串前 10 位，保证可比较）。 */
+export function localDayOf(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso).slice(0, 10);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** 同一人 / 范围 / 维度 / 角色 / **评估日** 的当前修订链终点（写入层关联 revisionOf 用）。 */
 export function currentRevisionEndpoint(
   assessments: Assessment[],
-  candidate: Pick<Assessment, 'employeeId' | 'dimension' | 'assessorRole' | 'assessedAt' | 'scope' | 'positionId' | 'relationId'>,
+  candidate: Pick<Assessment, 'employeeId' | 'dimension' | 'assessorRole' | 'assessedAt' | 'scope' | 'positionId' | 'relationId'> & { assessmentDay?: string },
 ): Assessment | undefined {
   const scope = assessmentScopeOf(candidate);
+  const day = assessmentDayOf(candidate);
   const sameTime = assessments.filter(
     (a) =>
       a.employeeId === candidate.employeeId &&
       a.dimension === candidate.dimension &&
       a.assessorRole === candidate.assessorRole &&
-      a.assessedAt === candidate.assessedAt &&
+      assessmentDayOf(a) === day &&
       assessmentScopeOf(a) === scope &&
       (a.positionId ?? '') === (candidate.positionId ?? '') &&
       (a.relationId ?? '') === (candidate.relationId ?? ''),
@@ -156,13 +186,14 @@ function sameContent(x: Assessment, y: Assessment): boolean {
     && assessmentScopeOf(x) === assessmentScopeOf(y);
 }
 
-/** 修订链校验：修订必须属于同一人、范围、维度、角色、评估时点（契约 §4.2.4）。 */
+/** 修订链校验：修订必须属于同一人、范围、维度、角色、评估日（契约 §4.2.4）。 */
 export function revisionLinkIssue(target: Assessment, revision: Assessment): string | undefined {
   if (target.id === revision.id) return '修订不能指向自身';
   if (target.employeeId !== revision.employeeId) return '修订不能跨员工';
   if (target.dimension !== revision.dimension) return '修订不能跨维度';
   if (target.assessorRole !== revision.assessorRole) return '修订不能跨评分角色';
-  if (target.assessedAt !== revision.assessedAt) return '修订不能跨评估时点';
+  // v2.3.1（F-08）：同日判定用自然日，避免「本地正午归一 vs 真实时刻」把同一天的纠正判成跨时点。
+  if (assessmentDayOf(target) !== assessmentDayOf(revision)) return '修订不能跨评估日';
   if (assessmentScopeOf(target) !== assessmentScopeOf(revision)) return '修订不能跨评价适用范围';
   if (assessmentScopeOf(target) === 'position'
     && (target.positionId ?? '') !== (revision.positionId ?? '')) return '修订不能跨岗位';
@@ -250,9 +281,15 @@ export function resolveSupervisorAssessment(
   const bestRank = applicable.reduce((min, x) => Math.min(min, TIER_RANK[x.tier]), 3);
   const tierRecords = applicable.filter((x) => TIER_RANK[x.tier] === bestRank).map((x) => x.a);
 
-  let latest = '';
-  for (const a of tierRecords) if (a.assessedAt > latest) latest = a.assessedAt;
-  const group = tierRecords.filter((a) => a.assessedAt === latest);
+  // v2.3.1（F-08）：分组键从「时刻」改为「自然日」。
+  // 旧实现按 assessedAt 全等分组：同一天由不同入口写入（本地正午归一 vs 真实时刻）会落到不同组，
+  // 后写入的那条既不在组内、也不成为端点 → 既不建立修订边、也不报冲突，直接**静默失效**。
+  let latestDay = '';
+  for (const a of tierRecords) {
+    const day = assessmentDayOf(a);
+    if (day > latestDay) latestDay = day;
+  }
+  const group = tierRecords.filter((a) => assessmentDayOf(a) === latestDay);
 
   const byId = new Map(group.map((a) => [a.id, a]));
   // 修订边：仅在组内、且满足同人/同范围/同维度/同角色/同时点时生效；非法边按「无关系」处理并计入冲突。
@@ -325,16 +362,24 @@ export function latestSupervisorAssessment(
   return resolveSupervisorAssessment(assessments, employeeId, dimension, ctx).effective;
 }
 
-/** 某员工某维度最新 HRBP 校准分（并列对照；不参与灯号/完整度分子）。 */
+/**
+ * 某员工某维度最新 HRBP 校准分（并列对照；不参与灯号/完整度分子）。
+ *
+ * v2.3.1（Q-18）：与上级评分同样必须过**岗位适用性**。
+ * 旧实现不看 ctx/relationId —— 员工从 P1 调到 P2 后，P1 期间录的校准分仍作为 P2 的「当前校准」展示，
+ * 且没有任何「适用性待复核」标记（上级分有，校准分没有），两者口径不一致。
+ */
 export function latestHrbpAssessment(
   assessments: Assessment[],
   employeeId: string,
   dimension: string,
+  ctx?: CompetencyScopeContext,
 ): Assessment | null {
   let best: Assessment | null = null;
   for (const a of assessments) {
     if (a.employeeId !== employeeId || a.dimension !== dimension) continue;
     if (a.assessorRole !== 'hrbp') continue;
+    if (ctx && assessmentApplicability(a, ctx) === 'historical') continue;
     if (best === null || a.assessedAt > best.assessedAt) best = a;
   }
   return best;
@@ -346,6 +391,7 @@ function deriveDimension(
   a: Assessment,
   resolved: ResolvedAssessment,
   hrbp: Assessment | null,
+  hrbpApplicability?: AssessmentApplicability,
 ): CompetencyDimensionDerived {
   const gap = dimensionGap(a.score, a.requirement);
   return {
@@ -373,6 +419,7 @@ function deriveDimension(
           requirement: hrbp.requirement,
           assessedAt: hrbp.assessedAt,
           ...(hrbp.assessorId ? { assessorId: hrbp.assessorId } : {}),
+          ...(hrbpApplicability ? { applicability: hrbpApplicability } : {}),
         }
       : null,
   };
@@ -431,6 +478,8 @@ export interface CompetencyDimensionDerived {
     requirement: number;
     assessedAt: string;
     assessorId?: string;
+    /** v2.3.1（Q-18）：校准分的岗位适用性；historical = 换岗后的旧岗位校准分，仅历史可见 */
+    applicability?: AssessmentApplicability;
   } | null;
 }
 
@@ -533,7 +582,10 @@ export function computeCompetencySummary(
     if (resolved.historicalOnly) { historical.push(dim.key); continue; }
     const a = resolved.effective;
     if (!a) continue; // 未评估维度不参与（未评估 ≠ 0）
-    derived.push(deriveDimension(dim, a, resolved, latestHrbpAssessment(assessments, employeeId, dim.key)));
+    {
+      const hrbp = latestHrbpAssessment(assessments, employeeId, dim.key, ctx);
+      derived.push(deriveDimension(dim, a, resolved, hrbp, hrbp ? assessmentApplicability(hrbp, ctx) : undefined));
+    }
     effective.push(a);
   }
 
@@ -701,7 +753,10 @@ export function buildLeadershipDossier(
     const resolved = resolveSupervisorAssessment(assessments, employeeId, dim.key, ctx);
     const a = resolved.effective;
     if (resolved.conflict || !a) continue; // 冲突维度不进结论，历史可查
-    derived.push(deriveDimension(dim, a, resolved, latestHrbpAssessment(assessments, employeeId, dim.key)));
+    {
+      const hrbp = latestHrbpAssessment(assessments, employeeId, dim.key, ctx);
+      derived.push(deriveDimension(dim, a, resolved, hrbp, hrbp ? assessmentApplicability(hrbp, ctx) : undefined));
+    }
   }
   if (derived.length === 0) return null;
 
@@ -728,18 +783,51 @@ export function buildLeadershipDossier(
 /** —— §2 D7：干部/员工识别规则（供 UI 选模型与展示分组） —— */
 
 /** 干部（领导力模型）判定：是某部门负责人（递归整树），或有直管下属（reportsToEmployeeId 指向它）。
- *  归属模型最终以已评维度的 group 为准；isManager 只用于 UI 决定「默认铺哪些维度列 / 默认折叠哪组」。 */
+ *  归属模型最终以已评维度的 group 为准；isManager 只用于 UI 决定「默认铺哪些维度列 / 默认折叠哪组」。
+ *  v2.3.1（Q-24）：单点 API 委托给批量实现，保证与 `computeManagerIdSet` 单一规则、不会漂移。 */
 export function isManager(
   employeeId: string,
   departments: Department[],
   allEmployees: Employee[],
 ): boolean {
-  const employee = allEmployees.find((e) => e.id === employeeId);
-  const matchesId = (id: string | undefined) => Boolean(id && (id === employeeId || id === employee?.employeeId));
-  const isLeader = (depts: Department[]): boolean =>
-    depts.some((d) => matchesId(d.leaderId) || isLeader(d.children ?? []));
-  const hasDirectReport = allEmployees.some(
-    (e) => !e.isVirtual && e.id !== employeeId && matchesId(e.reportsToEmployeeId),
-  );
-  return isLeader(departments) || hasDirectReport;
+  return computeManagerIdSet(departments, allEmployees).has(employeeId);
+}
+
+/**
+ * 批量计算「干部（管理者）」内部 id 集合（v2.3.1 Q-24 / Q-33）。
+ *
+ * `isManager` 是单点 API：每次调用都要 find 员工 + 递归遍历部门树 + 全表扫直管关系。
+ * 批量场景（批量评估范围、看板完整度分类）对每个员工各调一次 → O(员工 × (部门 + 员工))；
+ * 且 App 与批量评估此前各自实现过一份等价规则（双实现一旦漂移，就会出现
+ * 「按干部评分、按员工模型算完整度」的静默错配）。
+ *
+ * 本函数一次遍历得到全量结果，判定规则与 `isManager` 完全一致：
+ * - 是本部门（含任意层级）的负责人（leaderId 命中内部 id 或工号）；或
+ * - 是某个非虚拟员工的直接上级（reportsToEmployeeId 命中），且不是自己汇报给自己。
+ */
+export function computeManagerIdSet(departments: Department[], allEmployees: Employee[]): Set<string> {
+  const idsByEmployeeNumber = new Map<string, string[]>();
+  for (const e of allEmployees) {
+    if (e.isVirtual || !e.employeeId) continue;
+    idsByEmployeeNumber.set(e.employeeId, [...(idsByEmployeeNumber.get(e.employeeId) ?? []), e.id]);
+  }
+  /** 一个 leaderId / reportsToEmployeeId 字面值 → 它指向的内部 id 列表（工号优先，其次按内部 id） */
+  const resolve = (value: string): string[] => idsByEmployeeNumber.get(value) ?? [value];
+
+  const out = new Set<string>();
+  const walk = (list: Department[]) => {
+    for (const d of list) {
+      if (d.leaderId) for (const id of resolve(d.leaderId)) out.add(id);
+      walk(d.children ?? []);
+    }
+  };
+  walk(departments);
+
+  for (const e of allEmployees) {
+    if (e.isVirtual || !e.reportsToEmployeeId) continue;
+    for (const id of resolve(e.reportsToEmployeeId)) {
+      if (id !== e.id) out.add(id);
+    }
+  }
+  return out;
 }

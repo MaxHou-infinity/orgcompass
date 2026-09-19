@@ -64,16 +64,16 @@ export const COMPETENCY_LABEL: Record<CompetencyStatus, string> = {
   unrated: '未评分',
 };
 
-/** 单值格式化：null → '—' */
+/** 单值格式化：null / 非有限数 → '—'（v2.3.1 Q-06：Infinity/NaN 不再漏成 "Infinity"） */
 export function fmt(value: number | null, unit = ''): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
   const v = Number.isInteger(value) ? String(value) : value.toFixed(1);
   return `${v}${unit}`;
 }
 
-/** 金额格式化（单位 w）：保留 1 位小数 */
+/** 金额格式化（单位 w）：保留 1 位小数；null / 非有限数 → '—'（v2.3.1 Q-06） */
 export function fmtCost(value: number | null): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
   const v = Number.isInteger(value) ? String(value) : value.toFixed(1);
   return `${v}w`;
 }

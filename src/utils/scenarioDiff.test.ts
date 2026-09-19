@@ -225,7 +225,9 @@ describe('computeDeptDiffs（部门差异表）', () => {
     expect(unchanged.delta.headcount).toBe(0);
     expect(unchanged.delta.actual).toBe(0);
     expect(unchanged.delta.gap).toBe(0);
-    expect(unchanged.delta.gapCost).toBe(0);
+    // v2.3.1 F-11：该 fixture 未配置职级成本（levelConfigs=[]）→ 缺口成本不可估算，
+    // 「未知 vs 未知」的差值同样未知（null，界面显示「—」），不再当成 0。
+    expect(unchanged.delta.gapCost).toBeNull();
   });
 
   it('编制缺失不可比：一侧未配置 → headcount/gap/gapCost Δ 为 null，actual Δ 仍可算', () => {

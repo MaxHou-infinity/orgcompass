@@ -17,7 +17,7 @@ async function loadXlsx(): Promise<typeof import('xlsx')> {
 export const MAX_IMPORT_FILE_BYTES = 50 * 1024 * 1024; // 50MB
 /** 单个导入文件的软提醒阈值（字节）。超过但未达硬上限时，可提示用户拆分。 */
 export const WARN_IMPORT_FILE_BYTES = 10 * 1024 * 1024; // 10MB
-/** 单个工作表最多解析的行数（含表头）。防止超大表拖垮内存/渲染。 */
+/** 单个工作表最多导入的**数据行**数（不含表头）。防超大表拖垮内存/渲染；超过即拒绝，不静默截断。 */
 export const MAX_IMPORT_ROWS = 50000;
 /** 支持的 Excel 文件扩展名。 */
 export const SUPPORTED_EXCEL_EXTENSIONS = ['.xlsx', '.xls'] as const;
@@ -115,6 +115,58 @@ function cellNumber(value: unknown): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/** Excel 日期序列号 → 自然日 `YYYY-MM-DD`。epoch = 1899-12-30（补偿 Excel 的 1900 闰年 bug，序列号 ≥ 61 时正确）。 */
+function excelSerialToDay(serial: number): string | null {
+  if (!Number.isFinite(serial) || serial <= 0) return null;
+  const days = Math.floor(serial);
+  const d = new Date(Date.UTC(1899, 11, 30) + days * 86400000);
+  const y = d.getUTCFullYear();
+  if (y < 1900 || y > 2100) return null;
+  return `${y}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+}
+
+/**
+ * 「评估日期」单元格 → 规范化的自然日 `YYYY-MM-DD`（v2.3.1 F-07 新增）。
+ *
+ * 背景：`XLSX.read` 未开启 `cellDates`，日期格式单元格经 `sheet_to_json` 返回的是**序列号**
+ * （如 2026-09-16 → 46281）。旧实现直接把它拼成 `${value}T12:00:00` 再 `toISOString()`，
+ * 于是 `new Date("46281T12:00:00")` 抛 `RangeError: Invalid time value` ——
+ * 而「在 Excel 里直接键入 2026-09-16」默认就是日期单元格，即最自然的用户操作必然整批导入失败。
+ *
+ * 支持：Excel 序列号（数字或数字文本）、Date 实例、`YYYY-M-D` / `YYYY/M/D` / `YYYY.M.D` /
+ * `YYYY年M月D日`、以及 ISO 日期时间。无法解析返回 undefined，由调用方带行号报错（不静默吞）。
+ */
+export function cellDateString(value: unknown): string | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return undefined;
+    return `${value.getFullYear()}-${pad2(value.getMonth() + 1)}-${pad2(value.getDate())}`;
+  }
+  if (typeof value === 'number') return excelSerialToDay(value) ?? undefined;
+  const raw = String(value).trim();
+  if (raw === '' || raw === 'undefined') return undefined;
+  // 纯数字文本 = Excel 序列号（日期列的 raw 值被字符串化）
+  if (/^\d+(\.\d+)?$/.test(raw)) return excelSerialToDay(Number(raw)) ?? undefined;
+  // ISO 日期时间（含 Date 对象被序列化后的形态）
+  const iso = /^(\d{4})-(\d{2})-(\d{2})T/.exec(raw);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  // YYYY-M-D / YYYY/M/D / YYYY.M.D / YYYY年M月D日（允许不补零）
+  const ymd = /^(\d{4})\s*[-/.\u5e74]\s*(\d{1,2})\s*[-/.\u6708]\s*(\d{1,2})\s*\u65e5?$/.exec(raw);
+  if (ymd) {
+    const y = Number(ymd[1]);
+    const m = Number(ymd[2]);
+    const d = Number(ymd[3]);
+    if (y < 1900 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) return undefined;
+    const probe = new Date(Date.UTC(y, m - 1, d));
+    // 拒绝 2026-02-31 这类溢出日期（Date 会自动进位）
+    if (probe.getUTCMonth() !== m - 1 || probe.getUTCDate() !== d) return undefined;
+    return `${y}-${pad2(m)}-${pad2(d)}`;
+  }
+  return undefined;
+}
+
 /** 判断岗位表「同名岗位去重」是否冲突：同一部门重复出现同名岗位 → 报错（不静默吞）。 */
 function assertNoDuplicatePositions(rows: PositionImportRow[]): void {
   const seen = new Set<string>();
@@ -143,7 +195,10 @@ export async function parseExcelFromBuffer(buffer: ArrayBuffer | Uint8Array): Pr
 
 function readWorkbook(XLSX: typeof import('xlsx'), buffer: ArrayBuffer | Uint8Array): WorkBook {
   try {
-    return XLSX.read(buffer, { type: 'array', dense: true, sheetRows: MAX_IMPORT_ROWS });
+    // v2.3.1（F-10）：多读 2 行（表头 + 1 行探测）用于**探测溢出**。
+    // 旧实现读满 MAX_IMPORT_ROWS 行即静默截断（60001 行只导入 49999 行且无任何提示），
+    // 用户会以为数据完整，人数/编制/健康度随之失真。宁可拒绝，也不静默丢数据。
+    return XLSX.read(buffer, { type: 'array', dense: true, sheetRows: MAX_IMPORT_ROWS + 2 });
   } catch {
     throw new ExcelImportError('parse-failed', IMPORT_ERROR_MESSAGES['parse-failed']);
   }
@@ -156,7 +211,13 @@ function sheetToRows(XLSX: typeof import('xlsx'), workbook: WorkBook): Record<st
     throw new ExcelImportError('empty', IMPORT_ERROR_MESSAGES['empty']);
   }
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet);
-  // 结构异常：sheet 存在但表头为空/非有效列名（SheetJS 会生成 ''、'__N' 之类的占位 key），
+  // v2.3.1（F-10）：触及上限即为「被截断」，显式报错而不是把半份数据当成全部。
+  if (rows.length > MAX_IMPORT_ROWS) {
+    throw new ExcelImportError(
+      'invalid-structure',
+      `文件数据超过 ${MAX_IMPORT_ROWS} 行上限（已检测到更多行），为避免静默丢失数据已拒绝导入；请按部门/批次拆分为多个文件后导入`,
+    );
+  }  // 结构异常：sheet 存在但表头为空/非有效列名（SheetJS 会生成 ''、'__N' 之类的占位 key），
   // 无法据此做字段映射，应视为结构异常而非静默透传。
   const hasMeaningfulColumn = rows.some((row) =>
     Object.keys(row).some((key) => key.trim() !== '' && !/^_[0-9]+$/.test(key)),
@@ -429,8 +490,19 @@ export function mapAssessmentRows(
     const out: AssessmentImportRow = { employeeKey, employeeKeyType: employeeNumber ? 'employeeId' : 'name', scores };
     const assessorName = cellString(row['评分人']);
     if (assessorName) out.assessorName = assessorName;
-    const assessedAt = cellString(row['评估日期']);
-    if (assessedAt) out.assessedAt = assessedAt;
+    // v2.3.1（F-07）：日期列必须容错解析（序列号 / Date / 多种文本），
+    // 非空但无法解析 → 带行号报错，不再让 RangeError 把整批导入打成「导入失败」。
+    const rawDate = row['评估日期'];
+    if (rawDate !== null && rawDate !== undefined && String(rawDate).trim() !== '') {
+      const day = cellDateString(rawDate);
+      if (!day) {
+        throw new ExcelImportError(
+          'invalid-structure',
+          `评分表第 ${line} 行「${employeeKey}」的「评估日期」为「${String(rawDate)}」，无法识别为日期；请使用 2026-09-16 这类格式（或留空按导入时点记录）`,
+        );
+      }
+      out.assessedAt = day;
+    }
     const note = cellString(row['备注']);
     if (note) out.note = note;
     return out;

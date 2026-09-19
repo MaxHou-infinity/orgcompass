@@ -16,7 +16,7 @@ import {
   type CompetencyScopeContext,
   type CompetencySummary,
 } from './competency';
-import { listReviewEvents } from './assignment';
+import { buildReviewEventIndex, listReviewEventsFromIndex, type ReviewEvent } from './assignment';
 import { flattenPositions } from './positions';
 import type { MatchResult } from './match';
 import type { CompetencyStatus } from './statusUI';
@@ -274,11 +274,15 @@ export function deriveBoard(input: BoardInput): BoardDerivation {
   const structuralPositions = treePositions.length > 0 ? treePositions : suppliedPositions;
   const positionById = new Map(structuralPositions.map((p) => [p.id, p]));
 
-  // 复核事件按员工分组（stale-basis 判定）
-  const reviewsByEmployee = new Map<string, ReturnType<typeof listReviewEvents>>();
+  // 复核事件按员工分组（stale-basis 判定）。
+  // v2.3.1（F-15）：改为**单次建索引**后按员工取用。旧实现对每个员工各调一次
+  // `listReviewEvents`，每次都重建 activeRelations 并全表扫描 assessments → O(员工 × 关系)；
+  // 实测 1000 人 / 1000 关系 / 4000 评分下占 deriveBoard 26ms 中的 21ms（82%）。
+  const reviewIndex = buildReviewEventIndex(input.positionAssignments, input.assessments);
+  const reviewsByEmployee = new Map<string, ReviewEvent[]>();
   for (const e of input.allEmployees) {
     if (e.isVirtual) continue;
-    reviewsByEmployee.set(e.id, listReviewEvents(input.positionAssignments, input.assessments, e.id));
+    reviewsByEmployee.set(e.id, listReviewEventsFromIndex(reviewIndex, e.id));
   }
 
   const dataIssues: string[] = [];
@@ -344,6 +348,8 @@ export function deriveBoard(input: BoardInput): BoardDerivation {
   }
 
   const positions: BoardPositionRow[] = [];
+  // v2.3.1（Q-03）：员工内部 id → 员工记录，供成本估算按 id 查（不再用会抛错的非空断言）。
+  const employeeById = new Map(input.allEmployees.map((e) => [e.id, e]));
   for (const pos of structuralPositions) {
     if (pos.status === 'archived') continue;
     if (!scopeSet.has(pos.departmentId)) continue;
@@ -354,7 +360,13 @@ export function deriveBoard(input: BoardInput): BoardDerivation {
     const netGap = configured ? pos.headcount - primaryOccupied : null;
     const pendingCount = netGap !== null && netGap > 0 ? netGap : 0;
     const overflowCount = netGap !== null && netGap < 0 ? -netGap : 0;
-    const unit = configured ? positionUnitCost(pos, occupied.map((r) => input.allEmployees.find((e) => e.id === r.employeeId)!), input.levelConfigs) : null;
+    // v2.3.1（Q-03）：占用记录可能指向不在 allEmployees 里的员工（数据不一致时，
+    // 例如关系表引用了已从名册移除的真人）。旧实现用 `!` 断言直接取 → deriveBoard 抛 TypeError
+    // 整块看板白屏。现在按 id 查、缺失即跳过（成本依据不足 → 走「无法估算」）。
+    const occupiedEmployees = occupied
+      .map((r) => employeeById.get(r.employeeId))
+      .filter((e): e is NonNullable<typeof e> => Boolean(e));
+    const unit = configured ? positionUnitCost(pos, occupiedEmployees, input.levelConfigs) : null;
     const gapCost = pendingCount > 0 && unit !== null && unit.cost > 0 ? round1(pendingCount * unit.cost) : null;
     positions.push({
       positionId: pos.id,
@@ -441,7 +453,11 @@ export function deriveBoard(input: BoardInput): BoardDerivation {
   for (const d of flattenAll(input.departments)) for (const e of d.employees) if (!e.isVirtual) placedIds.add(e.id);
   const unplacedEmployees = input.allEmployees.filter((e) => !e.isVirtual && !placedIds.has(e.id));
 
-  const report = computeHealthReport(input.departments, input.levelConfigs, input.scopeDeptId ?? undefined);
+  // v2.3.1（F-06）：组织指标必须与看板的「含下级 / 仅直属」同范围。
+  // 旧实现只把 scopeDeptId 传下去（忽略 includeChildren），且 scope 失效时回退全公司。
+  const report = computeHealthReport(input.departments, input.levelConfigs, input.scopeDeptId ?? undefined, undefined, {
+    includeChildren: input.includeChildren,
+  });
   const scopeLabel = input.scopeDeptId
     ? `${pathByDeptId.get(input.scopeDeptId) ?? input.scopeDeptId}${input.includeChildren ? '（含下级）' : '（仅直属）'}`
     : '全公司';
@@ -455,12 +471,17 @@ export function deriveBoard(input: BoardInput): BoardDerivation {
     walk([dept]);
     return out;
   };
+  // v2.3.1（Q-01/Q-02）：
+  // - 顶层卡片直接用「树根数组」，不再用 `d.level === 1` 判定（level 是可失真字段，
+  //   analytics.ts 的 computeSpanBreakdown 已明确不信任它；level 失真会让卡片整批消失）。
+  // - 「仅直属」范围内没有下级可见，因此不产出下钻卡片（旧实现会产出全部子部门卡片且人数一律 0）。
   const cardDepts: Department[] = input.scopeDeptId
     ? (() => {
+        if (!input.includeChildren) return [];
         const found = findScopeDept(input.departments, input.scopeDeptId);
         return found ? found.children : [];
       })()
-    : input.departments.filter((d) => d.level === 1);
+    : input.departments;
   const deptCards: BoardDeptCard[] = cardDepts.map((dept) => {
     const ids = new Set(subtreeIds(dept));
     const sub = rows.filter((r) => ids.has(r.deptId));

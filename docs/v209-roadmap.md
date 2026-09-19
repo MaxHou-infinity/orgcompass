@@ -172,7 +172,7 @@ directReports(dept) = 节点直挂非虚拟 IC 数 + 下一层「有负责人」
 
 - v2.0.8 三视角路线图：[v208-roadmap.md](v208-roadmap.md)（本版本的「推迟清单」是 v2.0.9 的输入来源）。
 - 版本切分总规划：[v209-v300-version-plan.md](v209-v300-version-plan.md)（v2.0.9 为其中第一个切片）。
-- V3 需求规格：[v300-requirements.md](v300-requirements.md)（目标基线）。
+- V3 需求规格：`v300-requirements.md`（目标基线；该文档为本地内部归档，未随仓库公开发布）。
 
 ---
 

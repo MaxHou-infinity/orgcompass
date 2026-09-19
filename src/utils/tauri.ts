@@ -13,9 +13,15 @@ export function isTauri(): boolean {
 
 /**
  * 导出文件：优先用 Tauri 原生保存对话框，浏览器环境回退到下载。
- * @param defaultName 默认文件名（含扩展名）
- * @param data 文件内容（ArrayBuffer 或 Uint8Array）
- * @param mimeType 浏览器下载用的 MIME 类型
+ *
+ * v2.3.1（Q-12）语义修正：**「用户取消」与「写入失败」必须区分**。
+ * 旧实现在 Tauri 写入失败时静默回退成浏览器下载并返回 true → 调用方 toast「已导出」，
+ * 而文件其实落在了 WebView 的下载目录（桌面端用户根本不知道去哪找），
+ * 甚至 `.orgproj` 备份会出现「提示已导出但目标路径没有文件」。
+ * 现在：取消 → false；写入失败 → 抛错（由调用方的 catch 给出可见失败提示），不再静默改道。
+ *
+ * @returns 是否真的写出了文件（false = 用户主动取消）
+ * @throws 原生写入失败（不静默回退）
  */
 export async function saveFile(
   defaultName: string,
@@ -25,20 +31,15 @@ export async function saveFile(
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
 
   if (isTauri()) {
-    try {
-      const { save } = await import('@tauri-apps/plugin-dialog');
-      const { writeFile } = await import('@tauri-apps/plugin-fs');
-      const path = await save({ defaultPath: defaultName });
-      if (!path) return false; // 用户取消
-      await writeFile(path, bytes);
-      return true;
-    } catch (error) {
-      console.error('Tauri 保存文件失败，回退浏览器下载:', error);
-      // 回退到浏览器下载逻辑
-    }
+    const { save } = await import('@tauri-apps/plugin-dialog');
+    const { writeFile } = await import('@tauri-apps/plugin-fs');
+    const path = await save({ defaultPath: defaultName });
+    if (!path) return false; // 用户取消 → 明确告知调用方，不改道下载
+    await writeFile(path, bytes); // 失败向上抛，由调用方给出可见错误
+    return true;
   }
 
-  // 浏览器下载（Tauri 回退兜底）
+  // 浏览器下载（仅非 Tauri 环境）
   const blob = new Blob([bytes], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');

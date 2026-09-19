@@ -233,6 +233,9 @@ export interface Assessment {
   assessorRole: AssessorRole;  // supervisor 原始分 / hrbp 校准
   assessorId?: string;         // 评分人名称或 FK（本地无账号体系，明确为录入身份）
   assessedAt: string;          // 评分时间（ISO，时态）
+  /** v2.3.1（F-08）：评估**自然日** `YYYY-MM-DD`，同日判定（修订链 / 取数分组）的唯一键。
+   *  `assessedAt` 退化为「记录时刻」；旧记录缺省时由 assessedAt 按本地时区回推，不改写数据。 */
+  assessmentDay?: string;
   source: 'manual' | 'import';
   note?: string;               // 评分依据/行为锚点引用（可追溯，可选）
   /** v2.3 M2：评价适用范围；旧记录缺省按 positionId 推断，sanitize 不回填伪造。 */

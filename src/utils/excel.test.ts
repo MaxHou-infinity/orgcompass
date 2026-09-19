@@ -332,11 +332,13 @@ describe('v2.1.1 富字段导入：建树 + 套岗', () => {
     ]);
     const tree = buildDepartmentTree(employees, []);
     const 技术部 = tree[0];
+    // v2.3.1（T-08）：Department.positions 为可选字段，先取本地列表再断言（断言强度不变）。
+    const positions = 技术部.positions ?? [];
     // 每个部门 positions 非空且被三个岗位填充
-    expect(技术部.positions).toHaveLength(2);
+    expect(positions).toHaveLength(2);
     // 主路径无编制列 → headcount=0（编制未配置，不伪装满编；match 按 headcount<=0 不判超编）
-    const 前端 = 技术部.positions.find((p) => p.name === '前端工程师');
-    const 经理 = 技术部.positions.find((p) => p.name === '研发经理');
+    const 前端 = positions.find((p) => p.name === '前端工程师');
+    const 经理 = positions.find((p) => p.name === '研发经理');
     expect(前端!.headcount).toBe(0);
     expect(经理!.headcount).toBe(0);
     // 员工已套岗到对应岗位
@@ -355,12 +357,13 @@ describe('v2.1.1 富字段导入：建树 + 套岗', () => {
     ]);
     const tree = buildDepartmentTree(employees, [], positionRows);
     const 技术部 = tree[0];
+    const positions = 技术部.positions ?? [];
     // 岗位表先建岗，编制=3
-    expect(技术部.positions).toHaveLength(1);
-    expect(技术部.positions[0].headcount).toBe(3);
-    expect(技术部.positions[0].jobFamily).toBe('技术');
+    expect(positions).toHaveLength(1);
+    expect(positions[0].headcount).toBe(3);
+    expect(positions[0].jobFamily).toBe('技术');
     // 匹配到岗位表的员工套岗；未匹配的保持未套岗（不新建）
-    expect(技术部.employees.find((e) => e.employeeId === 'E001')!.positionId).toBe(技术部.positions[0].id);
+    expect(技术部.employees.find((e) => e.employeeId === 'E001')!.positionId).toBe(positions[0].id);
     expect(技术部.employees.find((e) => e.employeeId === 'E002')!.positionId).toBeUndefined();
   });
 
