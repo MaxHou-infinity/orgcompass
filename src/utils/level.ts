@@ -77,3 +77,46 @@ export function autoColor(code: string): string {
   const lightness = Math.max(42, Math.min(90, 90 - num * 10));
   return hslToHex(hue, 64, lightness);
 }
+
+// ───────────────────────── v2.3.2：颜色值加固 ─────────────────────────
+
+/** 6 位 hex（可带 #，大小写不敏感） */
+const HEX6_RE = /^#?([0-9a-fA-F]{6})$/;
+/** 3 位 hex 简写 */
+const HEX3_RE = /^#?([0-9a-fA-F]{3})$/;
+
+/**
+ * 颜色归一化为 `#RRGGBB`；无法识别时回落到该职级的自动配色。
+ *
+ * 为什么需要：员工卡底色是「职级色 + 一层透明度」拼出来的（见 `withAlpha`），
+ * 这要求颜色必须是 6 位 hex。旧实现两个持久化边界（localStorage 读回、`.orgproj` 清洗）
+ * 都只检查 `typeof color === 'string'`，于是外部文件或手改数据里的 `#fff` / `red` / `rgb(1,2,3)`
+ * 会拼出 `#fff40` / `red40` 这类**非法 CSS**，被浏览器静默忽略 → 卡片底色变全透明，
+ * 用户完全看不出哪里错了（Chromium 实测：底色为 rgba(0,0,0,0)）。
+ *
+ * @param code 该职级的 fullCode（回落自动配色的种子，保证同职级同色）
+ */
+export function normalizeLevelColor(value: unknown, code: string): string {
+  if (typeof value === 'string') {
+    const six = HEX6_RE.exec(value.trim());
+    if (six) return `#${six[1]}`;
+    const three = HEX3_RE.exec(value.trim());
+    if (three) {
+      const [r, g, b] = three[1].split('');
+      return `#${r}${r}${g}${g}${b}${b}`.toUpperCase();
+    }
+  }
+  return autoColor(code);
+}
+
+/**
+ * 给 `#RRGGBB` 叠一层透明度（Tailwind 的 `/NN` 等价写法：8 位 hex 的 alpha 通道）。
+ *
+ * 旧实现是裸的 `color + '40'` —— 颜色若不是 6 位 hex 就拼出非法值、被浏览器丢弃。
+ * 这里在拼接前再兜一次：非法输入退回中性灰 `#CCCCCC`，**永远输出合法的 8 位 hex**。
+ */
+export function withAlpha(color: string, alphaHex: string): string {
+  const six = HEX6_RE.exec(color ?? '');
+  const base = six ? `#${six[1]}` : '#CCCCCC';
+  return `${base}${alphaHex}`;
+}

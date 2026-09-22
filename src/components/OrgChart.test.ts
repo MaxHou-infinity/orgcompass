@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calculateTreeLayout, countLeaves, estimateCardHeight } from './OrgChart';
+import { calculateTreeLayout, countLeaves, estimateCardHeight, CARD_WIDTH as REAL_CARD_WIDTH } from './OrgChart';
 import { buildDepartmentTree } from '../utils/excel';
 import type { Department, Employee } from '../types';
 
@@ -19,7 +19,8 @@ function treeOf(): Department[] {
   return buildDepartmentTree(E, []);
 }
 
-const CARD_WIDTH = 220;
+// 卡宽必须与实现共用同一个常量：写死数值会在改宽度时让断言全部静默失真（v2.3.2：220 → 320）
+const CARD_WIDTH = REAL_CARD_WIDTH;
 
 function walk(nodes: ReturnType<typeof calculateTreeLayout>, cb: (n: ReturnType<typeof calculateTreeLayout>[number]) => void) {
   for (const n of nodes) { cb(n); walk(n.children, cb); }
@@ -201,5 +202,98 @@ describe('calculateTreeLayout（方案A 绝对定位布局）', () => {
       }
     };
     check(nodes);
+  });
+});
+
+/**
+ * v2.3.2：卡高估算必须**不低于**真实渲染高度。
+ *
+ * 背景（用户真实数据实测）：岗位名把右侧数字挤成竖排后，岗位行实际渲染 74px，
+ * 而常量按 40px 估算 → 每张有岗位的卡片都比估算高，逐层累积后子部门被摆进父卡内部、
+ * 引导线被父卡盖住（「六级部门引导线消失、直接盖到五级部门」）。
+ *
+ * 下面的「真实高度」是用 Chromium 在**用户那份 35 人 / 6 级数据**上量出来的实际 offsetHeight
+ * （卡宽 320、成员列表收起态）。断言写成 `估算 ≥ 实测`：
+ * 一旦有人把岗位行/成员区常量调小到低于真实值，这里立刻失败 —— 这正是当年漏掉的守卫。
+ */
+describe('estimateCardHeight 必须 ≥ 真实渲染高度（v2.3.2 布局错乱回归）', () => {
+  const emps = (n: number): Employee[] =>
+    Array.from({ length: n }, (_, i) => ({ id: `e${i}`, name: `员工${i}`, employeeId: `E${i}`, level: 'L1.1' }));
+  const pos = (n: number): Department['positions'] =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `p${i}`, departmentId: 'd', name: `岗位${i}`, headcount: 0,
+      status: 'active' as const, createdAt: 't', updatedAt: 't',
+    }));
+  const dept = (employeeCount: number, positionCount: number): Department => ({
+    id: 'd', name: '部门', level: 1, children: [], expanded: true,
+    employees: emps(employeeCount), positions: pos(positionCount),
+  });
+
+  // [员工数, 岗位数, Chromium 实测卡高]
+  const MEASURED: [number, number, number][] = [
+    [0, 0, 159], // RLX Technology
+    [1, 1, 225], // D.A.2 精益制造与品质交付
+    [2, 2, 262], // D.A.2.3 仓储物流
+    [3, 3, 302], // D.A.2.2 计划管理
+    [5, 3, 305], // D.A.2.1 生产管理
+    [15, 2, 262], // D.A.2.1 生产管理（Agency）
+  ];
+
+  it.each(MEASURED)('%i 名员工 / %i 个岗位：估算 ≥ 实测 %i', (empCount, posCount, measured) => {
+    expect(estimateCardHeight(dept(empCount, posCount))).toBeGreaterThanOrEqual(measured);
+  });
+
+  it('仍然足够紧：估算不得比实测高出 10% 以上（避免层间空白过大）', () => {
+    for (const [empCount, posCount, measured] of MEASURED) {
+      const est = estimateCardHeight(dept(empCount, posCount));
+      expect(est).toBeLessThanOrEqual(measured * 1.1);
+    }
+  });
+
+  it('卡宽为 320（与 PositionSection / 负责人行的实测排版需求一致）', () => {
+    expect(REAL_CARD_WIDTH).toBe(320);
+  });
+});
+
+/**
+ * v2.3.2：卡高的「运行期实测校正」。
+ *
+ * 估算常量会随 CSS 漂移（正是本次错乱的根因），所以 DOM 量到真实高度时必须优先使用它。
+ * 这里用「实测值 ≫ 估算值」的极端输入证明**布局确实读了实测值**，而不是忽略参数。
+ */
+describe('calculateTreeLayout 使用实测卡高（v2.3.2）', () => {
+  const child: Department = {
+    id: 'c', name: '子', level: 2, parentId: 'p', children: [], employees: [], expanded: true,
+  };
+  const parent: Department = {
+    id: 'p', name: '父', level: 1, children: [child], employees: [], expanded: true,
+  };
+
+  it('实测高度优先：层间步进 = 实测高 + 40（不再用估算）', () => {
+    const estimated = estimateCardHeight(parent);
+    const measured = new Map([['p', 500]]);
+    const nodes = calculateTreeLayout([parent], 0, 0, 100, new Set(), measured);
+    expect(measured.get('p')).not.toBe(estimated); // 前提：两者不同，否则断言无判别力
+    expect(nodes[0].children[0].y).toBe(500 + 40);
+  });
+
+  it('实测值为 0 / 缺失 → 回退估算（jsdom 等无布局环境不能把卡高压成 0）', () => {
+    const nodesZero = calculateTreeLayout([parent], 0, 0, 100, new Set(), new Map([['p', 0]]));
+    expect(nodesZero[0].children[0].y).toBe(estimateCardHeight(parent) + 40);
+
+    const nodesMissing = calculateTreeLayout([parent], 0, 0, 100, new Set(), new Map([['other', 500]]));
+    expect(nodesMissing[0].children[0].y).toBe(estimateCardHeight(parent) + 40);
+  });
+
+  it('子卡自身的实测高度也参与其下一层（逐层都用实测）', () => {
+    const grand: Department = {
+      id: 'g', name: '孙', level: 3, parentId: 'c', children: [], employees: [], expanded: true,
+    };
+    const p2: Department = { ...parent, children: [{ ...child, children: [grand] }] };
+    const measured = new Map([['p', 400], ['c', 300]]);
+    const nodes = calculateTreeLayout([p2], 0, 0, 100, new Set(), measured);
+    const c = nodes[0].children[0];
+    expect(c.y).toBe(440);
+    expect(c.children[0].y).toBe(440 + 300 + 40);
   });
 });

@@ -80,7 +80,12 @@ body {
 /* 部门卡片样式 - 2026 现代风格 */
 .department-card {
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  background: #ffffff;
+  /*
+   * 遮挡层：卡身必须不透明，否则引导线会穿过整张卡片（v2.3.2 实测缺陷，详见文件末尾的层级颜色说明）。
+   * 只用 background-color，不用 `background` 简写 —— 简写会把叠加的 background-image（层级薄涂）一起清掉，
+   * 且它是旧版「四级往下卡面透明」的直接成因。
+   */
+  background-color: #ffffff;
   border: 1px solid rgba(226, 232, 240, 0.9);
   box-shadow: var(--shadow-md);
 }
@@ -233,21 +238,26 @@ body {
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.3);
 }
 
-/* 层级颜色 */
-.level-bg-1 {
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(99, 102, 241, 0.05) 100%);
-  border-left: 3px solid #6366f1;
-}
-
-.level-bg-2 {
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(16, 185, 129, 0.05) 100%);
-  border-left: 3px solid #10b981;
-}
-
-.level-bg-3 {
-  background: linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(245, 158, 11, 0.05) 100%);
-  border-left: 3px solid #f59e0b;
-}
+/*
+ * 层级颜色（v2.3.2 定稿）：**只染表头，卡身一律不透明白**。
+ *
+ * ① 为什么删掉了 .level-bg-1/2/3
+ *
+ * 它们本是「卡身薄涂 + 左侧色条」的一套旧样式，但只有四级往下还会用到（一~三级走 Tailwind 类）。
+ * 旧写法 `background: linear-gradient(rgba(...,0.05~0.1))` 有两个毛病：
+ *   - `background` **简写**把 `.department-card` 的白色底一并清掉，于是卡身完全透明；
+ *   - 引导线（SVG）画在卡片下层，且父卡的连线是「从卡内起画、靠卡面遮住上半段」的设计
+ *     （见 OrgChart.computeConnectors）—— 卡面一透明，连线就纵穿整张卡片。
+ * 结果：一~三级正常、四级往下穿线，且四级与一级配色完全相同（都落到 .level-bg-1）分不出层级。
+ * 现在统一成「白卡 + 层级色表头」（与一~三级原有观感一致），这套类已无人引用，删除以免再次被误用。
+ *
+ * ② 唯一的不变量（`src/utils/v232.surface.test.ts` 守住）
+ *
+ * **任何作用于部门卡的背景规则，都必须留下不透明的底色。**
+ * 也就是说：可以叠 background-image（渐变薄涂），但不能用 background 简写或半透明
+ * background-color 把底下的白色顶掉 —— 否则引导线又会穿卡。
+ * 卡身在 DepartmentCard 里不再挂任何底色类，遮挡层由 `.department-card` 的白色提供。
+ */
 
 /* 淡入延迟动画 */
 .delay-100 { animation-delay: 100ms; }

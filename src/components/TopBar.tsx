@@ -192,7 +192,7 @@ export function TopBar({
                 </span>
                 <span>
                   <span className="block text-sm font-semibold text-slate-800">员工信息模板</span>
-                  <span className="block text-xs text-slate-500 mt-0.5 leading-snug">含姓名/工号/职级/一~六级部门</span>
+                  <span className="block text-xs text-slate-500 mt-0.5 leading-snug">含姓名/工号/职级/岗位/一~六级部门（上传即可生成架构图）</span>
                 </span>
               </button>
               <button
@@ -206,8 +206,8 @@ export function TopBar({
                   <Building2 className="w-4 h-4" />
                 </span>
                 <span>
-                  <span className="block text-sm font-semibold text-slate-800">组织架构模板</span>
-                  <span className="block text-xs text-slate-500 mt-0.5 leading-snug">含部门/级别/负责人列</span>
+                  <span className="block text-sm font-semibold text-slate-800">组织架构模板<span className="ml-1 text-[10px] font-medium text-emerald-600 bg-emerald-50 px-1 py-0.5 rounded">补充</span></span>
+                  <span className="block text-xs text-slate-500 mt-0.5 leading-snug">可选：补「无人的空部门」与「部门负责人」</span>
                 </span>
               </button>
             </div>

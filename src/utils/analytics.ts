@@ -1,6 +1,8 @@
 import { Department, Employee, LevelConfig, Position, LeaderType } from '../types';
 import { fullCode } from './level';
 import { computeMatchStates, MatchResult } from './match';
+import { computeLevelGaps } from './deptLevel';
+import { findUnconfiguredLevels } from './levels';
 
 // —— v2.1.1 状态机接入：data-eng 于 src/utils/match.ts 提供，此处复用/再导出 ——
 export { computeMatchStates };
@@ -1448,13 +1450,78 @@ export function generateDeptSuggestions(
   );
 }
 
+/**
+ * v2.3.2：层级断档建议（「某部门向上没有归属」）。
+ *
+ * 场景：员工信息表只填了一级和三级部门（二级留空）→ 三级部门直接挂在一级部门下。
+ * 结构上成立，但通常意味着「缺一层管理归属」或「员工填表漏填」，需要被看见并可行动。
+ *
+ * 严重度取 `major` 而不是 `critical`：断档**可能是有意为之**（组织确实只有两层且列填在三级），
+ * 所以它是「需确认」而不是「错误」。画布上的琥珀虚线 + 本建议构成同一条线索的两个入口。
+ */
+export function generateLevelGapSuggestions(departments: Department[]): HealthSuggestion[] {
+  const out: HealthSuggestion[] = [];
+  for (const gap of computeLevelGaps(departments).values()) {
+    const missing = gap.missingLevels.length > 0
+      ? `中间缺少 ${gap.missingLevels.map((l) => `L${l}`).join('、')} 部门，`
+      : '';
+    const where = gap.parentName ? `挂在 ${gap.parentName}（L${gap.parentLevel}）下` : '没有上级部门';
+    out.push({
+      id: `d-${gap.deptId}-levelgap`,
+      severity: 'major',
+      deptId: gap.deptId,
+      deptName: gap.deptName,
+      title: `${gap.deptName} 向上无归属（层级断档）`,
+      detail: `${gap.deptName}（L${gap.level}）${where}，${missing}层级不连续。` +
+        '建议核对员工表的部门列是否漏填中间层级；若确为有意设置，可忽略本提示（画布上该连线会显示为琥珀色虚线）。',
+    });
+  }
+  return out;
+}
+
+/**
+ * v2.3.2：职级配置覆盖率建议 —— 「名册里有、配置里没有」的职级必须被看见。
+ *
+ * 这些人的卡片颜色会回落成灰色、**成本按 0 计**（`costForLevel` 找不到就返回 0）、
+ * 职级分布还会把他们单独分一档。旧实现三处全是静默降级，用户只会觉得"数字不对"。
+ * 严重度取 `major`：它会直接改变成本与分布结论，但不是崩溃，也不该阻断使用。
+ */
+export function generateUnconfiguredLevelSuggestions(
+  departments: Department[],
+  levelConfigs: LevelConfig[],
+): HealthSuggestion[] {
+  const employees = flattenDepartments(departments).flatMap((d) => d.employees ?? []);
+  const missing = findUnconfiguredLevels(employees, levelConfigs);
+  if (missing.length === 0) return [];
+  const total = missing.reduce((n, m) => n + m.count, 0);
+  const detail = missing
+    .map((m) => `${m.level}（${m.count} 人：${m.sampleNames.join('、')}${m.count > m.sampleNames.length ? ' 等' : ''}）`)
+    .join('；');
+  return [{
+    id: 'level-unconfigured',
+    severity: 'major',
+    title: `有 ${total} 人的职级不在职级配置中（${missing.length} 种取值）`,
+    detail:
+      `${detail}。这些人的卡片颜色按灰色兜底、成本按 0 计、职级分布会被单独分成一档。` +
+      '常见原因：职级字段里写了额外信息（如「L3.2Acting」把代理状态写进了职级）。' +
+      '建议在「职级管理」里补一条同名职级，或把员工表里的职级规范成已有职级后重新导入。',
+  }];
+}
+
 /** 合并指标级 + 部门级建议，并按优先级排序（供 HealthDrawer 直接消费）。 */
 export function collectAllSuggestions(
   report: HealthReport,
   departments: Department[],
   thresholds: HealthThresholds = getHealthThresholds(),
+  /** v2.3.2：职级配置，用于检测「名册里有、配置里没有」的职级（可选，缺省跳过该项） */
+  levelConfigs?: LevelConfig[],
 ): HealthSuggestion[] {
-  return [...generateSuggestions(report.l2), ...generateDeptSuggestions(departments, thresholds)].sort(
+  return [
+    ...generateSuggestions(report.l2),
+    ...generateDeptSuggestions(departments, thresholds),
+    ...generateLevelGapSuggestions(departments),
+    ...(levelConfigs ? generateUnconfiguredLevelSuggestions(departments, levelConfigs) : []),
+  ].sort(
     (a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || a.title.localeCompare(b.title, 'zh-CN'),
   );
 }

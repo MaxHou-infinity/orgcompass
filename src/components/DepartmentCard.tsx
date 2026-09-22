@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, ChevronUp, User, Users, Building2, Briefcase
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { Department, Employee, MatchStatus, LeaderType } from '../types';
 import { useLevelConfigs, getLevelColor } from '../utils/levels';
+import { withAlpha } from '../utils/level';
 import { useSearchHighlight } from './SearchContext';
 import { employeeLevelGap } from '../utils/analytics';
 import { PositionSummary } from '../utils/analytics';
@@ -12,6 +13,7 @@ import { useDisplaySettings } from '../utils/displaySettings';
 import { TargetLevelModal } from './TargetLevelModal';
 import { COMPETENCY_STYLE, COMPETENCY_LABEL, CompetencyStatus, fmt } from '../utils/statusUI';
 import type { CompetencySummary } from '../utils/competency';
+import { describeLevelGap, levelGapBadge, type DeptLevelGap } from '../utils/deptLevel';
 
 interface DepartmentCardProps {
   department: Department;
@@ -45,6 +47,11 @@ interface DepartmentCardProps {
   competencySummaries?: Map<string, CompetencySummary>;
   /** 点击员工标签胜任度环（或右键「查看胜任度」）→ 打开胜任度详情 */
   onOpenCompetencyDetail?: (empId: string) => void;
+  /**
+   * v2.3.2：层级断档信息（该部门声明层级 ≠ 父层级 + 1，即向上无归属）。
+   * 由 `computeLevelGaps` 派生传入 —— 卡片不自己猜父级，避免两处口径漂移。
+   */
+  levelGap?: DeptLevelGap;
 }
 
 /** 套岗状态点（placed/unassigned/overstaffed/not_competent）。
@@ -56,6 +63,18 @@ const MATCH_DOT: Record<MatchStatus, { dot: string; text: string; label: string;
   overstaffed: { dot: 'bg-red-500', text: 'text-red-600', label: '超编', title: '岗位超编' },
   not_competent: { dot: 'bg-red-50 border border-red-400', text: 'text-red-700', label: '不胜任', title: '不胜任（胜任度低于要求，已确认）' },
 };
+
+/**
+ * 岗位文字的展示口径（v2.3.2）。
+ *
+ * v2.3.2 之前，员工表「岗位」列留空会被导入层写成字符串 `'NA'`，画布上真的渲染出 "NA" ——
+ * 把「用户没填」显示成了「岗位叫 NA」。导入层已改为不落该值，但**历史数据里仍存着 'NA'**，
+ * 因此在展示层统一把它当作「未填」，让旧项目文件也能立刻恢复干净（不需要用户重导一次）。
+ */
+function displayTitle(title?: string): string | undefined {
+  const v = title?.trim();
+  return v && v !== 'NA' ? v : undefined;
+}
 
 /** 岗位卡「岗位」区（v2.1.1，纯展示）：展示本部门直属岗位 + 编制/在岗/缺口。
  *  新建/套岗/建虚拟兼岗操作用户从顶部菜单「岗位」入口进入（已从卡片解耦）。 */
@@ -93,13 +112,37 @@ function PositionSection({
               <div key={pos.id} className="rounded-lg border border-slate-100 bg-white/60 p-1.5">
                 <div className="flex items-center gap-1">
                   <Briefcase className="w-3 h-3 shrink-0 text-slate-400" />
-                  <span className="text-xs font-medium text-slate-700 truncate">{pos.name}</span>
+                  {/*
+                    v2.3.2：岗位名可以很长（「中文名 - English Full Title」，实测最长 374px）。
+                    它必须**能让位**给右侧数字：`min-w-0` 才允许 flex 子项收缩到小于内容宽度，
+                    `truncate` 负责省略号，`title` 保证悬停可读全文。
+                    旧实现缺 `min-w-0`，于是长岗位名把右侧数字挤成每行一个字（竖排），
+                    岗位行实测被撑到 74px（布局按 40px 估算）→ 子部门被摆进父卡内部、引导线被盖住。
+                  */}
+                  <span
+                    className="min-w-0 flex-1 truncate text-xs font-medium text-slate-700"
+                    title={pos.name}
+                  >
+                    {pos.name}
+                  </span>
                   {frozen && (
-                    <span className="text-[10px] px-1 rounded bg-slate-100 text-slate-500" title="编制已冻结，不计缺口">
+                    <span className="shrink-0 text-[10px] px-1 rounded bg-slate-100 text-slate-500" title="编制已冻结，不计缺口">
                       冻结
                     </span>
                   )}
-                  <span className="ml-auto flex items-center gap-1">
+                  {/* 右侧数字簇**整体不可压缩**：它是「这个岗位到底几个人」的唯一答案，不能被挤掉 */}
+                  <span className="ml-auto flex shrink-0 items-center gap-1 whitespace-nowrap">
+                    {/*
+                      v2.3.2：在岗人数 = 员工表里该部门下「岗位」列同名的员工自动汇总（在岗）。
+                      此前它只是「/ 在岗 N」的小灰字，被挤成竖排后用户只看到编制输入框里的 0，
+                      误以为岗位数量算错了。现在把在岗提到编制之前、做成有色胶囊。
+                    */}
+                    <span
+                      className="text-[10px] px-1 py-0.5 rounded font-medium bg-indigo-50 text-indigo-700 tabular-nums"
+                      title={`在岗 ${assignedCount} 人：按员工表里本部门下「岗位」列与本岗位同名的员工自动汇总`}
+                    >
+                      在岗 {assignedCount}
+                    </span>
                     <input
                       type="number"
                       min="0"
@@ -108,12 +151,12 @@ function PositionSection({
                         const v = e.target.value === '' ? 0 : Number(e.target.value);
                         onSetPositionHeadcount?.(dept.id, pos.id, Number.isFinite(v) ? v : 0);
                       }}
-                      title="岗位编制（即时保存）"
-                      className="w-11 px-1 py-0.5 rounded border border-slate-200 text-right text-xs focus-ring"
+                      aria-label={`${pos.name} 编制`}
+                      title="岗位编制（可编辑）。员工信息表不含编制列，所以新导入的岗位编制默认为 0，需要在这里按实际编制填写"
+                      className="w-11 shrink-0 px-1 py-0.5 rounded border border-slate-200 text-right text-xs tabular-nums focus-ring"
                     />
-                    <span className="text-[10px] text-slate-400">/ 在岗 {assignedCount}</span>
                     <span className={`text-[10px] font-medium ${gap === null ? 'text-slate-400' : gap > 0 ? 'text-amber-600' : gap < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                      {gap === null ? (frozen ? '冻结' : '—') : gap > 0 ? `缺 ${gap}` : gap < 0 ? `超 ${Math.abs(gap)}` : '满编'}
+                      {gap === null ? (frozen ? '冻结' : '未配编制') : gap > 0 ? `缺 ${gap}` : gap < 0 ? `超 ${Math.abs(gap)}` : '满编'}
                     </span>
                   </span>
                 </div>
@@ -181,7 +224,8 @@ function DraggableEmployee({
       } ${selected ? 'ring-2 ring-indigo-400 bg-indigo-50/80' : ''} ${
         isSearchHit ? 'ring-2 ring-amber-400 bg-amber-50/70' : ''
       }`}
-      style={{ backgroundColor: levelColor + '40' }}
+      /* v2.3.2：用 withAlpha 而不是裸拼 `color + '40'` —— 非法颜色值会拼出非法 CSS 并被静默丢弃 */
+      style={{ backgroundColor: withAlpha(levelColor, '40') }}
     >
       <div className="flex items-center gap-1">
         <User className="w-3 h-3" style={{ color: levelColor }} />
@@ -236,15 +280,15 @@ function DraggableEmployee({
           <span className="text-[10px] text-blue-500 font-medium">(兼)</span>
         )}
       </div>
-      {(primaryName || showLevel || (showTitle && employee.title)) && (
+      {(primaryName || showLevel || (showTitle && displayTitle(employee.title))) && (
         <div className="flex items-center gap-1 pl-1">
           {primaryName && (
             <span className="text-[10px] text-blue-500 truncate" title={`兼岗归属：${primaryName}`}>
               {primaryName}
             </span>
           )}
-          {showTitle && employee.title ? (
-            <span className="text-[10px] text-slate-500 truncate">{employee.title}</span>
+          {showTitle && displayTitle(employee.title) ? (
+            <span className="text-[10px] text-slate-500 truncate">{displayTitle(employee.title)}</span>
           ) : null}
           {showLevel && employee.level ? (
             <span className="text-[10px] shrink-0 px-1 rounded bg-white/70 border border-slate-200 text-slate-600">{employee.level}</span>
@@ -445,6 +489,7 @@ export function DepartmentCard({
   onRemoveAssignment,
   competencySummaries,
   onOpenCompetencyDetail,
+  levelGap,
 }: DepartmentCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(department.name);
@@ -530,18 +575,35 @@ export function DepartmentCard({
     return () => window.removeEventListener('click', handleClick);
   }, []);
   
-  const levelBg: Record<number, string> = {
-    1: 'bg-indigo-50/80',
-    2: 'bg-emerald-50/80',
-    3: 'bg-amber-50/80',
-  };
-  
-  const levelHeaderBg: Record<number, string> = {
+  /**
+   * 部门层级配色（唯一来源，v2.3.2 定稿）：**只染表头，不染卡身**。
+   *
+   * 为什么统一成「白卡 + 层级色表头」：
+   * - 一~三级本来就是这个样子（卡身白、表头带层级色），四级往下此前是「整卡淡蓝 + 左侧色条」，
+   *   同一张画布上并存两套视觉语言，层级读起来要记两套规则；
+   * - 深层的卡片数量最多（真实数据 10 张卡里 5 张在五、六级且并排），整卡大面积上色会让画布变花，
+   *   并且和真正重要的信号抢注意力：靛蓝的「在岗 N」胶囊、琥珀色的断档/缺口提示、胜任度灯；
+   * - 四级往下整卡上色本身是兜底 class 的副作用（见 index.css 的说明），不是设计决定。
+   *
+   * ⚠️ 同时必须遵守的不变量：**卡身不透明**。引导线画在卡片下层，父卡的连线按设计从卡内起画、
+   * 靠卡面遮住上半段 —— 卡身一旦半透明，连线就会纵穿整张卡片（v2.3.2 已修过一次）。
+   * 因此这里不再给卡身任何底色类，遮挡层统一由 `.department-card` 的白色底提供，
+   * 由 `src/utils/v232.surface.test.ts` 守住。
+   *
+   * 色板：一靛蓝 → 二翠绿 → 三琥珀 → 四天青 → 五紫 → 六玫红；
+   * 七级及以上（手工创建可超过 6 级）落中性灰，不再无限扩色板。
+   */
+  const LEVEL_HEADER_BG: Record<number, string> = {
     1: 'bg-gradient-to-r from-indigo-500/10 to-transparent',
     2: 'bg-gradient-to-r from-emerald-500/10 to-transparent',
     3: 'bg-gradient-to-r from-amber-500/10 to-transparent',
+    4: 'bg-gradient-to-r from-sky-500/10 to-transparent',
+    5: 'bg-gradient-to-r from-purple-500/10 to-transparent',
+    6: 'bg-gradient-to-r from-rose-500/10 to-transparent',
   };
-  
+  /** 7 级及以上 */
+  const FALLBACK_HEADER_BG = 'bg-gradient-to-r from-slate-400/10 to-transparent';
+
   return (
     <div
       ref={(node) => {
@@ -552,9 +614,8 @@ export function DepartmentCard({
       {...deptListeners}
       data-dept-id={department.id}
       className={`flex flex-col department-card rounded-2xl shadow-soft border-0 cursor-move ${
-        levelBg[department.level] || 'level-bg-1'
-      } ${isOver ? 'ring-2 ring-indigo-400 bg-indigo-50/50' : ''} ${
-        isSearchHit ? 'ring-2 ring-amber-400' : ''
+        isOver ? 'ring-2 ring-indigo-400' : ''
+      } ${isSearchHit ? 'ring-2 ring-amber-400' : ''
       } ${isDeptDragging ? 'opacity-50 scale-95' : ''}`}
       style={{ 
         minWidth: 220,
@@ -568,7 +629,8 @@ export function DepartmentCard({
       {/* 部门头部 */}
       <div
         onContextMenu={handleContextMenu}
-        className={`flex items-center justify-between px-4 py-3 ${levelHeaderBg[department.level] || 'bg-gray-50'} rounded-t-2xl`}
+        data-dept-header={department.level}
+        className={`flex items-center justify-between px-4 py-3 ${LEVEL_HEADER_BG[department.level] ?? FALLBACK_HEADER_BG} rounded-t-2xl`}
       >
         <div className="flex items-center gap-2 flex-1 min-w-0">
           {department.children.length > 0 ? (
@@ -603,14 +665,27 @@ export function DepartmentCard({
             <span 
               className="font-bold text-gray-800 truncate cursor-pointer hover:text-indigo-600 transition-colors"
               onDoubleClick={handleDoubleClick}
-              title="双击编辑部门名称"
+              title={`${department.name}｜双击可编辑名称`}
             >
               {department.name}
             </span>
           )}
         </div>
         
-        <span className="text-xs text-gray-400 ml-2">L{department.level}</span>
+        {/* 层级标记 + v2.3.2 层级断档标记：把「为什么这条线是虚线」在卡上解释清楚 */}
+        <span className="flex items-center gap-1 ml-2 shrink-0">
+          {levelGap && (
+            <span
+              role="status"
+              data-level-gap="1"
+              title={describeLevelGap(levelGap)}
+              className="text-[10px] px-1 py-0.5 rounded font-medium bg-amber-100 text-amber-700 border border-amber-300 cursor-help"
+            >
+              {levelGapBadge(levelGap)}
+            </span>
+          )}
+          <span className="text-xs text-gray-400">L{department.level}</span>
+        </span>
       </div>
       
       {/* 负责人 */}
@@ -619,13 +694,13 @@ export function DepartmentCard({
           <span className="text-xs text-gray-500 shrink-0">负责人:</span>
           <button
             onClick={handleLeaderClick}
-            title={`${department.leaderName || ''}${leader && (showTitle || showLevel) ? ' · ' + [(showTitle && leader.title) ? leader.title : null, (showLevel && leader.level) ? leader.level : null].filter(Boolean).join(' · ') : ''}`}
+            title={`${department.leaderName || ''}${leader && (showTitle || showLevel) ? ' · ' + [(showTitle && displayTitle(leader.title)) ? displayTitle(leader.title) : null, (showLevel && leader.level) ? leader.level : null].filter(Boolean).join(' · ') : ''}`}
             className="text-sm text-blue-600 hover:underline flex items-center gap-1 min-w-0 overflow-hidden"
           >
             <User className="w-3 h-3 shrink-0" />
             <span className="truncate">
               {department.leaderName || '点击选择'}
-              {leader && (showTitle || showLevel) ? ` · ${[(showTitle && leader.title) ? leader.title : null, (showLevel && leader.level) ? leader.level : null].filter(Boolean).join(' · ')}` : ''}
+              {leader && (showTitle || showLevel) ? ` · ${[(showTitle && displayTitle(leader.title)) ? displayTitle(leader.title) : null, (showLevel && leader.level) ? leader.level : null].filter(Boolean).join(' · ')}` : ''}
             </span>
           </button>
           {/* v2.3.1（Q-07）：负责人类型写入口。此前 leaderType 无任何写入点 →

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, useSensor, useSensors, PointerSensor } from '@dnd-kit/core';
 import { DepartmentCard } from './DepartmentCard';
 import { Department, Employee, LeaderType } from '../types';
@@ -8,6 +8,7 @@ import { SearchHighlight, SearchHighlightContext } from './SearchContext';
 import { PositionSummary } from '../utils/analytics';
 import { MatchResult } from '../utils/match';
 import type { CompetencySummary } from '../utils/competency';
+import { computeLevelGaps, type DeptLevelGap } from '../utils/deptLevel';
 
 interface OrgChartProps {
   departments: Department[];
@@ -82,9 +83,30 @@ export function countLeaves(dept: Department): number {
  * 关键：水平间距必须全局统一（父带宽与子部门排布用同一间距），否则父卡无法正好
  * 居中在子部门块上、且各层左右间距不一致 → 视觉杂乱。垂直步进也固定。
  *
- * 坐标以 100% 缩放基准计算（卡宽=220、层级步进=240），实际缩放由外层 transform:scale 完成。
+ * 坐标以 100% 缩放基准计算（卡宽 = CARD_WIDTH、层级步进 = 父卡高 + 40），实际缩放由外层 transform:scale 完成。
  */
 const EMPTY_ID_SET: ReadonlySet<string> = new Set();
+const EMPTY_HEIGHT_MAP: ReadonlyMap<string, number> = new Map();
+
+/** 两张高度表是否等价（用于避免无意义的重渲染；改动 ≤0.5px 视为等价，防亚像素抖动来回触发） */
+function heightsEqual(a: ReadonlyMap<string, number>, b: ReadonlyMap<string, number>): boolean {
+  if (a.size !== b.size) return false;
+  for (const [id, h] of b) {
+    const prev = a.get(id);
+    if (prev === undefined || Math.abs(prev - h) > 0.5) return false;
+  }
+  return true;
+}
+
+/** 卡片高度的取值顺序：DOM 实测优先，估算兜底（v2.3.2）。 */
+function cardHeightOf(
+  dept: Department,
+  membersExpanded: boolean,
+  measured?: ReadonlyMap<string, number>,
+): number {
+  const m = measured?.get(dept.id);
+  return m !== undefined && m > 0 ? m : estimateCardHeight(dept, membersExpanded);
+}
 
 export function calculateTreeLayout(
   departments: Department[],
@@ -92,10 +114,11 @@ export function calculateTreeLayout(
   parentY: number,
   zoom: number,
   membersExpandedIds: ReadonlySet<string> = EMPTY_ID_SET,
+  measuredHeights?: ReadonlyMap<string, number>,
 ): TreeNode[] {
   if (departments.length === 0) return [];
 
-  const cardWidth = 220 * (zoom / 100);
+  const cardWidth = CARD_WIDTH * (zoom / 100);
   const horizontalGap = 80 * (zoom / 100); // 全局统一水平间距（跨层级一致）
   const verticalGap = 40 * (zoom / 100);
 
@@ -118,7 +141,7 @@ export function calculateTreeLayout(
         // 子部门占用父部门的整个宽度带，从带的左缘开始排布 → 父卡片中心恰好落在子部门块中点
         // 垂直步进按父部门「当前状态（收起/展开成员列表）下的估算高度」计算：
         // 父卡变高时子卡整体下移，不被遮挡（v2.0.10 修复；v2.0.11 支持动态展开态）
-        const step = estimateCardHeight(dept, membersExpandedIds.has(dept.id)) * (zoom / 100) + verticalGap;
+        const step = cardHeightOf(dept, membersExpandedIds.has(dept.id), measuredHeights) * (zoom / 100) + verticalGap;
         children = layoutRow(dept.children, cursor, y + step);
       }
 
@@ -142,12 +165,29 @@ export function calculateTreeLayout(
 }
 
 /**
- * 卡片高度估算（v2.0.10）：部门卡高度随成员数动态变化，
- * header + 负责人行 + 成员列表（max-h-40 = 160px 滚动上限）。
+ * 部门卡基础宽度（唯一来源，布局与渲染必须共用）。
+ *
+ * v2.3.2：220 → 320。用真实数据（35 人 / 6 级 / 长中文+英文岗位名）在 Chromium 实测：
+ * - 负责人行自然宽 194px（220 时已经贴边）；
+ * - 部门名自然宽最大 247px（「D.A.2 精益制造与品质交付（Agency）」），加上折叠箭头与 L 级标记后需 ~345px；
+ * - 岗位名自然宽最大 374px（「… - Sales Order and Support Senior Specialist」）—— 这个长度任何合理卡宽都放不下，
+ *   因此**不做无限加宽**，改为「可截断 + 悬停看全文」（见 PositionSection 的 title）。
+ * 320 是权衡点：负责人行与 8/10 的部门名完整显示，最长的两个部门名只截掉一两个字，画布宽度仍然可控。
+ */
+export const CARD_WIDTH = 320;
+
+/**
+ * 部门卡高度估算（v2.0.10）：部门卡高度随成员数动态变化。
  * 布局（层间步进）与引导线（父卡底缘）都必须用「每个节点自己的高度」，
  * 否则父卡变高会向下遮挡子部门卡（用户反馈 v2.0.9 回归）。
  * 常量校准自 src/components/DepartmentCard.tsx 的实际类名与行高；
  * 修改卡片 CSS 时须同步更新（含 SAFETY 余量，宁可间距略大不可遮挡）。
+ *
+ * v2.3.2 补充：这些常量曾在真实数据上失效 —— 岗位名把右侧数字挤成竖排，岗位行实测 74px
+ * 而常量按 40px 算，于是**每一张有岗位的卡片都比估算高**，逐层累积后子部门被摆进父卡内部、
+ * 引导线被父卡盖住。现在除了修掉可换行的排版，还加了**运行期实测校正**
+ * （`useMeasuredCardHeights`）：DOM 一旦量到真实高度就优先使用，本函数退化为首帧/无 DOM 环境的兜底。
+ * 也就是说，将来再改卡片 CSS 也不至于把布局搞错。
  */
 const CARD_HEADER_H = 48; // 头部 px-4 py-3（12*2 + 内容 24）
 const CARD_LEADER_H = 38; // 负责人 px-3 py-2（8*2 + 内容 20 + border 1 + 余量）
@@ -160,7 +200,10 @@ const CARD_EMP_GAP = 4; // space-y-1
 const CARD_HEIGHT_SAFETY = 4; // 吸收字体/行高渲染差异
 // —— v2.1.1 岗位区（PositionSection）高度常量：仅有岗位时渲染岗位区 ——
 const CARD_POS_HEADER_H = 22; // 「岗位 (N)」头行
-const CARD_POS_ROW_H = 40; // 单岗位行（名称、编制、在岗、缺口）
+// v2.3.2：实测值 36（Chromium，320px 卡宽）。旧值 40 是「按设计意图估计」，
+// 而当时行内会换行，实际渲染 74 —— 估算失真正是布局错乱的根因。
+// 这里取 38（实测 +2px 余量）：即使字体/行高有 1-2px 抖动也不会让子卡被父卡盖住。
+const CARD_POS_ROW_H = 38; // 单岗位行（名称、在岗、编制、缺口）—— 单行不换行
 const CARD_POS_GAP = 4; // space-y-1
 const CARD_POS_PAD = 9; // 岗位区 pb-2 + 边框
 
@@ -197,6 +240,17 @@ export function estimateCardHeight(dept: Department, membersExpanded: boolean = 
 }
 
 /**
+ * 连接线的一段（v2.3.2）。
+ * `gap` = 该段连的是**层级断档**的父子（子部门声明层级 ≠ 父+1，向上无归属）。
+ * 断档段用琥珀色虚线画出来 —— 异常是**关系**层面的问题，所以信号画在线上最准确，
+ * 而且不占任何布局空间（卡片本身无边框，加边框会破坏 CARD_WIDTH 与高度估算）。
+ */
+interface ConnectorSegment {
+  d: string;
+  gap: boolean;
+}
+
+/**
  * 生成父→子连接线（引导线）的 SVG 路径。
  * 经典组织树走线：父卡底部中点 → 垂直降到水平总线 → 水平延伸到每个子卡中点 → 垂直降到子卡顶部。
  * 坐标为 100% 缩放基准（与卡片坐标一致），实际缩放由外层 transform:scale 完成。
@@ -205,13 +259,14 @@ function computeConnectors(
   nodes: TreeNode[],
   cardWidth: number,
   membersExpandedIds: ReadonlySet<string> = EMPTY_ID_SET,
-): string[] {
-  const paths: string[] = [];
+  measuredHeights?: ReadonlyMap<string, number>,
+): ConnectorSegment[] {
+  const segments: ConnectorSegment[] = [];
   const walk = (list: TreeNode[]) => {
     for (const n of list) {
       if (n.children.length > 0) {
         const parentCx = n.x + cardWidth / 2;
-        const parentBottom = n.y + estimateCardHeight(n.department, membersExpandedIds.has(n.department.id));
+        const parentBottom = n.y + cardHeightOf(n.department, membersExpandedIds.has(n.department.id), measuredHeights);
         const firstChild = n.children[0];
         const lastChild = n.children[n.children.length - 1];
         const busY = parentBottom + (firstChild.y - parentBottom) / 2; // 父底与子顶的中点
@@ -221,24 +276,25 @@ function computeConnectors(
 
         // 主干：父底 → 总线高度（垂直）
         // 从父卡内部起线，由不透明卡片遮盖，避免估算高度的余量造成连线悬空。
-        paths.push(`M ${parentCx} ${n.y + CARD_HEADER_H / 2} L ${parentCx} ${busY}`);
+        segments.push({ d: `M ${parentCx} ${n.y + CARD_HEADER_H / 2} L ${parentCx} ${busY}`, gap: false });
         // 总线：从第一个子卡中线到最后一个子卡中线（水平）
-        paths.push(`M ${firstCx} ${busY} L ${lastCx} ${busY}`);
-        // 每个子卡：总线高度 → 子卡顶（垂直）
+        segments.push({ d: `M ${firstCx} ${busY} L ${lastCx} ${busY}`, gap: false });
+        // 每个子卡：总线高度 → 子卡顶（垂直）。子卡层级断档 → 该段标记为 gap。
         for (const c of n.children) {
           const cx = c.x + cardWidth / 2;
-          paths.push(`M ${cx} ${busY} L ${cx} ${c.y}`);
+          segments.push({
+            d: `M ${cx} ${busY} L ${cx} ${c.y}`,
+            gap: c.department.level !== n.department.level + 1,
+          });
         }
       }
       walk(n.children);
     }
   };
   walk(nodes);
-  return paths;
+  return segments;
 }
 
-/** 卡片基础尺寸（卡片宽度；高度按 estimateCardHeight 逐节点动态计算） */
-const CARD_WIDTH = 220;
 
 /**
  * 绝对定位渲染组织树（方案 A）：所有部门卡片平铺在 canvasRef 直接子级，
@@ -280,6 +336,8 @@ const renderTreeRecursive = (
   onRemoveAssignment: (empId: string) => void,
   competencySummaries?: Map<string, CompetencySummary>,
   onOpenCompetencyDetail?: (empId: string) => void,
+  /** v2.3.2：deptId → 层级断档信息（向上无归属），用于卡片头部的可解释标记 */
+  levelGaps?: Map<string, DeptLevelGap>,
 ): React.ReactNode => {
   // 扁平化所有节点，全部相对 canvasRef 绝对定位（全局坐标）
   const flat = flattenTreeNodes(nodes);
@@ -316,6 +374,7 @@ const renderTreeRecursive = (
             onRemoveAssignment={onRemoveAssignment}
             competencySummaries={competencySummaries}
             onOpenCompetencyDetail={onOpenCompetencyDetail}
+            levelGap={levelGaps?.get(node.department.id)}
           />
         </div>
       ))}
@@ -327,11 +386,12 @@ const renderTreeRecursive = (
 function computeLayoutHeight(
   nodes: TreeNode[],
   membersExpandedIds: ReadonlySet<string> = EMPTY_ID_SET,
+  measuredHeights?: ReadonlyMap<string, number>,
 ): number {
   let maxBottom = 0;
   const walk = (list: TreeNode[]) => {
     for (const n of list) {
-      maxBottom = Math.max(maxBottom, n.y + estimateCardHeight(n.department, membersExpandedIds.has(n.department.id)));
+      maxBottom = Math.max(maxBottom, n.y + cardHeightOf(n.department, membersExpandedIds.has(n.department.id), measuredHeights));
       walk(n.children);
     }
   };
@@ -361,7 +421,7 @@ function EmptyStateHero({ onDownloadTemplate, onLoadTestData, onLoadIndustryTemp
 
         <div className="space-y-4 text-left mb-8">
           {[
-            { n: '①', title: '导入数据', desc: '上传员工 Excel，或载入内置行业模板一键成型' },
+            { n: '①', title: '导入数据', desc: '上传员工 Excel 即可生成架构图；组织架构表为可选补充' },
             { n: '②', title: '拖拽调整', desc: '拖拽 / 框选批量移动员工，滚轮缩放画布' },
             { n: '③', title: '导出分享', desc: '导出 PNG / Excel / 诊断报告，或保存 .orgproj' },
           ].map((step) => (
@@ -778,9 +838,33 @@ export function OrgChart({
   // 布局按 100% 基准计算，缩放由外层 transform: scale 完成
   const visibleMemberIds = expandedMembersForSearch(departments, memberExpandedIds, searchHighlight?.empIds ?? EMPTY_ID_SET);
   const scale = zoom / 100;
-  const treeNodes = calculateTreeLayout(departments, 0, 0, 100, visibleMemberIds);
+  // v2.3.2：层级断档（向上无归属）—— 纯派生，无断档时为空 Map，画布零额外开销
+  const levelGaps = useMemo(() => computeLevelGaps(departments), [departments]);
+
+  // ── v2.3.2：卡片真实高度的运行期实测 ─────────────────────────────
+  // 为什么必须有：这套布局是**绝对定位 + 按卡高算层间步进**，卡高一旦估错，
+  // 子部门就会被摆进父卡内部、引导线被父卡盖住（v2.3.2 用户实测到的正是这种错乱）。
+  // 估算常量永远会随 CSS 漂移，所以这里让 DOM 说话：量到真实高度就优先用，
+  // `estimateCardHeight` 退化为首帧 / 无 DOM 环境（jsdom、SSR）的兜底。
+  // offsetHeight 不受外层 transform:scale 影响 → 量到的就是 100% 基准高度，与布局同一坐标系。
+  const [measuredHeights, setMeasuredHeights] = useState<ReadonlyMap<string, number>>(EMPTY_HEIGHT_MAP);
+  useLayoutEffect(() => {
+    const root = canvasRef.current;
+    if (!root) return;
+    const next = new Map<string, number>();
+    for (const el of root.querySelectorAll<HTMLElement>('[data-dept-id]')) {
+      const id = el.dataset.deptId;
+      const h = el.offsetHeight;
+      if (id && h > 0) next.set(id, h);
+    }
+    // 无布局引擎（jsdom）时量不到高度 → 保持估算，不进入更新循环
+    if (next.size === 0) return;
+    setMeasuredHeights((prev) => (heightsEqual(prev, next) ? prev : next));
+  }, [departments, memberExpandedIds, canvasRef]);
+
+  const treeNodes = calculateTreeLayout(departments, 0, 0, 100, visibleMemberIds, measuredHeights);
   // 方案 A：布局宽度/高度都由坐标树计算（与绝对定位坐标一致，而非累加根 width）
-  const layoutHeight = computeLayoutHeight(treeNodes, visibleMemberIds);
+  const layoutHeight = computeLayoutHeight(treeNodes, visibleMemberIds, measuredHeights);
   // 遍历所有节点取 max(x + width)，确保 wrapper 包住最右的部门（含子部门）
   const layoutWidth = (() => {
     let maxRight = 0;
@@ -826,25 +910,28 @@ export function OrgChart({
               transformOrigin: 'top left',
             }}
           >
-            {/* 引导线层：父→子连接线，绝对定位铺满画布，位于卡片下方（先渲染） */}
+            {/* 引导线层：父→子连接线，绝对定位铺满画布，位于卡片下方（先渲染）。
+                v2.3.2：层级断档的父子连线用**琥珀色虚线**标出（异常在关系上，故信号画在线上）。 */}
             {(() => {
-              const connectorPaths = computeConnectors(treeNodes, CARD_WIDTH, visibleMemberIds);
-              if (connectorPaths.length === 0) return null;
+              const connectorSegments = computeConnectors(treeNodes, CARD_WIDTH, visibleMemberIds, measuredHeights);
+              if (connectorSegments.length === 0) return null;
               return (
                 <svg
+                  data-org-connectors="1"
                   className="absolute inset-0 pointer-events-none"
                   style={{ left: 0, top: 0 }}
                   width={layoutWidth}
                   height={layoutHeight}
                   viewBox={`0 0 ${layoutWidth} ${layoutHeight}`}
                 >
-                  {connectorPaths.map((d, i) => (
+                  {connectorSegments.map((seg, i) => (
                     <path
                       key={i}
-                      d={d}
+                      d={seg.d}
                       fill="none"
-                      stroke="#CBD5E1"
-                      strokeWidth={2}
+                      stroke={seg.gap ? '#F59E0B' : '#CBD5E1'}
+                      strokeWidth={seg.gap ? 2.5 : 2}
+                      strokeDasharray={seg.gap ? '7 5' : undefined}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
@@ -875,6 +962,7 @@ export function OrgChart({
               onRemoveAssignment ?? (() => {}),
               competencySummaries,
               onOpenCompetencyDetail,
+              levelGaps,
             )}
           </div>
         ) : (

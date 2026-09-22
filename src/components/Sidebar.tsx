@@ -1,7 +1,6 @@
-import { Upload, Download, FileSpreadsheet, Image, Plus, Building2, Activity, FileJson, FileText, RefreshCw, Eye } from 'lucide-react';
+import { Upload, Download, FileSpreadsheet, Image, Plus, Building2, Activity, FileJson, FileText, RefreshCw, Eye, FolderOpen } from 'lucide-react';
 import { Department } from '../types';
 import { useState } from 'react';
-import { useLevelConfigs, fullCode, levelFullLabel } from '../utils/levels';
 import { useDisplaySettings, setDisplaySetting } from '../utils/displaySettings';
 import { validateImportFile, getImportErrorMessage, WARN_IMPORT_FILE_BYTES } from '../utils/excel';
 
@@ -16,6 +15,8 @@ interface SidebarProps {
   onOpenHealth: () => void;
   onOpenReport: () => void;
   onExportProject: () => void;
+  /** v2.3.2：从 .orgproj 恢复（与「数据备份」并排，避免「有备份但找不到恢复入口」） */
+  onRestoreProject: () => void;
   onRefreshCanvas: () => void;
   departments: Department[];
   hasData: boolean;
@@ -35,6 +36,7 @@ export function Sidebar({
   onOpenHealth,
   onOpenReport,
   onExportProject,
+  onRestoreProject,
   onRefreshCanvas,
   departments,
   hasData,
@@ -47,7 +49,6 @@ export function Sidebar({
   const [newDeptParent, setNewDeptParent] = useState<string | null>('root');
   const [importError, setImportError] = useState<string | null>(null);
   const [importNotice, setImportNotice] = useState<string | null>(null);
-  const levelConfigs = useLevelConfigs();
   const { showLevel, showTitle } = useDisplaySettings();
 
   /** 文件选择护栏：先做扩展名/大小前置校验，非法即提示并中止，不进入解析；超软阈值给「可能变慢」提醒。 */
@@ -96,7 +97,10 @@ export function Sidebar({
           </h2>
 
           <div className="space-y-1.5">
-            <label className="flex items-center gap-2 px-2.5 py-1.5 bg-white/70 border border-slate-200 rounded-lg cursor-pointer hover:border-indigo-300 hover:bg-indigo-50/50 transition-all group">
+            <label
+              title="画布主结构来源：上传员工信息表即可生成完整组织架构图（部门按「一~六级部门」列自动建树）"
+              className="flex items-center gap-2 px-2.5 py-1.5 bg-white/70 border border-slate-200 rounded-lg cursor-pointer hover:border-indigo-300 hover:bg-indigo-50/50 transition-all group"
+            >
               <FileSpreadsheet className={`w-3.5 h-3.5 shrink-0 ${hasEmployees ? 'text-emerald-500' : 'text-slate-300 group-hover:text-indigo-500'}`} />
               <span className="flex-1 min-w-0 text-xs text-slate-600">员工信息</span>
               <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${hasEmployees ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>
@@ -114,9 +118,16 @@ export function Sidebar({
               />
             </label>
 
-            <label className="flex items-center gap-2 px-2.5 py-1.5 bg-white/70 border border-slate-200 rounded-lg cursor-pointer hover:border-emerald-300 hover:bg-emerald-50/50 transition-all group">
+            {/* v2.3.2：组织架构表从「唯一依据」降级为「补充层」——只补员工表装不下的两件事：
+                没有任何员工的空部门、部门负责人。徽标此前误用「有没有部门」判断，永远显示已载入。 */}
+            <label
+              title="可选补充层：只补「无人的空部门」与「部门负责人」；员工、岗位、编制、评分均不受影响，重复上传按可替换处理"
+              className="flex items-center gap-2 px-2.5 py-1.5 bg-white/70 border border-slate-200 rounded-lg cursor-pointer hover:border-emerald-300 hover:bg-emerald-50/50 transition-all group"
+            >
               <FileSpreadsheet className={`w-3.5 h-3.5 shrink-0 ${hasOrgTemplate ? 'text-emerald-500' : 'text-slate-300 group-hover:text-emerald-500'}`} />
-              <span className="flex-1 min-w-0 text-xs text-slate-600">组织架构</span>
+              <span className="flex-1 min-w-0 text-xs text-slate-600">
+                组织架构<span className="text-[10px] text-slate-400">（补充）</span>
+              </span>
               <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${hasOrgTemplate ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>
                 {hasOrgTemplate ? '已载入' : '未载入'}
               </span>
@@ -239,10 +250,24 @@ export function Sidebar({
             <button
               onClick={onExportProject}
               disabled={!hasData}
+              title="把整个工作区（全部场景 / 部门 / 岗位编制 / 职级 / 评分 / 任职记录）另存为一个 .orgproj 文件，可换机、重装、长期归档。注意：它只写文件，不写入下方「历史快照」。"
               className="flex items-center justify-center gap-1.5 w-full px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               <FileJson className="w-3.5 h-3.5" />
               数据备份 (.orgproj)
+            </button>
+            {/*
+              v2.3.2：备份的"回程"入口必须和备份挨着。
+              此前恢复只存在于「场景下拉 → 管理场景 → 项目文件」四步深处，
+              用户点完「数据备份」根本找不到怎么恢复 —— 反馈原话「备份了之后似乎没有办法恢复」。
+            */}
+            <button
+              onClick={onRestoreProject}
+              title="从 .orgproj 文件恢复整个工作区（会先自动留一份可回退快照）"
+              className="flex items-center justify-center gap-1.5 w-full px-3 py-1.5 bg-white text-slate-700 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors shadow-sm"
+            >
+              <FolderOpen className="w-3.5 h-3.5" />
+              从 .orgproj 恢复
             </button>
           </div>
         </div>
@@ -311,27 +336,18 @@ export function Sidebar({
           )}
         </div>
 
-        {/* 职级颜色说明 */}
-        <div className="space-y-2.5">
-          <h2 className="text-xs font-semibold text-slate-700">职级颜色</h2>
-          <div className="space-y-1 max-h-56 overflow-y-auto rounded-lg bg-slate-50/80 border border-slate-100 p-2">
-            {levelConfigs.map(cfg => (
-              <div key={fullCode(cfg)} className="flex items-center gap-1.5 text-[11px]">
-                <div
-                  className="w-3 h-3 rounded-md border border-slate-300 flex-shrink-0"
-                  style={{ backgroundColor: cfg.color }}
-                />
-                <span className="text-slate-600">{levelFullLabel(cfg)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
+        {/*
+          原「职级颜色」图例已移除（v2.3.2）。
+          理由：右上角「职级管理」里每个职级就带色块，改色也在那里改；侧栏这份只是静态复述，
+          既不能点也不能改，纯占位。去掉后侧栏更短，且不存在"两处色块不一致"的观感风险。
+        */}
 
         {/* 使用说明 */}
         <div className="space-y-1.5 text-[11px] text-slate-500">
           <h3 className="font-semibold text-slate-700">使用说明</h3>
           <ul className="list-disc list-inside space-y-0.5">
-            <li>上传员工Excel和组织架构模板</li>
+            <li>上传员工 Excel 即可生成组织架构图</li>
+            <li>组织架构表为可选补充（空部门 / 负责人）</li>
             <li>拖拽员工到不同部门</li>
             <li>双击编辑部门名称</li>
             <li>点击负责人搜索选择员工</li>

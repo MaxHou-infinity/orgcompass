@@ -8,6 +8,7 @@ import {
   Assessment,
   CompetencyModel,
   PositionAssignment,
+  OrgTemplate,
   DEFAULT_COMPETENCY_MODEL,
 } from '../types';
 import {
@@ -48,7 +49,15 @@ function formatTime(iso: string | null): string | null {
  */
 export function useOrgWorkspace() {
   const [project, setProjectState] = useState<ProjectFile>(() => {
-    return loadProject() ?? createProject('组织架构项目');
+    const loaded = loadProject() ?? createProject('组织架构项目');
+    /*
+     * v2.3.2：职级配置以**工作区文件**为准。
+     * localStorage 里的职级键只是运行时缓存；刚导入过别人的 .orgproj、或手改过文件时，
+     * 两者可能不一致 —— 这里在首屏渲染前对齐，避免先闪一帧错配色。
+     * （放在 useState 初始化器里是为了「首次渲染就读到正确值」，effect 会晚一帧。）
+     */
+    if (loaded.levelConfigs) updateLevelConfigs(loaded.levelConfigs);
+    return loaded;
   });
   const [loadIssue] = useState(projectLoadIssue);
   const projectRef = useRef(project);
@@ -58,6 +67,11 @@ export function useOrgWorkspace() {
 
   const levelConfigs = useLevelConfigs();
   const levelConfigsRef = useRef(levelConfigs);
+  /**
+   * v2.3.2：取某个项目的工作区级职级配置；旧项目缺省时退回运行时 store。
+   * 切场景/删场景/导入都走它 —— 这样「颜色/标签/成本」不再随演练方案切换而变。
+   */
+  const workspaceLevelConfigsOf = (p: ProjectFile): LevelConfig[] => p.levelConfigs ?? levelConfigsRef.current;
   useEffect(() => {
     levelConfigsRef.current = levelConfigs;
   }, [levelConfigs]);
@@ -128,6 +142,8 @@ export function useOrgWorkspace() {
     const cur = projectRef.current;
     const next: ProjectFile = {
       ...cur,
+      // v2.3.2：职级配置的真值在工作区级（场景里那份只是给旧版本读的兼容镜像）
+      levelConfigs: levelConfigsRef.current,
       scenarios: cur.scenarios.map((s) =>
         s.id === cur.currentScenarioId
           ? {
@@ -310,7 +326,9 @@ export function useOrgWorkspace() {
       loadSnapshot({
         departments: target.departments,
         allEmployeesFlat: target.allEmployeesFlat,
-        levelConfigs: target.levelConfigs,
+        // v2.3.2：切场景**不换职级配置**（旧实现在这里用目标场景的旧快照覆盖，
+        // 导致「我刚改的颜色一切场景就变回去」——Chromium 实测确认）
+        levelConfigs: workspaceLevelConfigsOf(next),
         canvas: target.canvas,
         assessments: target.assessments ?? [],
         competencyModel: structuredClone(target.competencyModel ?? DEFAULT_COMPETENCY_MODEL),
@@ -401,7 +419,7 @@ export function useOrgWorkspace() {
         loadSnapshot({
           departments: remaining[0].departments,
           allEmployeesFlat: remaining[0].allEmployeesFlat,
-          levelConfigs: remaining[0].levelConfigs,
+          levelConfigs: workspaceLevelConfigsOf(next),
           canvas: remaining[0].canvas,
           assessments: remaining[0].assessments ?? [],
           competencyModel: structuredClone(remaining[0].competencyModel ?? DEFAULT_COMPETENCY_MODEL),
@@ -440,7 +458,7 @@ export function useOrgWorkspace() {
       positionAssignments: seedLegacyAssignments(employees, tree, [], now),
     }, now);
     if (!occupied) created.id = old.id;
-    const next = { ...cur, currentScenarioId: created.id,
+    const next = { ...cur, levelConfigs: structuredClone(levelConfigsRef.current), currentScenarioId: created.id,
       scenarios: occupied ? [...cur.scenarios, created] : cur.scenarios.map((s) => s.id === old.id ? created : s),
       meta: { ...cur.meta, updatedAt: now } };
     if (!persistProject(next)) { setSaveState('failed'); return false; }
@@ -473,7 +491,8 @@ export function useOrgWorkspace() {
       loadSnapshot({
         departments: first.departments,
         allEmployeesFlat: first.allEmployeesFlat,
-        levelConfigs: first.levelConfigs,
+        // v2.3.2：导入的项目用它的工作区级职级配置（parseProject 已保证该字段存在）
+        levelConfigs: workspaceLevelConfigsOf(parsed),
         canvas: first.canvas,
         assessments: first.assessments ?? [],
         competencyModel: structuredClone(first.competencyModel ?? DEFAULT_COMPETENCY_MODEL),
@@ -497,7 +516,8 @@ export function useOrgWorkspace() {
       loadSnapshot({
         departments: first.departments,
         allEmployeesFlat: first.allEmployeesFlat,
-        levelConfigs: first.levelConfigs,
+        // v2.3.2：导入的项目用它的工作区级职级配置（parseProject 已保证该字段存在）
+        levelConfigs: workspaceLevelConfigsOf(parsed),
         canvas: first.canvas,
         assessments: first.assessments ?? [],
         competencyModel: structuredClone(first.competencyModel ?? DEFAULT_COMPETENCY_MODEL),
@@ -508,8 +528,31 @@ export function useOrgWorkspace() {
     [loadSnapshot],
   );
 
+  /**
+   * v2.3.2：设置工作区级「组织架构模板」（补充层数据源）并立即持久化。
+   *
+   * 为什么必须持久化：旧实现把 orgTemplates 只放在 App 的 React state 里（`App.tsx:200`），
+   * 关闭应用再打开就归零 —— 用户会看到「负责人全没了」，而且下次重传员工表时模板已不存在，
+   * 补充层的空部门与负责人**永久静默丢失**。它是数据来源配置，不属于某个场景快照。
+   */
+  const setOrgTemplates = useCallback((templates: OrgTemplate[]): boolean => {
+    const now = new Date().toISOString();
+    const next: ProjectFile = {
+      ...projectRef.current,
+      orgTemplates: templates.length > 0 ? templates : undefined,
+      meta: { ...projectRef.current.meta, updatedAt: now },
+    };
+    projectRef.current = next;
+    setProjectState(next);
+    const ok = persistProject(next);
+    setSaveState(ok ? 'saved' : 'failed');
+    setLastSavedAt(formatTime(now));
+    return ok;
+  }, []);
+
   /** 清空当前工作区（重置，保留职级配置偏好）。v2.2.0：三字段重置为 空评估 / 默认模型 / 空时态表。
-   *  v2.3.1（F-12）：清空前留一份可恢复快照。 */
+   *  v2.3.1（F-12）：清空前留一份可恢复快照。
+   *  v2.3.2：补充层数据源（组织架构模板）一并清空，避免「清空后又冒出一批空部门/负责人」。 */
   const resetWorkspace = useCallback(() => {
     flushCurrent();
     snapshotCurrentProject('清空工作区');
@@ -520,8 +563,9 @@ export function useOrgWorkspace() {
       competencyModel: structuredClone(DEFAULT_COMPETENCY_MODEL),
       positionAssignments: [],
     });
+    setOrgTemplates([]);
     setZoomState(100);
-  }, [flushCurrent, replaceSnapshot]);
+  }, [flushCurrent, replaceSnapshot, setOrgTemplates]);
 
   return {
     project,
@@ -558,6 +602,9 @@ export function useOrgWorkspace() {
     renameScenario,
     deleteScenario,
     renameProject,
+
+    /** v2.3.2：工作区级组织架构模板（补充层数据源）读 / 写 */
+    setOrgTemplates,
 
     exportProjectJson,
     importProjectJson,

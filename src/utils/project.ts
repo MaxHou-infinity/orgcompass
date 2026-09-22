@@ -12,11 +12,13 @@ import {
   CompetencyDimensionDef,
   CompetencyModel,
   PositionAssignment,
+  OrgTemplate,
   DEFAULT_COMPETENCY_MODEL,
   COMPETENCY_SCALE,
 } from '../types';
 import { seedLegacyAssignments } from './placement';
 import { DEFAULT_LEVELS } from './levels';
+import { fullCode, normalizeLevelColor } from './level';
 import { compressToUTF16, decompressFromUTF16 } from 'lz-string';
 
 /**
@@ -139,6 +141,59 @@ export function serializeProject(project: ProjectFile): string {
   return JSON.stringify(project, null, 2);
 }
 
+/**
+ * v2.3.2：.orgproj 备份的默认文件名（带本地时间戳）。
+ *
+ * 旧实现固定用 `组织架构项目.orgproj`：多次备份只能互相覆盖，
+ * 用户也无法从文件名分辨哪份是备份前、哪份是改坏之后。
+ */
+export function orgprojFileName(at: Date = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `组织架构项目-${at.getFullYear()}${p(at.getMonth() + 1)}${p(at.getDate())}-${p(at.getHours())}${p(at.getMinutes())}.orgproj`;
+}
+
+/** 单份 .orgproj 的内容概览 —— 用于恢复后给出可见反馈（「这份文件里到底有什么」）。 */
+export interface ProjectSummary {
+  name: string;
+  scenarioCount: number;
+  departmentCount: number;
+  employeeCount: number;
+  positionCount: number;
+}
+
+function countDepartments(depts: Department[]): number {
+  let n = 0;
+  for (const d of depts) n += 1 + countDepartments(d.children);
+  return n;
+}
+
+function countPositions(depts: Department[]): number {
+  let n = 0;
+  for (const d of depts) n += (d.positions?.length ?? 0) + countPositions(d.children);
+  return n;
+}
+
+/**
+ * 解析 .orgproj 并给出**当前场景**的内容概览。
+ *
+ * 与 `importProjectJson` 各自 `parseProject` 一次：文件通常几十 KB，
+ * 这点开销换来「先看清恢复了什么」的可见性，值得。格式非法 / 版本过高时照常抛错，由调用方提示。
+ * 岗位数从部门树内嵌 positions 统计（不依赖 Scenario.positions 镜像，镜像可能为空/过期）。
+ */
+export function summarizeProjectJson(json: string): ProjectSummary | null {
+  const parsed = parseProject(json);
+  if (!parsed) return null;
+  const current = parsed.scenarios.find((s) => s.id === parsed.currentScenarioId) ?? parsed.scenarios[0];
+  const departments = current?.departments ?? [];
+  return {
+    name: parsed.name,
+    scenarioCount: parsed.scenarios.length,
+    departmentCount: countDepartments(departments),
+    employeeCount: (current?.allEmployeesFlat ?? []).filter((e) => !e.isVirtual).length,
+    positionCount: countPositions(departments),
+  };
+}
+
 /** 类型守卫：判断一个对象是否为合理部门（仅顶层字段检查，健壮迁移用） */
 function isDepartmentLike(v: unknown): v is Department {
   if (!v || typeof v !== 'object') return false;
@@ -181,7 +236,7 @@ const DEPARTMENT_KEYS = ['id', 'name', 'level', 'parentId', 'children', 'employe
 const POSITION_KEYS = ['id', 'departmentId', 'name', 'jobFamily', 'levelBandMin', 'levelBandMax', 'headcount', 'status', 'createdAt', 'updatedAt'] as const;
 const LEVEL_CONFIG_KEYS = ['code', 'number', 'label', 'color', 'cost'] as const;
 const SCENARIO_KEYS = ['id', 'name', 'createdAt', 'updatedAt', 'departments', 'allEmployeesFlat', 'levelConfigs', 'canvas', 'positions', 'competencyModel', 'assessments', 'positionAssignments', 'seedLegacyRelations'] as const;
-const PROJECT_KEYS = ['id', 'name', 'version', 'currentScenarioId', 'scenarios', 'meta'] as const;
+const PROJECT_KEYS = ['id', 'name', 'version', 'currentScenarioId', 'scenarios', 'meta', 'orgTemplates', 'levelConfigs'] as const;
 const META_KEYS = ['createdAt', 'updatedAt', 'version'] as const;
 
 /** 递归清洗部门树（丢弃非法节点，归一化缺失字段） */
@@ -248,20 +303,49 @@ function sanitizeLevelConfigs(list: unknown[]): LevelConfig[] {
   for (const item of list) {
     if (!item || typeof item !== 'object') continue;
     const c = item as Record<string, unknown>;
-    if (typeof c.code !== 'string' || typeof c.number !== 'string' || typeof c.label !== 'string' || typeof c.color !== 'string') continue;
+    // v2.3.2：颜色不再只看「是不是字符串」——非 #RRGGBB 一律回落到该职级的自动配色，
+    // 否则 `.orgproj` 里带 `#fff`/`red` 这类值会让员工卡底色拼出非法 CSS 而静默透明。
+    if (typeof c.code !== 'string' || typeof c.number !== 'string' || typeof c.label !== 'string') continue;
+    const code = c.code;
+    const number = c.number;
     out.push(carryUnknownFields({
-      code: c.code,
-      number: c.number,
+      code,
+      number,
       label: c.label,
-      color: c.color,
+      color: normalizeLevelColor(c.color, fullCode({ code, number })),
       cost: typeof c.cost === 'number' && Number.isFinite(c.cost) ? c.cost : undefined,
     }, c, LEVEL_CONFIG_KEYS));
   }
   return out.length > 0 ? out : DEFAULT_LEVELS.map((c) => ({ ...c }));
 }
 
-// —— v2.2.0：胜任度三张表 sanitize（沿用逐条校验、非法丢单条、缺省回退风格） ——
+/**
+ * v2.3.2：清洗工作区级「组织架构模板」（补充层数据源）。
+ * 逐条重建白名单字段，非法行丢弃；空/非数组 → []（无补充层）。
+ * 不做去重也不排序：模板行的顺序即用户表格顺序，重复行由合并逻辑按部门路径自然去重。
+ */
+function sanitizeOrgTemplates(raw: unknown): OrgTemplate[] {
+  if (!Array.isArray(raw)) return [];
+  const out: OrgTemplate[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const t = item as Record<string, unknown>;
+    const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
+    const row: OrgTemplate = {
+      dept1: str(t.dept1), dept2: str(t.dept2), dept3: str(t.dept3),
+      dept4: str(t.dept4), dept5: str(t.dept5), dept6: str(t.dept6),
+      deptLevel: str(t.deptLevel),
+      leaderId: str(t.leaderId),
+      leaderName: str(t.leaderName),
+    };
+    // 整行没有任何部门名 → 无意义行，丢弃（避免合并时产生幽灵节点）
+    if (![row.dept1, row.dept2, row.dept3, row.dept4, row.dept5, row.dept6].some((n) => n && n.trim())) continue;
+    out.push(row);
+  }
+  return out;
+}
 
+// —— v2.2.0：胜任度三张表 sanitize（沿用逐条校验、非法丢单条、缺省回退风格） ——
 /** 维度 key 合法形式（AI 稳定 ID + 结构化枚举）：小写字母开头，仅小写字母/数字/下划线。 */
 const DIMENSION_KEY_RE = /^[a-z][a-z0-9_]*$/;
 
@@ -619,6 +703,17 @@ export function parseProject(raw: string): ProjectFile | null {
     return null;
   }
   if (!data || typeof data !== 'object') return null;
+  /*
+   * v2.3.2：必须真的是项目文件（`scenarios` 必须是数组）。
+   *
+   * 旧实现只校验「是个 JSON 对象」，于是**任意 JSON 都会被当成合法项目**：
+   * `{"foo":1}` → `scenarios` 取不到 → 走 `scenarios.length === 0` 分支补一个空基线场景
+   * → 导入"成功"。后果是用户选错文件时，工作区被**静默换成空的**（虽然留了快照），
+   * 画布回到「开始设计您的组织架构 / 请导入员工信息」—— 与「恢复不了」的体感完全一致。
+   *
+   * 历史文件（v1 起）根结构一直有 `scenarios`，所以这个校验不会误伤任何真实项目文件。
+   */
+  if (!Array.isArray((data as Record<string, unknown>).scenarios)) return null;
   // v2.3.1（Q-11）：字符串版本 "5" 也必须被识别并拒绝（旧实现只认 number → 被当成无版本而放行）。
   const inputVersion = readProjectVersion(data as Record<string, unknown>);
   if (inputVersion !== undefined && inputVersion > PROJECT_VERSION) throw new UnsupportedProjectVersionError(inputVersion);
@@ -645,6 +740,19 @@ export function parseProject(raw: string): ProjectFile | null {
 
   const version = typeof p.version === 'number' ? p.version : PROJECT_VERSION;
   const metaRaw = p.meta && typeof p.meta === 'object' ? (p.meta as Record<string, unknown>) : {};
+  // v2.3.2：补充层数据源（工作区级）。空列表**不写字段**，保证旧文件 parse(serialize(p)) 深等零改动。
+  const orgTemplates = sanitizeOrgTemplates(p.orgTemplates);
+  /*
+   * v2.3.2：职级配置提升为**工作区级**（颜色/标签/成本是组织属性，不该随演练场景切换而变）。
+   * 迁移：旧文件没有该字段 → 从当前场景的配置抬上来，不丢用户自定义的配色与成本。
+   */
+  const rawLevelConfigs = (p as Record<string, unknown>).levelConfigs;
+  const currentScenarioRaw = scenarios.find((s) => s.id === currentScenarioId) ?? scenarios[0];
+  const levelConfigs = Array.isArray(rawLevelConfigs)
+    ? sanitizeLevelConfigs(rawLevelConfigs)
+    : currentScenarioRaw
+      ? sanitizeLevelConfigs(currentScenarioRaw.levelConfigs)
+      : DEFAULT_LEVELS.map((c) => ({ ...c }));
 
   return carryUnknownFields({
     id: typeof p.id === 'string' ? p.id : uid('proj'),
@@ -652,6 +760,8 @@ export function parseProject(raw: string): ProjectFile | null {
     version,
     currentScenarioId,
     scenarios,
+    levelConfigs,
+    ...(orgTemplates.length > 0 ? { orgTemplates } : {}),
     meta: carryUnknownFields({
       createdAt: typeof metaRaw.createdAt === 'string' ? metaRaw.createdAt : now,
       updatedAt: typeof metaRaw.updatedAt === 'string' ? metaRaw.updatedAt : now,

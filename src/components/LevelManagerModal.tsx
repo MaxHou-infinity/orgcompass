@@ -13,12 +13,18 @@ import {
   fullCode,
   autoColor,
 } from '../utils/level';
-import { LevelConfig } from '../types';
+import { Employee, LevelConfig } from '../types';
 import { useDialogFocus } from '../utils/useDialogFocus';
 
 interface LevelManagerModalProps {
   open: boolean;
   onClose: () => void;
+  /**
+   * v2.3.2：当前名册。用于在改/删职级前提示「有多少人正在用这个职级」——
+   * 改 code/number（主键）或删一行，会让这些员工**静默掉色 + 成本归零**，
+   * 而这正是「职级未在配置中」那类问题的成因之一（用户自己就能造出来）。
+   */
+  allEmployees: Employee[];
 }
 
 type Draft = LevelConfig;
@@ -28,7 +34,7 @@ function emptyDraft(): Draft {
   return { code: 'L', number: '', label: '', color: '' };
 }
 
-export function LevelManagerModal({ open, onClose }: LevelManagerModalProps) {
+export function LevelManagerModal({ open, onClose, allEmployees }: LevelManagerModalProps) {
   // v2.3.1（F-14）：补对话框语义 —— App 用 [role="dialog"] 判断是否在弹窗内，
   // 缺它会让 Ctrl+Z 穿透到底层画布，静默撤销用户看不见的编辑。
   const dialogRef = useDialogFocus(open, onClose);
@@ -38,6 +44,23 @@ export function LevelManagerModal({ open, onClose }: LevelManagerModalProps) {
   );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState(false);
+  /** v2.3.2：保存会把哪些「仍有人用」的职级改没（改码/删除），需二次确认 */
+  const [pendingLoss, setPendingLoss] = useState<{ code: string; count: number; samples: string[] }[] | null>(null);
+
+  /** 职级码 → 使用人数（归一化：去空格、转大写，与 findUnconfiguredLevels 同一口径） */
+  const usageByCode = new Map<string, { count: number; samples: string[] }>();
+  for (const e of allEmployees) {
+    if (e.isVirtual) continue;
+    const key = (e.level ?? '').trim().toUpperCase();
+    if (!key) continue;
+    const hit = usageByCode.get(key);
+    if (hit) {
+      hit.count += 1;
+      if (hit.samples.length < 3) hit.samples.push(e.name);
+    } else {
+      usageByCode.set(key, { count: 1, samples: [e.name] });
+    }
+  }
   /** v2.0.12：当前展示「自定义颜色」控件的行；null = 默认只读自动色块 */
   const [customColorIdx, setCustomColorIdx] = useState<number | null>(null);
 
@@ -76,13 +99,34 @@ export function LevelManagerModal({ open, onClose }: LevelManagerModalProps) {
     return errs;
   };
 
+  /** 本次保存会让哪些「仍有人用」的职级消失（改码或删除都会） */
+  const computePendingLoss = (): { code: string; count: number; samples: string[] }[] => {
+    const after = new Set(drafts.map((d) => fullCode({ code: d.code, number: d.number })));
+    return configs
+      .map((c) => fullCode(c))
+      .filter((code) => !after.has(code))
+      .map((code) => ({ code, ...(usageByCode.get(code) ?? { count: 0, samples: [] }) }))
+      .filter((x) => x.count > 0);
+  };
+
   const handleSave = () => {
     const errs = validateAll();
     if (Object.keys(errs).length > 0) {
       setErrors(errs);
       setSaved(false);
+      setPendingLoss(null);
       return;
     }
+    // v2.3.2：会造成「有人用但配置没了」时，先讲清后果再保存（不静默）
+    if (!pendingLoss) {
+      const loss = computePendingLoss();
+      if (loss.length > 0) {
+        setPendingLoss(loss);
+        setSaved(false);
+        return;
+      }
+    }
+    setPendingLoss(null);
     updateLevelConfigs(
       drafts.map((d) => ({
         code: d.code.toUpperCase(),
@@ -118,7 +162,13 @@ export function LevelManagerModal({ open, onClose }: LevelManagerModalProps) {
         onClick={onClose}
       />
       {/* 面板 */}
-      <div className="relative w-full max-w-2xl max-h-[85vh] flex flex-col rounded-3xl bg-white/90 backdrop-blur-xl border border-white/40 shadow-2xl overflow-hidden animate-fadeInUp">
+            {/*
+        v2.3.2：max-w-2xl → max-w-3xl。
+        一行有 6 组控件（职级码 / 标签 / 成本 / 使用人数 / 颜色 / 删除），
+        Chromium 实测：内容实需 644px，而 max-w-2xl 只给 596px ——
+        加入「N 人使用」徽标后必然溢出到卡片背景之外（颜色块与删除按钮跑到框外）。
+      */}
+      <div className="relative w-full max-w-3xl max-h-[85vh] flex flex-col rounded-3xl bg-white/90 backdrop-blur-xl border border-white/40 shadow-2xl overflow-hidden animate-fadeInUp">
         {/* 头部 */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-indigo-500/5 to-transparent">
           <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
@@ -146,12 +196,17 @@ export function LevelManagerModal({ open, onClose }: LevelManagerModalProps) {
             const rowErr = errCode || errNumber || errLabel || errors[`${i}.dup`];
             const borderCls = (err?: string) => `border ${err ? 'border-red-300' : 'border-slate-200'}`;
             const effectiveColor = d.color || autoColor(fullCode(d));
+            // v2.3.2：这一行当前被多少人使用（改码/删除会让他们掉色、成本归零）
+            const usage = usageByCode.get(fullCode(d).toUpperCase());
             return (
               <div
                 key={i}
+                data-level-row={i}
                 className="p-3 rounded-2xl border border-slate-200/70 bg-white hover:shadow-sm transition-shadow"
               >
-                <div className="flex flex-wrap sm:flex-nowrap items-center gap-3">
+                {/* v2.3.2：不再 sm:flex-nowrap —— 禁止换行 + 各控件近似固定宽 = 内容溢出到卡片背景外。
+                    保留 flex-wrap，窄窗口下优雅换行（宁可换行，不可出框）。 */}
+                <div data-level-row-items className="flex flex-wrap items-center gap-3">
                   <div className="flex items-center gap-2">
                     <span className="font-mono text-xs text-slate-400">#{i + 1}</span>
                     {/* 序列代码 */}
@@ -165,6 +220,7 @@ export function LevelManagerModal({ open, onClose }: LevelManagerModalProps) {
                       className={`w-14 px-2 py-1.5 rounded-lg text-center font-semibold text-slate-700 focus-ring ${borderCls(errCode)}`}
                       placeholder="L"
                       maxLength={2}
+                      aria-label={`第 ${i + 1} 行 序列代码`}
                     />
                     {/* 编号 */}
                     <input
@@ -174,6 +230,7 @@ export function LevelManagerModal({ open, onClose }: LevelManagerModalProps) {
                       className={`w-16 px-2 py-1.5 rounded-lg text-center text-sm text-slate-700 focus-ring ${borderCls(errNumber)}`}
                       placeholder="1.1"
                       inputMode="decimal"
+                      aria-label={`第 ${i + 1} 行 职级编号`}
                     />
                     {/* 完整编码预览 */}
                     <span className="px-2 py-1 rounded-md bg-indigo-50 text-indigo-600 font-mono text-xs font-semibold">
@@ -188,6 +245,7 @@ export function LevelManagerModal({ open, onClose }: LevelManagerModalProps) {
                     className={`flex-1 min-w-[120px] px-3 py-1.5 rounded-lg text-sm text-slate-700 focus-ring ${borderCls(errLabel)}`}
                     placeholder="中文标签，如 初级专员"
                     maxLength={20}
+                    aria-label={`第 ${i + 1} 行 中文标签`}
                   />
                   {/* 月均成本 */}
                   <div className="flex items-center gap-1.5">
@@ -202,6 +260,14 @@ export function LevelManagerModal({ open, onClose }: LevelManagerModalProps) {
                     />
                     <span className="text-[10px] text-slate-400 w-6">w</span>
                   </div>
+                  {usage && (
+                    <span
+                      className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200"
+                      title={`当前有 ${usage.count} 名员工使用该职级：${usage.samples.join('、')}${usage.count > usage.samples.length ? ' 等' : ''}。改动职级码或删除该行，他们会掉色且成本归零。`}
+                    >
+                      {usage.count} 人使用
+                    </span>
+                  )}
                   {/* 颜色（v2.0.12：默认语义化自动配色——序列色系+级别深浅；点击色块可自定义） */}
                   <div className="flex items-center gap-1.5">
                     {customColorIdx === i ? (
@@ -274,11 +340,45 @@ export function LevelManagerModal({ open, onClose }: LevelManagerModalProps) {
           </button>
         </div>
 
+        {/* v2.3.2：改动会让「仍有人用」的职级消失时，先把后果讲清楚再保存 */}
+        {pendingLoss && (
+          <div role="alert" className="mx-6 mb-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-semibold">有 {pendingLoss.length} 个职级仍被员工使用，保存后会消失</p>
+                <ul className="space-y-0.5">
+                  {pendingLoss.map((l) => (
+                    <li key={l.code}>
+                      「{l.code}」— {l.count} 人（{l.samples.join('、')}{l.count > l.samples.length ? ' 等' : ''}）
+                    </li>
+                  ))}
+                </ul>
+                <p>这些人不会丢名册，但会<strong className="font-medium">掉色（灰底）且成本按 0 计</strong>，并出现在「职级不在配置中」的提示里。</p>
+              </div>
+            </div>
+            <div className="mt-2 flex justify-end gap-2">
+              <button
+                onClick={() => setPendingLoss(null)}
+                className="px-3 py-1.5 rounded-lg border border-amber-200 bg-white text-amber-900 hover:bg-amber-100 transition-colors"
+              >
+                返回修改
+              </button>
+              <button
+                onClick={handleSave}
+                className="px-3 py-1.5 rounded-lg bg-amber-600 text-white hover:bg-amber-700 transition-colors"
+              >
+                仍然保存
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* 底部操作 */}
         <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100 bg-slate-50/50">
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <span className="inline-block w-3 h-3 rounded-full" style={{ backgroundColor: autoColor('L1.1') }} />
-            修改将在应用内即时生效（人员卡片 / 职级颜色 / 颜色图例）
+            修改将在应用内即时生效（人员卡片 / 部门卡 / 导出图片）
           </div>
           <div className="flex items-center gap-3">
             <button

@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
-import { LevelConfig } from '../types';
-import { validateLevelCode, validateLevelNumber, fullCode, normalizeLevelNumber, autoColor } from './level';
+import { Employee, LevelConfig } from '../types';
+import { validateLevelCode, validateLevelNumber, fullCode, normalizeLevelNumber, autoColor, normalizeLevelColor } from './level';
 
 /**
  * 职级配置系统。
@@ -80,14 +80,20 @@ function loadFromStorage(): LevelConfig[] {
           typeof (item as LevelConfig).label === 'string' &&
           typeof (item as LevelConfig).color === 'string',
       )
-      // 归一化防御：code 转大写、编号规范化、标签去空；再校验一次
-      .map((item) => ({
-        code: item.code.toUpperCase(),
-        number: normalizeLevelNumber(item.number),
-        label: item.label.trim(),
-        color: item.color,
-        cost: typeof item.cost === 'number' && Number.isFinite(item.cost) ? item.cost : undefined,
-      }))
+      // 归一化防御：code 转大写、编号规范化、标签去空、**颜色归一为 #RRGGBB**；再校验一次。
+      // v2.3.2：颜色此前只检查 `typeof === 'string'`，`#fff`/`red` 这类值会让员工卡底色
+      // 拼出非法 CSS 而静默变透明（见 normalizeLevelColor 的说明）。
+      .map((item) => {
+        const code = item.code.toUpperCase();
+        const number = normalizeLevelNumber(item.number);
+        return {
+          code,
+          number,
+          label: item.label.trim(),
+          color: normalizeLevelColor(item.color, fullCode({ code, number })),
+          cost: typeof item.cost === 'number' && Number.isFinite(item.cost) ? item.cost : undefined,
+        };
+      })
       .filter((item) => validateLevel(item).length === 0);
     return cleaned.length > 0 ? cleaned : DEFAULT_LEVELS;
   } catch {
@@ -144,4 +150,47 @@ export function getLevelColor(configs: LevelConfig[], code: string): string {
 export function getLevelLabel(configs: LevelConfig[], code: string): string {
   const match = configs.find((c) => fullCode(c) === code);
   return match ? levelFullLabel(match) : code;
+}
+
+// ───────────────────────── v2.3.2：职级配置覆盖率 ─────────────────────────
+
+/** 名册里出现了、但职级配置里查不到的职级。 */
+export interface UnconfiguredLevel {
+  /** 员工数据里的原始职级取值（如 "L3.2Acting"、"NA"） */
+  level: string;
+  /** 使用该取值的人数 */
+  count: number;
+  /** 示例姓名（最多 3 个，便于用户定位到人） */
+  sampleNames: string[];
+}
+
+/**
+ * 找出「名册里有、配置里没有」的职级取值。
+ *
+ * 为什么要单独检测：这一条此前是**静默降级**的 ——
+ * `getLevelColor` 回落灰色 `#CCCCCC`（与「未配置职级」同色，看不出异常）、
+ * `costForLevel` 回落 **0**（不报错）、职级分布按原始字符串单独分档。
+ * 真实数据里就有这种情况（`L3.2Acting`，实测使全员月成本低估 4.0w/月 ≈ 48w/年），
+ * 但界面上没有任何提示。现在把它变成一条可见、可行动的结论。
+ *
+ * 空格与大小写差异先归一（` l1.1 ` → `L1.1`），避免把纯粹的空格问题报成"未配置"。
+ */
+export function findUnconfiguredLevels(employees: Employee[], configs: LevelConfig[]): UnconfiguredLevel[] {
+  const known = new Set(configs.map((c) => fullCode(c)));
+  const byLevel = new Map<string, UnconfiguredLevel>();
+  for (const e of employees) {
+    if (e.isVirtual) continue;
+    const raw = (e.level ?? '').trim();
+    if (!raw) continue;
+    const key = raw.toUpperCase();
+    if (known.has(key)) continue;
+    const hit = byLevel.get(key);
+    if (hit) {
+      hit.count += 1;
+      if (hit.sampleNames.length < 3) hit.sampleNames.push(e.name);
+    } else {
+      byLevel.set(key, { level: raw, count: 1, sampleNames: [e.name] });
+    }
+  }
+  return [...byLevel.values()].sort((a, b) => b.count - a.count || a.level.localeCompare(b.level));
 }

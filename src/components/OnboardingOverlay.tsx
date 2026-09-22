@@ -24,7 +24,7 @@ export function OnboardingOverlay({ open, onClose, onDownloadTemplate, onLoadTem
       icon: <FileSpreadsheet className="w-6 h-6" />,
       n: '01',
       title: '导入数据',
-      desc: '上传员工 Excel，或直接载入内置行业模板 / 示例数据，快速成型。',
+      desc: '上传员工 Excel 即可生成组织架构图；组织架构表为可选补充（补空部门 / 负责人）。也可载入内置行业模板或示例数据。',
     },
     {
       icon: <MousePointerClick className="w-6 h-6" />,

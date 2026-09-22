@@ -358,8 +358,9 @@ export function HealthDrawer({
     [open, departments, configs, focusDeptId, thresholds],
   );
   const suggestions = useMemo(
-    () => (open ? collectAllSuggestions(report, departments, thresholds) : []),
-    [open, report, departments, thresholds],
+    () => (open ? collectAllSuggestions(report, departments, thresholds, configs) : []),
+    // configs 必须进依赖：它决定「哪些职级算未配置」
+    [open, report, departments, thresholds, configs],
   );
   const positionsByDept = useMemo(() => {
     const m = new Map<string, PositionSummary[]>();

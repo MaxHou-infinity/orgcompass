@@ -120,8 +120,9 @@ export function DiagnosticReport({
   }, [departments]);
 
   const suggestions = useMemo(
-    () => collectAllSuggestions(report, departments),
-    [report, departments],
+    () => collectAllSuggestions(report, departments, undefined, levelConfigs),
+    // levelConfigs 必须进依赖：它决定「哪些职级算未配置」，改了职级管理要立刻反映到建议里
+    [report, departments, levelConfigs],
   );
 
   const generatedAt = useMemo(

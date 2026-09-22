@@ -125,7 +125,14 @@ export interface Scenario {
   departments: Department[];
   /** 全量员工扁平列表（供负责人搜索 / 模板重建） */
   allEmployeesFlat: Employee[];
-  /** 职级配置快照 */
+  /**
+   * 职级配置**兼容镜像**（v2.3.2 起不再作为真值来源）。
+   *
+   * 真值在工作区级 `ProjectFile.levelConfigs`：颜色/标签/成本是**组织属性**，不是某个演练方案的属性。
+   * 此前它是场景级的，而编辑入口（右上角「职级管理」）看起来是全局的 →
+   * 用户在场景 A 改完颜色、切到场景 B（旧快照）时颜色会"变回去"（Chromium 实测确认）。
+   * 这里继续按工作区配置回写，只为让更早版本的应用仍能读到正确的配色。
+   */
   levelConfigs: LevelConfig[];
   /** 画布状态 */
   canvas: ScenarioCanvas;
@@ -155,6 +162,24 @@ export interface ProjectFile {
   currentScenarioId: string;
   scenarios: Scenario[];
   meta: ProjectMeta;
+  /**
+   * v2.3.2：职级配置（颜色 / 标签 / 成本）——**工作区级真值来源**。
+   *
+   * 与 `Scenario.levelConfigs`（兼容镜像）的关系：这里是真值，场景里那份只是回写副本。
+   * 旧文件没有该字段时，从当前场景的配置迁移上来（见 `parseProject`）。
+   */
+  levelConfigs?: LevelConfig[];
+  /**
+   * v2.3.2：当前生效的「组织架构模板」——组织结构的**补充层数据源**（不是结构本身）。
+   *
+   * 语义变更（v2.3.2）：画布的组织结构**主要由员工信息表产出**；组织架构模板只承担两件
+   * 员工表装不下的事：① 补「没有任何员工的空部门」；② 补「部门负责人」。
+   *
+   * 存在工作区级（不是场景级）：它是数据来源配置，不属于某个具体演练方案，
+   * 因此切换场景后仍然生效，避免「换个场景重传员工表就丢负责人」。
+   * 旧文件缺省 = []（无补充层），不推断、不伪造。
+   */
+  orgTemplates?: OrgTemplate[];
 }
 
 /** 当前工作区（App 运行时状态，导出/持久化的统一快照口径） */

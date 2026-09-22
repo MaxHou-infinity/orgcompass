@@ -49,7 +49,7 @@ describe('v2.3.1 F-14：弹窗带 role="dialog"（Ctrl+Z 不得穿透）', () =>
 
   it('LevelManagerModal', () => {
     const onClose = vi.fn();
-    render(<LevelManagerModal open onClose={onClose} />);
+    render(<LevelManagerModal open onClose={onClose} allEmployees={[]} />);
     expect(screen.getByRole('dialog', { name: '职级管理' })).toBeTruthy();
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).toHaveBeenCalled();
@@ -72,7 +72,7 @@ describe('v2.3.1 F-14：弹窗带 role="dialog"（Ctrl+Z 不得穿透）', () =>
   });
 
   it('关闭状态下不产生 dialog（不误挡画布快捷键）', () => {
-    render(<LevelManagerModal open={false} onClose={vi.fn()} />);
+    render(<LevelManagerModal open={false} onClose={vi.fn()} allEmployees={[]} />);
     expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 });

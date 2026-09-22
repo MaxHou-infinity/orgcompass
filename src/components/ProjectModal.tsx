@@ -1,5 +1,5 @@
 import { useDialogFocus } from '../utils/useDialogFocus';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { X, FileDown, FileUp, Plus, Copy, Trash2, Check, FolderOpen, Pencil, AlertTriangle, History } from 'lucide-react';
 import { ProjectFile } from '../types';
 import type { ProjectBackupInfo } from '../utils/project';
@@ -21,6 +21,11 @@ interface ProjectModalProps {
   onListBackups: () => ProjectBackupInfo[];
   /** v2.3.1 F-12：恢复某一份快照 */
   onRestoreBackup: (key: string) => void;
+  /**
+   * v2.3.2：从侧栏「从 .orgproj 恢复」进入时直接展开导入确认区。
+   * 备份与恢复必须挨着 —— 此前恢复只藏在本弹窗深处，用户点完「数据备份」找不到回程入口。
+   */
+  focusImport?: boolean;
 }
 
 function fmtTime(iso?: string): string {
@@ -115,6 +120,7 @@ export function ProjectModal({
   onExport,
   onListBackups,
   onRestoreBackup,
+  focusImport = false,
 }: ProjectModalProps) {
   const dialogRef = useDialogFocus(open, onClose);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -123,6 +129,16 @@ export function ProjectModal({
   // v2.1.1：场景内联重命名（替代原生 window.prompt）
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+
+  // v2.3.2：从侧栏「从 .orgproj 恢复」进入 → 直接展开导入确认（少一层寻找成本）
+  useEffect(() => {
+    if (open && focusImport) setConfirmImportOpen(true);
+  }, [open, focusImport]);
+
+  // v2.3.2：空白工作区不允许「另存为」—— 否则会导出一份空项目，
+  // 之后拿它恢复当然还是空的，用户会以为「恢复功能坏了」。
+  const currentScenario = project.scenarios.find((s) => s.id === currentScenarioId) ?? project.scenarios[0];
+  const hasData = (currentScenario?.departments.length ?? 0) > 0;
 
   if (!open) return null;
 
@@ -278,12 +294,17 @@ export function ProjectModal({
           <section>
             <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">项目文件 (.orgproj)</h3>
             <p className="text-xs text-slate-400 mb-3">
-              保存为 .orgproj 项目文件（含全部场景 / 职级 / 编制成本 / 配色），便于备份与分享。
+              保存为 .orgproj 项目文件（含全部场景 / 部门 / 岗位编制 / 职级 / 评分 / 任职记录），便于换机、重装与分享。
+              <span className="block mt-1 text-slate-500">
+                注意：它与左侧「数据备份 (.orgproj)」是同一个动作 —— <strong className="font-medium">只写文件，不产生下面的历史快照</strong>。
+              </span>
             </p>
             <div className="grid grid-cols-2 gap-3">
               <button
                 onClick={onExport}
-                className="flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors shadow-sm"
+                disabled={!hasData}
+                title={hasData ? '另存为 .orgproj（文件名自动带时间戳）' : '当前工作区没有部门，导出会得到一份空项目'}
+                className="flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-500 text-white rounded-xl hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
               >
                 <FileDown className="w-4 h-4" />
                 另存为 .orgproj

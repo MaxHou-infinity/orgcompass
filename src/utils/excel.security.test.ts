@@ -76,21 +76,30 @@ describe('Excel 导入输入加固（SEC-1..7）', () => {
   });
 
   it('SEC-3 缺必填列 → missing-columns，message 可行动且含缺失列', async () => {
-    const aoa = [['工号', '职级'], ['E001', 'L3.2']]; // 缺 姓名 / 一级部门
+    const aoa = [['工号', '职级'], ['E001', 'L3.2']]; // 缺唯一的必填列 姓名
     const buf = buildWorkbookBytes(aoa);
     const file = new File([buf], '员工.xlsx');
 
     await expect(parseEmployeeExcel(file)).rejects.toMatchObject({
       kind: 'missing-columns',
-      missingColumns: ['姓名', '一级部门'],
+      missingColumns: ['姓名'],
     });
 
     const err = await parseEmployeeExcel(file).catch((e) => e) as ExcelImportError;
     expect(err).toBeInstanceOf(ExcelImportError);
     expect(err.kind).toBe('missing-columns');
     expect(err.message).toContain('姓名');
-    expect(err.message).toContain('一级部门');
     expect(err.message).toMatch(/请对照示例模板补充表头/);
+  });
+
+  it('SEC-3b v2.3.2：一级部门不再是必填列 —— 整列缺失仍可导入，员工进「未入架构员工」', async () => {
+    const aoa = [['姓名', '工号'], ['张三', 'E001'], ['李四', 'E002']];
+    const file = new File([buildWorkbookBytes(aoa)], '只有姓名的名册.xlsx');
+
+    const { employees } = await parseEmployeeExcel(file);
+    expect(employees.map((e) => e.name)).toEqual(['张三', '李四']);
+    // 无部门列 → 不生成任何部门节点（他们会被画布的「未入架构员工」接住，而不是静默消失）
+    expect(buildDepartmentTree(employees, [])).toEqual([]);
   });
 
   it('SEC-4 空表 / 仅表头无数据 → empty，不静默生成空树', async () => {
@@ -155,8 +164,8 @@ describe('Excel 导入输入加固（SEC-1..7）', () => {
 
     // .xls 扩展名被允许，内容仍可解析
     const xlsFile = new File([buf], '员工.xls');
-    const emps = await parseEmployeeExcel(xlsFile as File);
-    expect(emps[0].name).toBe('张三');
+    const { employees } = await parseEmployeeExcel(xlsFile as File);
+    expect(employees[0].name).toBe('张三');
   });
 
   it('SEC-7 回归一致性：同一份样例经 parseExcelFromBuffer → 字段映射与升级前一致', async () => {
@@ -181,8 +190,8 @@ describe('Excel 导入输入加固（SEC-1..7）', () => {
       dept2: '研发组',
       dept3: '前端组',
     });
-    // 空职级 → NA；空岗位 → NA
-    expect(emps[1]).toMatchObject({ title: 'NA' });
+    // 空职级 → NA（数据侧哨兵值不变）；空岗位 → 不再落 'NA'（v2.3.2：空 = 不显示 + 不套岗）
+    expect(emps[1].title).toBeUndefined();
     expect(emps[2]).toMatchObject({ level: 'NA', title: '经理' });
     // 无部门列 → 空字符串（不产生 undefined 脏值）
     expect(emps[3]).toMatchObject({ dept1: '', dept2: '', dept3: '' });

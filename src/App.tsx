@@ -21,13 +21,15 @@ import { CompetencyDetailModal } from './components/CompetencyDetailModal';
 import { CompetencyModelModal } from './components/CompetencyModelModal';
 import { GapListModal } from './components/GapListModal';
 import { computeUnassignedEmployees } from './utils/analytics';
+import { computeLevelGaps } from './utils/deptLevel';
+import { findUnconfiguredLevels } from './utils/levels';
 import { SearchHighlight } from './components/SearchContext';
 import { Employee, Department, OrgTemplate, Position, Assessment, COMPETENCY_SCALE, LeaderType } from './types';
 import { expandDepartments, SearchMatch } from './utils/search';
 import { computePositionSummary } from './utils/analytics';
 import { computeMatchStates } from './utils/match';
 import { flattenAllPositions } from './components/positionUtils';
-import { uid, decodeStoredProject, PROJECT_STORAGE_KEY, listProjectBackups } from './utils/project';
+import { uid, decodeStoredProject, PROJECT_STORAGE_KEY, listProjectBackups, orgprojFileName, summarizeProjectJson } from './utils/project';
 import { assignPrimary, indexPlacements, inspectPlacements, seedLegacyAssignments } from './utils/placement';
 import { moveEmployeesBetween } from './utils/departments';
 import { findIndustryTemplate, loadIndustryTemplate } from './utils/industryTemplates';
@@ -37,6 +39,9 @@ import {
   parseAssessmentExcel,
   resolveAssessmentEmployees,
   buildDepartmentTree,
+  mergeOrgTemplates,
+  pruneTemplateOnlyEmptyDepts,
+  inheritPositionSetup,
   exportToExcel,
   generateSampleEmployeeTemplate,
   generateSampleOrgTemplate,
@@ -159,6 +164,7 @@ export default function App() {
     restoreProjectBackup,
     resetWorkspace,
     project,
+    setOrgTemplates,
     currentScenario,
     importWorkspace,
     loadIssue,
@@ -168,7 +174,7 @@ export default function App() {
   } = ws;
 
   const [pendingImport, setPendingImport] = useState<{
-    name: string; departments: Department[]; employees: Employee[]; templates?: OrgTemplate[]; scenarioId: string;
+    name: string; departments: Department[]; employees: Employee[]; notes: string[]; scenarioId: string;
   } | null>(null);
   const [pendingAction, setPendingAction] = useState<{ title: string; description: string; apply: () => void; scenarioId: string } | null>(null);
   const [issuesOpen, setIssuesOpen] = useState(false);
@@ -176,6 +182,8 @@ export default function App() {
   const [healthOpen, setHealthOpen] = useState(false);
   const [healthFocusDeptId, setHealthFocusDeptId] = useState<string | undefined>();
   const [projectModalOpen, setProjectModalOpen] = useState(false);
+  /** v2.3.2：从侧栏「从 .orgproj 恢复」进入时，直接展开导入确认区 */
+  const [projectModalFocusImport, setProjectModalFocusImport] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   // v2.0.9：场景差异比较 + 管理层报告（运行时派生，不新增持久化字段）
   const [scenarioDiffOpen, setScenarioDiffOpen] = useState(false);
@@ -196,8 +204,11 @@ export default function App() {
   const [modelOpen, setModelOpen] = useState(false);
   /** v2.3 M4：岗位缺口清单（当前场景直读） */
   const [gapListOpen, setGapListOpen] = useState(false);
-  // v2.0.3 修复：保存"当前组织架构模板"，员工上传时用它重建以保留模板负责人/层级结构
-  const [orgTemplates, setOrgTemplates] = useState<OrgTemplate[]>([]);
+  // v2.0.3：保存"当前组织架构模板"，员工上传时用它重建以保留模板负责人/层级结构。
+  // v2.3.2：**改为工作区级持久化**（project.orgTemplates）——旧实现只在内存里，
+  // 关闭应用即丢失，导致补充层的空部门与负责人静默消失。同时语义收窄为「补充层」：
+  // 只补「无人的空部门」与「部门负责人」，不再承担重建整棵树。
+  const orgTemplates = useMemo(() => project.orgTemplates ?? [], [project.orgTemplates]);
   const canvasRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
   // v2.0.5 修复：用 ref 读取最新 allEmployeesFlat / orgTemplates，避免导入 handler 闭包捕获旧值（模板载入后导入不快/不刷新的根因）
@@ -284,44 +295,120 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKey);
   }, [undo, redo]);
 
-  const stageImport = useCallback((name: string, tree: Department[], employees: Employee[], templates?: OrgTemplate[]) => {
+  /**
+   * 导入诊断摘要（v2.3.2）：把「这次到底发生了什么」一次说清。
+   * 旧实现只报一句「已导入」，于是「5 个人没部门」「部门层级断档」这类事实全靠用户自己发现。
+   */
+  const buildImportNotes = useCallback((tree: Department[], employees: Employee[], extra: string[]): string[] => {
+    const notes: string[] = [];
+    const unassigned = computeUnassignedEmployees(employees, tree).length;
+    if (unassigned > 0) notes.push(`${unassigned} 人未分配到部门`);
+    const gaps = computeLevelGaps(tree).size;
+    if (gaps > 0) notes.push(`${gaps} 个部门层级断档（画布已用虚线标出）`);
+    /*
+     * v2.3.2：职级不在配置中的人必须当场说清。
+     * 此前是静默降级：卡片灰色、成本按 0 计、职级分布单独分档，用户只会觉得"数字不对"。
+     */
+    const missingLevels = findUnconfiguredLevels(employees, levelConfigs);
+    if (missingLevels.length > 0) {
+      const total = missingLevels.reduce((n, m) => n + m.count, 0);
+      const shown = missingLevels.slice(0, 3).map((m) => m.level).join('、');
+      notes.push(
+        `${total} 人的职级不在配置中（${shown}${missingLevels.length > 3 ? ' 等' : ''}）：颜色按灰色兜底、成本按 0 计`,
+      );
+    }
+    return [...notes, ...extra];
+  }, [levelConfigs]);
+
+  const stageImport = useCallback((name: string, tree: Department[], employees: Employee[], notes: string[] = []) => {
     if (currentSceneRef.current !== project.currentScenarioId) { showToast('读取期间场景已变化，请重新导入'); return; }
     if (!employees.length && !tree.length) { showToast('文件无有效数据，当前场景未改变'); return; }
+    const suffix = notes.length > 0 ? `（${notes.join('；')}）` : '';
     const apply = () => {
       if (!importWorkspace(name, tree, employees)) { showToast('保存失败，导入未应用'); return; }
-      setOrgTemplates(templates ?? []);
-      showToast(`已导入「${name}」，原场景已保留`);
+      showToast(`已导入「${name}」${suffix}，原场景已保留`);
     };
     if (departments.length || allEmployeesFlat.length || assessments.length || positionAssignments.length) {
-      setPendingImport({ name, departments: tree, employees, templates, scenarioId: project.currentScenarioId });
+      setPendingImport({ name, departments: tree, employees, notes, scenarioId: project.currentScenarioId });
     } else apply();
   }, [departments.length, allEmployeesFlat.length, assessments.length, positionAssignments.length, importWorkspace, project.currentScenarioId, showToast]);
 
-  /** —— 文件操作 —— */
+  /**
+   * 员工信息表 = **画布主结构来源**（v2.3.2）。
+   *
+   * 三个阶段：
+   * ① 员工表 → 主结构（部门列按「列位置 = 层级」声明）；
+   * ② 已保存的组织架构模板 → 补充层（补无人的空部门 + 补部门负责人），不重建员工结构；
+   * ③ 从当前画布继承岗位配置（编制/序列/职级带宽/状态）—— 修复「重导入把编制清零」。
+   */
   const handleEmployeeFileUpload = useCallback(async (file: File) => {
     try {
-      const parsedEmployees = await parseEmployeeExcel(file);
-      // 用已保存的组织模板（若有）重建，保留模板的部门层级与负责人结构
-      const tree = buildDepartmentTree(parsedEmployees, orgTemplatesRef.current);
-      stageImport(file.name, tree, parsedEmployees, orgTemplatesRef.current);
+      const parsed = await parseEmployeeExcel(file);
+      const base = buildDepartmentTree(parsed.employees, []);
+      const merged = mergeOrgTemplates(base, orgTemplatesRef.current);
+      const inherited = inheritPositionSetup(merged.departments, departments);
+
+      const extra: string[] = [];
+      if (inherited.inherited > 0 || inherited.restored > 0) {
+        extra.push(`沿用 ${inherited.inherited} 个岗位的编制配置${inherited.restored > 0 ? `、保留 ${inherited.restored} 个名册未提及的岗位` : ''}`);
+      }
+      if (merged.addedPaths.length > 0) extra.push(`组织架构模板补充 ${merged.addedPaths.length} 个空部门`);
+      if (merged.warnings.length > 0) extra.push(`组织架构模板有 ${merged.warnings.length} 处提示（重传模板可查看）`);
+      // v2.3.2：岗位两列并存且取值不一致时不静默 —— 明确告知以哪一列为准
+      if (parsed.positionConflicts > 0) extra.push(`${parsed.positionConflicts} 行「岗位/岗位名称」取值不一致，已按「岗位」为准`);
+      if (parsed.blankNameRows > 0) extra.push(`${parsed.blankNameRows} 行姓名为空`);
+
+      stageImport(
+        file.name, inherited.departments, parsed.employees,
+        buildImportNotes(inherited.departments, parsed.employees, extra),
+      );
     } catch (error) {
       console.error('解析员工文件失败:', error);
       showToast(getImportErrorMessage(error));
     }
-  }, [stageImport, showToast]);
+  }, [buildImportNotes, departments, stageImport, showToast]);
 
+  /**
+   * 组织架构模板 = **补充层**（v2.3.2）：只补「无人的空部门」+「部门负责人」。
+   *
+   * 旧实现用模板**重建整棵树**：岗位编制全部清零、评估数据一起被冲掉（这正是「模板不适配」的根因）。
+   * 现在改为**原地合并**，并且先展示影响再应用（沿用「重导先展示影响」的既有原则）；
+   * 重复上传按「可替换」处理：先收回上一份模板留下的空部门，再应用新模板，
+   * 结果恒为「员工表 + 新模板」而不是「员工表 + 旧模板 + 新模板」无限叠加。
+   */
   const handleOrgTemplateUpload = useCallback(async (file: File) => {
     try {
       const templates = await parseOrgTemplateExcel(file);
-      // 保存模板，供后续员工上传时重建结构
-      const employees = allEmployeesRef.current.map((e) => ({ ...e, positionId: undefined }));
-      const tree = buildDepartmentTree(employees, templates);
-      stageImport(file.name, tree, employees, templates);
+      const previous = orgTemplatesRef.current;
+      const pruned = pruneTemplateOnlyEmptyDepts(departments, previous);
+      const merged = mergeOrgTemplates(pruned.departments, templates);
+
+      const lines: string[] = [];
+      lines.push(`新增空部门 ${merged.addedPaths.length} 个${merged.addedPaths.length > 0 ? `：${merged.addedPaths.slice(0, 5).join('、')}${merged.addedPaths.length > 5 ? ' 等' : ''}` : ''}`);
+      lines.push(`写入负责人 ${merged.leaderDeptIds.length} 个部门`);
+      if (pruned.removedPaths.length > 0) {
+        lines.push(`收回上一份模板留下的空部门 ${pruned.removedPaths.length} 个：${pruned.removedPaths.slice(0, 5).join('、')}${pruned.removedPaths.length > 5 ? ' 等' : ''}`);
+      }
+      if (merged.warnings.length > 0) {
+        lines.push(`需确认 ${merged.warnings.length} 处：${merged.warnings.slice(0, 3).join('；')}${merged.warnings.length > 3 ? ' …' : ''}`);
+      }
+      lines.push('员工、岗位、编制、评分与任职记录均不受影响。');
+
+      setPendingAction({
+        title: '应用组织架构模板（补充层）',
+        description: lines.join('\n'),
+        scenarioId: project.currentScenarioId,
+        apply: () => {
+          setDepartments(() => merged.departments);
+          setOrgTemplates(templates);
+          showToast(`已应用「${file.name}」：新增 ${merged.addedPaths.length} 个空部门，写入 ${merged.leaderDeptIds.length} 个负责人`);
+        },
+      });
     } catch (error) {
       console.error('解析组织架构文件失败:', error);
       showToast(getImportErrorMessage(error));
     }
-  }, [stageImport, showToast]);
+  }, [departments, project.currentScenarioId, setDepartments, setOrgTemplates, showToast]);
 
   /** —— 部门/员工操作（历史感知） —— */
   const handleToggleExpand = useCallback((id: string) => {
@@ -718,15 +805,20 @@ export default function App() {
     setSearchHighlight(EMPTY_HIGHLIGHT);
   }, []);
 
-  /** 载入内置行业模板（v2.0.3 P1-4） */
+  /**
+   * 载入内置行业模板（v2.0.3 P1-4）。
+   * v2.3.2：行业模板是**一次性演示数据**，不再写入工作区的「组织架构模板」补充层 ——
+   * 否则用户看完美例再上传自己的名册时，演示模板的部门与负责人会被当成补充层混进真实数据里。
+   */
   const handleLoadIndustryTemplate = useCallback(
     (id: string) => {
       const tpl = findIndustryTemplate(id);
       if (!tpl) return;
       const built = loadIndustryTemplate(tpl);
-      stageImport(tpl.name, built.departments, built.allEmployeesFlat, tpl.orgTemplates);
+      stageImport(tpl.name, built.departments, built.allEmployeesFlat,
+        buildImportNotes(built.departments, built.allEmployeesFlat, []));
     },
-    [stageImport],
+    [buildImportNotes, stageImport],
   );
 
   const handleDeleteEmployee = useCallback((deptId: string, empId: string) => {
@@ -970,28 +1062,50 @@ export default function App() {
       dept5: e.dept5,
       dept6: e.dept6,
     }));
-    stageImport('示例数据', buildDepartmentTree(employees, TEST_ORG), employees, TEST_ORG);
-  }, [stageImport]);
+    const tree = buildDepartmentTree(employees, TEST_ORG);
+    stageImport('示例数据', tree, employees, buildImportNotes(tree, employees, []));
+  }, [buildImportNotes, stageImport]);
 
   // 数据备份（导出 .orgproj）
+  // v2.3.2：文件名带时间戳 —— 旧实现固定叫「组织架构项目.orgproj」，多次备份互相覆盖且无法分辨。
   const handleExportProject = useCallback(async () => {
     try {
       const json = exportProjectJson();
-      const ok = await saveTextFile('组织架构项目.orgproj', json, 'application/json');
-      showToast(ok ? '已导出 .orgproj 项目文件' : '已取消导出');
+      const name = orgprojFileName();
+      const ok = await saveTextFile(name, json, 'application/json');
+      showToast(ok ? `已导出 ${name}` : '已取消导出');
     } catch (error) {
       console.error('导出项目文件失败:', error);
       showToast('导出项目文件失败');
     }
   }, [exportProjectJson, showToast]);
 
-  // 导入 .orgproj
+  /**
+   * 恢复 .orgproj（v2.3.2）。
+   *
+   * 旧实现只弹一句「已导入项目文件」，用户看不出到底恢复了什么；
+   * 现在先把文件内容概览出来（场景/部门/员工/岗位），再替换工作区，
+   * 失败时明确说明「原工作区未改变」。
+   */
   const handleImportProject = useCallback((json: string) => {
     try {
+      const summary = summarizeProjectJson(json);
+      if (!summary) { showToast('恢复失败：文件不是有效的 .orgproj 项目文件'); return; }
       const ok = importProjectJson(json);
-      showToast(ok ? '已导入项目文件（原工作区已留快照，可在项目管理中恢复）' : '导入失败：文件格式无效或保存失败');
+      if (!ok) { showToast('恢复失败：文件无法写入本机存储，原工作区未改变'); return; }
+      setProjectModalOpen(false);
+      showToast(
+        `已恢复「${summary.name}」：${summary.scenarioCount} 个场景 · ${summary.departmentCount} 个部门 · ` +
+        `${summary.employeeCount} 名员工 · ${summary.positionCount} 个岗位（原工作区已留快照）`,
+      );
     } catch (error) { showToast(error instanceof Error ? error.message : '项目读取失败'); }
   }, [importProjectJson, showToast]);
+
+  /** v2.3.2：侧栏「从 .orgproj 恢复」→ 直接打开项目管理并展开导入确认（备份与恢复必须挨着） */
+  const handleRestoreProject = useCallback(() => {
+    setProjectModalFocusImport(true);
+    setProjectModalOpen(true);
+  }, []);
 
   // v2.3.1（F-12）：从历史快照恢复
   const handleRestoreBackup = useCallback((key: string) => {
@@ -1418,13 +1532,14 @@ export default function App() {
         <button className="rounded-lg bg-indigo-600 px-3 py-2 text-white" onClick={() => {
           if (!pendingImport || pendingImport.scenarioId !== project.currentScenarioId) { setPendingImport(null); showToast('场景已变化，请重新导入'); return; }
           if (importWorkspace(pendingImport.name, pendingImport.departments, pendingImport.employees)) {
-            setOrgTemplates(pendingImport.templates ?? []); setPendingImport(null); showToast('已导入新场景，原场景已完整保留');
+            setPendingImport(null); showToast('已导入新场景，原场景已完整保留');
           } else showToast('保存失败，导入未应用');
         }}>保留原场景并导入</button>
       </>}>
         {pendingImport && <div className="space-y-3 text-sm text-slate-700">
           <p>文件/模板：{pendingImport.name}</p>
           <p>新场景：{pendingImport.employees.filter((e) => !e.isVirtual).length} 名员工，{indexPlacements(pendingImport.departments).departments.size} 个部门，{indexPlacements(pendingImport.departments).positions.size} 个岗位。</p>
+          {pendingImport.notes.length > 0 && <p role="status">导入提示：{pendingImport.notes.join('；')}。</p>}
           <p>原场景「{currentScenario.name}」的 {allEmployeesFlat.filter((e) => !e.isVirtual).length} 名员工、{assessments.length} 条评分和 {positionAssignments.length} 条关系/确认记录全部保留。</p>
           <p>新场景复用模型和职级配置；不复制原人员的评分、任职与确认。导入日期不作为到岗日期。</p>
           {inspectPlacements(pendingImport.employees, pendingImport.departments).length > 0 && <p role="alert">新数据存在人岗关联问题，导入后需核对：{inspectPlacements(pendingImport.employees, pendingImport.departments).slice(0, 5).join('；')}</p>}
@@ -1437,7 +1552,7 @@ export default function App() {
           else showToast('场景已变化，请重新操作');
           setPendingAction(null);
         }}>确认执行</button>
-      </>}><p className="text-sm text-slate-700">{pendingAction?.description}</p></AppModal>
+      </>}><p className="text-sm text-slate-700 whitespace-pre-line">{pendingAction?.description}</p></AppModal>
       <TopBar
         projectName={project.name}
         scenarios={project.scenarios}
@@ -1483,10 +1598,11 @@ export default function App() {
           onOpenHealth={handleOpenHealth}
           onOpenReport={handleOpenReport}
           onExportProject={handleExportProject}
+          onRestoreProject={handleRestoreProject}
           departments={departments}
           hasData={departments.length > 0}
           hasEmployees={allEmployeesFlat.length > 0}
-          hasOrgTemplate={departments.length > 0}
+          hasOrgTemplate={orgTemplates.length > 0}
           onRefreshCanvas={handleRefreshCanvas}
         />
 
@@ -1549,7 +1665,11 @@ export default function App() {
         </div>
       )}
 
-      <LevelManagerModal open={levelManagerOpen} onClose={() => setLevelManagerOpen(false)} />
+      <LevelManagerModal
+        open={levelManagerOpen}
+        onClose={() => setLevelManagerOpen(false)}
+        allEmployees={allEmployeesFlat}
+      />
 
       <HealthDrawer
         open={healthOpen}
@@ -1569,7 +1689,7 @@ export default function App() {
 
       <ProjectModal
         open={projectModalOpen}
-        onClose={() => setProjectModalOpen(false)}
+        onClose={() => { setProjectModalOpen(false); setProjectModalFocusImport(false); }}
         project={project}
         currentScenarioId={project.currentScenarioId}
         onRenameProject={renameProject}
@@ -1582,6 +1702,7 @@ export default function App() {
         onExport={handleExportProject}
         onListBackups={listProjectBackups}
         onRestoreBackup={handleRestoreBackup}
+        focusImport={projectModalFocusImport}
       />
 
       <DiagnosticReport

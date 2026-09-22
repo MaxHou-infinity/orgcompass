@@ -405,15 +405,46 @@ describe('v2.0.9 .orgproj 往返一致守卫', () => {
         assessments: [],
         positionAssignments: [],
       }],
+      // v2.3.2：职级配置真值在工作区级（场景里那份是兼容镜像，两者内容一致）
+      levelConfigs: [{ code: 'L', number: '1.1', label: '初级', color: '#FFCC99', cost: 2 }],
       meta: { createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z', version: PROJECT_VERSION },
     };
   }
 
-  it('parse(serialize(p)) 深等于 p（数据模型零改动，.orgproj 向后兼容）', () => {
+  it('parse(serialize(p)) 深等于 p（.orgproj 往返不丢字段、不变形）', () => {
     const p = richProject();
     const roundTripped = parseProject(serializeProject(p));
     expect(roundTripped).not.toBeNull();
     expect(roundTripped).toEqual(p);
+  });
+
+  /**
+   * v2.3.2：职级配置提升为**工作区级**（颜色/标签/成本不随演练场景切换而变）。
+   * 旧文件没有 `ProjectFile.levelConfigs`，必须从当前场景抬上来 —— 不能退回默认配色把用户的自定义弄丢。
+   */
+  it('旧文件（无工作区级 levelConfigs）→ 从当前场景迁移上来，配色与成本不丢', () => {
+    const legacy = richProject();
+    delete (legacy as unknown as Record<string, unknown>).levelConfigs;
+    const legacyJson = JSON.stringify(legacy);
+    expect(legacyJson).not.toContain('"levelConfigs":[{"code":"L","number":"1.1","label":"初级","color":"#FFCC99","cost":2}]},"scenarios"');
+
+    const parsed = parseProject(legacyJson)!;
+    expect(parsed.levelConfigs).toEqual([{ code: 'L', number: '1.1', label: '初级', color: '#FFCC99', cost: 2 }]);
+  });
+
+  it('迁移按「当前场景」取值（多场景时不用错场景的配置）', () => {
+    const p = richProject();
+    delete (p as unknown as Record<string, unknown>).levelConfigs;
+    p.scenarios.push({
+      ...p.scenarios[0],
+      id: 'scene-2',
+      name: '方案B',
+      levelConfigs: [{ code: 'E', number: '3.1', label: '专家', color: '#00AA88', cost: 5 }],
+    });
+    p.currentScenarioId = 'scene-2';
+    expect(parseProject(JSON.stringify(p))!.levelConfigs).toEqual([
+      { code: 'E', number: '3.1', label: '专家', color: '#00AA88', cost: 5 },
+    ]);
   });
 
   it('往返后 computeL2 口径分析结果一致（breakdown 为运行时派生，不写入持久化结构）', () => {
