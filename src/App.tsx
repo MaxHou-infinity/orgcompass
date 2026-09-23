@@ -6,32 +6,34 @@ import { Sidebar } from './components/Sidebar';
 import { OrgChart } from './components/OrgChart';
 import { TopBar } from './components/TopBar';
 import { LevelManagerModal } from './components/LevelManagerModal';
-import { HealthDrawer } from './components/HealthDrawer';
+import { HealthPage } from './components/HealthDrawer';
 import { ProjectModal } from './components/ProjectModal';
 import { DiagnosticReport } from './components/DiagnosticReport';
 import { ScenarioDiffView } from './components/ScenarioDiffView';
 import { ManagementReport } from './components/ManagementReport';
 import { SearchModal } from './components/SearchModal';
-import { PositionOpsModal } from './components/PositionOpsModal';
+import { PositionBoardPage } from './components/PositionBoardPage';
+import type { PositionCreateFields } from './components/PositionModal';
+import { TemplatePreviewModal } from './components/TemplatePreviewModal';
+import { VirtualAssignmentModal, type VirtualAssignmentDraft, type VirtualAssignmentResult } from './components/VirtualAssignmentModal';
 import { OnboardingOverlay } from './components/OnboardingOverlay';
 import { UnassignedEmployeesDrawer } from './components/UnassignedEmployeesDrawer';
-import { CompetencyDrawer } from './components/CompetencyDrawer';
+import { CompetencyPage } from './components/CompetencyDrawer';
 import { BatchAssessmentModal, NewAssessment } from './components/BatchAssessmentModal';
 import { CompetencyDetailModal } from './components/CompetencyDetailModal';
 import { CompetencyModelModal } from './components/CompetencyModelModal';
-import { GapListModal } from './components/GapListModal';
 import { computeUnassignedEmployees } from './utils/analytics';
 import { computeLevelGaps } from './utils/deptLevel';
 import { findUnconfiguredLevels } from './utils/levels';
 import { SearchHighlight } from './components/SearchContext';
-import { Employee, Department, OrgTemplate, Position, Assessment, COMPETENCY_SCALE, LeaderType } from './types';
+import { Employee, Department, Position, Assessment, COMPETENCY_SCALE, LeaderType } from './types';
 import { expandDepartments, SearchMatch } from './utils/search';
 import { computePositionSummary } from './utils/analytics';
 import { computeMatchStates } from './utils/match';
 import { flattenAllPositions } from './components/positionUtils';
 import { uid, decodeStoredProject, PROJECT_STORAGE_KEY, listProjectBackups, orgprojFileName, summarizeProjectJson } from './utils/project';
 import { assignPrimary, indexPlacements, inspectPlacements, seedLegacyAssignments } from './utils/placement';
-import { moveEmployeesBetween } from './utils/departments';
+import { moveEmployeesBetween, findDeptById, findEmployeeDept, checkDeptDeletion, removeDepartment, validateParent } from './utils/departments';
 import { findIndustryTemplate, loadIndustryTemplate } from './utils/industryTemplates';
 import {
   parseEmployeeExcel,
@@ -70,32 +72,6 @@ import { saveTextFile, saveFile } from './utils/tauri';
 import { useOrgWorkspace } from './utils/useOrgWorkspace';
 
 const EMPTY_HIGHLIGHT: SearchHighlight = { deptIds: new Set(), empIds: new Set() };
-
-// 测试数据
-const TEST_EMPLOYEES = [
-  { name: '张三', employeeId: 'E001', level: 'L1.1', dept1: '技术部', dept2: '研发组', dept3: '后端', dept4: '', dept5: '', dept6: '' },
-  { name: '李四', employeeId: 'E002', level: 'L2.1', dept1: '技术部', dept2: '研发组', dept3: '后端', dept4: '', dept5: '', dept6: '' },
-  { name: '王五', employeeId: 'E003', level: 'L3.1', dept1: '技术部', dept2: '研发组', dept3: '前端', dept4: '', dept5: '', dept6: '' },
-  { name: '赵六', employeeId: 'E004', level: 'L1.2', dept1: '技术部', dept2: '测试组', dept3: '功能测试', dept4: '', dept5: '', dept6: '' },
-  { name: '钱七', employeeId: 'E005', level: 'L2.2', dept1: '技术部', dept2: '测试组', dept3: '自动化测试', dept4: '', dept5: '', dept6: '' },
-  { name: '孙八', employeeId: 'E006', level: 'L3.2', dept1: '技术部', dept2: '运维组', dept3: '运维', dept4: '', dept5: '', dept6: '' },
-  { name: '周九', employeeId: 'E007', level: 'E3.1', dept1: '销售部', dept2: '华东区', dept3: '', dept4: '', dept5: '', dept6: '' },
-  { name: '吴十', employeeId: 'E008', level: 'E3.2', dept1: '销售部', dept2: '华北区', dept3: '', dept4: '', dept5: '', dept6: '' },
-  { name: '郑十一', employeeId: 'E009', level: 'L4.1', dept1: '销售部', dept2: '华南区', dept3: '', dept4: '', dept5: '', dept6: '' },
-  { name: '陈十二', employeeId: 'E010', level: 'L5', dept1: '人力资源部', dept2: '招聘组', dept3: '', dept4: '', dept5: '', dept6: '' },
-];
-
-const TEST_ORG: OrgTemplate[] = [
-  { dept1: '技术部', dept2: '研发组', dept3: '后端', dept4: '', dept5: '', dept6: '', deptLevel: '1', leaderId: 'E001', leaderName: '张三' },
-  { dept1: '技术部', dept2: '研发组', dept3: '前端', dept4: '', dept5: '', dept6: '', deptLevel: '2', leaderId: 'E003', leaderName: '王五' },
-  { dept1: '技术部', dept2: '测试组', dept3: '功能测试', dept4: '', dept5: '', dept6: '', deptLevel: '2', leaderId: 'E004', leaderName: '赵六' },
-  { dept1: '技术部', dept2: '测试组', dept3: '自动化测试', dept4: '', dept5: '', dept6: '', deptLevel: '2', leaderId: 'E005', leaderName: '钱七' },
-  { dept1: '技术部', dept2: '运维组', dept3: '运维', dept4: '', dept5: '', dept6: '', deptLevel: '2', leaderId: 'E006', leaderName: '孙八' },
-  { dept1: '销售部', dept2: '华东区', dept3: '', dept4: '', dept5: '', dept6: '', deptLevel: '2', leaderId: 'E007', leaderName: '周九' },
-  { dept1: '销售部', dept2: '华北区', dept3: '', dept4: '', dept5: '', dept6: '', deptLevel: '2', leaderId: 'E008', leaderName: '吴十' },
-  { dept1: '销售部', dept2: '华南区', dept3: '', dept4: '', dept5: '', dept6: '', deptLevel: '2', leaderId: 'E009', leaderName: '郑十一' },
-  { dept1: '人力资源部', dept2: '招聘组', dept3: '', dept4: '', dept5: '', dept6: '', deptLevel: '1', leaderId: 'E010', leaderName: '陈十二' },
-];
 
 // 查找部门辅助函数（模块级纯函数，不依赖组件状态）
 function findDept(depts: Department[], id: string): Department | null {
@@ -177,13 +153,27 @@ export default function App() {
     name: string; departments: Department[]; employees: Employee[]; notes: string[]; scenarioId: string;
   } | null>(null);
   const [pendingAction, setPendingAction] = useState<{ title: string; description: string; apply: () => void; scenarioId: string } | null>(null);
-  const [issuesOpen, setIssuesOpen] = useState(false);
   const [levelManagerOpen, setLevelManagerOpen] = useState(false);
-  const [healthOpen, setHealthOpen] = useState(false);
   const [healthFocusDeptId, setHealthFocusDeptId] = useState<string | undefined>();
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   /** v2.3.2：从侧栏「从 .orgproj 恢复」进入时，直接展开导入确认区 */
   const [projectModalFocusImport, setProjectModalFocusImport] = useState(false);
+  /** V2.4.0：「行业模板」已并入「载入示例数据」——点它打开模板选择器，不再有两个重复入口 */
+  const [samplePickerOpen, setSamplePickerOpen] = useState(false);
+  /** V2.4.0：创建虚拟员工（兼岗）流程的入口草稿 */
+  const [virtualDraft, setVirtualDraft] = useState<VirtualAssignmentDraft | null>(null);
+  /** V2.4.0：「岗位与编制」页面级子界面（合并原「岗位操作」弹窗与「缺口清单」弹窗） */
+  /**
+   * V2.4.0：三个「页面级子界面」共用同一个视图开关。
+   *
+   * 为什么要统一：用户要求「组织健康度」与「胜任度」与「岗位与编制」保持一致的子页面交互
+   * （而不是抽屉弹窗）。一个状态位保证**同时最多只有一个子界面**，
+   * 并且在三者之间切换时不会出现叠加或残留。
+   */
+  const [view, setView] = useState<'canvas' | 'positionBoard' | 'health' | 'competency'>('canvas');
+  const boardOpen = view === 'positionBoard';
+  /** V2.4.0：删除部门被前置条件挡住时的提示（员工 / 子部门未清空） */
+  const [deptDeleteBlocked, setDeptDeleteBlocked] = useState<{ title: string; message: string } | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
   // v2.0.9：场景差异比较 + 管理层报告（运行时派生，不新增持久化字段）
   const [scenarioDiffOpen, setScenarioDiffOpen] = useState(false);
@@ -196,14 +186,11 @@ export default function App() {
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [unassignedOpen, setUnassignedOpen] = useState(false);
   // v2.1.1：岗位操作弹窗（顶部菜单「岗位」入口）
-  const [positionOpsOpen, setPositionOpsOpen] = useState(false);
   // —— v2.2.0 胜任度：看板抽屉 / 批量评估 / 详情 / 维度配置 ——
-  const [competencyOpen, setCompetencyOpen] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
   const [detailEmpId, setDetailEmpId] = useState<string | null>(null);
   const [modelOpen, setModelOpen] = useState(false);
   /** v2.3 M4：岗位缺口清单（当前场景直读） */
-  const [gapListOpen, setGapListOpen] = useState(false);
   // v2.0.3：保存"当前组织架构模板"，员工上传时用它重建以保留模板负责人/层级结构。
   // v2.3.2：**改为工作区级持久化**（project.orgTemplates）——旧实现只在内存里，
   // 关闭应用即丢失，导致补充层的空部门与负责人静默消失。同时语义收窄为「补充层」：
@@ -681,6 +668,34 @@ export default function App() {
     [setDepartments, showToast],
   );
 
+  /** V2.4.0：编辑岗位字段（名称/序列/职级带宽）——「岗位与编制」页面的行内编辑用。 */
+  const handleUpdatePosition = useCallback(
+    (deptId: string, positionId: string, fields: PositionCreateFields) => {
+      const trimmed = fields.name?.trim();
+      if (!trimmed) { showToast('岗位名称不能为空'); return; }
+      let hit = false;
+      setDepartments((prev) => {
+        const update = (depts: Department[]): Department[] => depts.map((d) => {
+          if (d.id === deptId) {
+            if (!(d.positions ?? []).some((p) => p.id === positionId)) return d;
+            hit = true;
+            return { ...d, positions: (d.positions ?? []).map((p) => p.id === positionId ? {
+              ...p, name: trimmed,
+              jobFamily: fields.jobFamily,
+              levelBandMin: fields.levelBandMin,
+              levelBandMax: fields.levelBandMax,
+              updatedAt: new Date().toISOString(),
+            } : p) };
+          }
+          return d.children.length > 0 ? { ...d, children: update(d.children) } : d;
+        });
+        return update(prev);
+      });
+      showToast(hit ? `已更新岗位「${trimmed}」` : '岗位不存在，未做修改');
+    },
+    [setDepartments, showToast],
+  );
+
   /** 设置岗位编制（headcount<=0 → 视为无编制）。 */
   const handleSetPositionHeadcount = useCallback(
     (deptId: string, positionId: string, headcount: number) => {
@@ -721,33 +736,6 @@ export default function App() {
         allEmployeesFlat: prev.allEmployeesFlat.map(patch),
       }));
       showToast('已取消套岗');
-    },
-    [setBoth, showToast],
-  );
-
-  /** 为某岗位创建「兼岗」虚拟副本（回指真人员工 primaryEmployeeId）。 */
-  const handleCreateVirtualForPosition = useCallback(
-    (deptId: string, positionId: string, empId: string) => {
-      const source = allEmployeesRef.current.find((e) => e.id === empId && !e.isVirtual);
-      if (!source || allEmployeesRef.current.some((e) => e.isVirtual && e.primaryEmployeeId === empId && e.positionId === positionId)) return;
-      const virtual: Employee = {
-        ...source,
-        id: uid('virtual'),
-        isVirtual: true,
-        positionId,
-        assignmentType: 'secondary',
-        primaryEmployeeId: source.id,
-      };
-      setBoth((prev) => {
-        const add = (depts: Department[]): Department[] =>
-          depts.map((d) => {
-            if (d.id === deptId) return { ...d, employees: [...d.employees, virtual] };
-            if (d.children.length > 0) return { ...d, children: add(d.children) };
-            return d;
-          });
-        return { ...prev, departments: add(prev.departments), allEmployeesFlat: [...prev.allEmployeesFlat, virtual] };
-      });
-      showToast(`已为 ${source.name} 创建兼岗`);
     },
     [setBoth, showToast],
   );
@@ -893,22 +881,74 @@ export default function App() {
     });
   }, [setDepartments]);
 
+  /**
+   * V2.4.0：点「创建虚拟员工（兼岗）」只**打开流程弹窗**，不再直接落地。
+   *
+   * 旧实现直接在员工**现属部门**里建副本、且不给岗位 —— 结果是同一部门出现两次同一个人，
+   * 而那条兼岗没有岗位（缺口清单里算未套岗、任何岗位的在岗数也不计它）。
+   * 新流程要求：目标部门（≠ 现属部门）+ 目标岗位（必填，可顺手新建）。
+   */
   const handleCreateVirtualFromEmployee = useCallback((deptId: string, empId: string) => {
     const source = allEmployeesFlat.find((e) => e.id === empId && !e.isVirtual);
     if (!source) return;
-    const virtual: Employee = { ...source, id: uid('virtual'), isVirtual: true, primaryEmployeeId: source.id, positionId: undefined, assignmentType: 'secondary' };
-    setBoth((prev) => {
-      const add = (depts: Department[]): Department[] => {
-        return depts.map((dept) => {
-          if (dept.id === deptId) return { ...dept, employees: [...dept.employees, virtual] };
-          if (dept.children.length > 0) return { ...dept, children: add(dept.children) };
-          return dept;
-        });
+    setVirtualDraft({ employeeId: source.id, currentDeptId: deptId });
+  }, [allEmployeesFlat]);
+
+  /**
+   * V2.4.0：创建虚拟兼岗（**原子**）—— 必要时在同一次变更里先建岗位、再建虚拟副本并绑定。
+   * 拆成两次 setDepartments 会出现「岗位建好了但副本没绑上」的中间态，也会多出一条历史。
+   */
+  const handleConfirmVirtualAssignment = useCallback((result: VirtualAssignmentResult) => {
+    const source = allEmployeesFlat.find((e) => e.id === result.employeeId && !e.isVirtual);
+    if (!source) return;
+    const dept = findDeptById(departments, result.deptId);
+    if (!dept) { showToast('目标部门不存在，请重新选择'); return; }
+    // 产品规则：同一员工不会在同一部门出现两次。
+    // 这里从**部门树**现算一次（而不是信 UI 传来的值），保证即使入口变化也不会漏判。
+    const currentDept = findEmployeeDept(departments, source.id);
+    if (currentDept && currentDept.id === result.deptId) {
+      showToast('目标部门不能是本人现属部门'); return;
+    }
+    const now = new Date().toISOString();
+    let positionId = result.positionId;
+    let createdPosition: Position | undefined;
+    if (!positionId) {
+      const name = result.newPosition?.name?.trim();
+      if (!name) { showToast('请选择或新建目标岗位'); return; }
+      createdPosition = {
+        id: uid('pos'), departmentId: dept.id, name,
+        headcount: typeof result.newPosition?.headcount === 'number' && Number.isFinite(result.newPosition.headcount)
+          ? Math.max(0, Math.round(result.newPosition.headcount)) : 0,
+        status: 'active', createdAt: now, updatedAt: now,
       };
+      positionId = createdPosition.id;
+    } else if (!dept.positions?.some((p) => p.id === positionId)) {
+      showToast('目标岗位不属于该部门，请重新选择'); return;
+    }
+    // 去重：同一人 + 同一岗位已有兼岗副本则不再重复创建
+    if (allEmployeesFlat.some((e) => e.isVirtual && e.primaryEmployeeId === source.id && e.positionId === positionId)) {
+      showToast('该员工在此岗位已有兼岗记录'); return;
+    }
+    const virtual: Employee = {
+      ...source, id: uid('virtual'), isVirtual: true,
+      primaryEmployeeId: source.id, positionId, assignmentType: 'secondary',
+    };
+    const posName = createdPosition?.name ?? dept.positions?.find((p) => p.id === positionId)?.name ?? '';
+    setBoth((prev) => {
+      const add = (depts: Department[]): Department[] => depts.map((d) => {
+        if (d.id !== dept.id) {
+          return d.children.length > 0 ? { ...d, children: add(d.children) } : d;
+        }
+        return {
+          ...d,
+          positions: createdPosition ? [...(d.positions ?? []), createdPosition] : d.positions,
+          employees: [...d.employees, virtual],
+        };
+      });
       return { ...prev, departments: add(prev.departments), allEmployeesFlat: [...prev.allEmployeesFlat, virtual] };
     });
-    showToast(`已创建 ${source.name} 的兼岗`);
-  }, [allEmployeesFlat, setBoth, showToast]);
+    showToast(`已为 ${source.name} 在「${dept.name}」创建兼岗：${posName}`);
+  }, [allEmployeesFlat, departments, setBoth, showToast]);
 
   const handleExportPng = useCallback(async () => {
     if (!canvasRef.current) return;
@@ -966,6 +1006,14 @@ export default function App() {
 
   // 创建新部门
   const handleCreateDepartment = useCallback((name: string, level: number, parentId: string | null, leaderId?: string, leaderName?: string) => {
+    // V2.4.0：归属合法性在**逻辑层**再校验一次（界面已按层级过滤候选，
+    // 这里是第二道防线：拖拽/程序化调用/将来新增入口都不会绕过这条规则）。
+    const parent = parentId && parentId !== 'root' ? findDeptById(departments, parentId) : undefined;
+    const verdict = validateParent(parent, level);
+    if (!verdict.ok) {
+      showToast(verdict.message ?? '不得归属同级或下级部门');
+      return;
+    }
     const newDept: Department = {
       id: `dept-${Date.now()}`,
       name,
@@ -988,7 +1036,30 @@ export default function App() {
       };
       return addToParent(prev);
     });
-  }, [setDepartments]);
+  }, [departments, setDepartments, showToast]);
+
+  /**
+   * V2.4.0：删除部门。
+   *
+   * 用户规则：(a) 卡内没有成员 → 允许删除；(b) 仍挂载员工 → 不删，提示先把员工挪走。
+   * 补充的安全约束：还有子部门时也不删（否则整棵子树会被静默丢弃）。
+   * 阻塞时弹**说明弹窗**（不是 toast）—— 用户需要看到"卡里还有谁"才能决定怎么处理。
+   */
+  const handleDeleteDepartment = useCallback((deptId: string) => {
+    const dept = findDeptById(departments, deptId);
+    if (!dept) { showToast('部门不存在，可能已被删除'); return; }
+    const check = checkDeptDeletion(dept);
+    if (!check.ok) {
+      setDeptDeleteBlocked({ title: `无法删除部门「${dept.name}」`, message: check.message ?? '请先清空该部门' });
+      return;
+    }
+    setPendingAction({
+      title: '确认删除部门',
+      scenarioId: project.currentScenarioId,
+      description: `将删除空部门「${dept.name}」（L${dept.level}）。该部门没有成员、也没有子部门，删除后不影响任何人员与评分。`,
+      apply: () => setDepartments((prev) => removeDepartment(prev, deptId)),
+    });
+  }, [departments, project.currentScenarioId, setDepartments, showToast]);
 
   // 调整部门层级归属
   const handleChangeDepartmentLevel = useCallback((deptId: string, newLevel: number, newParentId: string | null) => {
@@ -1049,23 +1120,6 @@ export default function App() {
     }
   }, [resetWorkspace, showToast]);
 
-  const handleLoadTestData = useCallback(() => {
-    const employees: Employee[] = TEST_EMPLOYEES.map((e) => ({
-      id: e.employeeId,
-      name: e.name,
-      employeeId: e.employeeId,
-      level: e.level,
-      dept1: e.dept1,
-      dept2: e.dept2,
-      dept3: e.dept3,
-      dept4: e.dept4,
-      dept5: e.dept5,
-      dept6: e.dept6,
-    }));
-    const tree = buildDepartmentTree(employees, TEST_ORG);
-    stageImport('示例数据', tree, employees, buildImportNotes(tree, employees, []));
-  }, [buildImportNotes, stageImport]);
-
   // 数据备份（导出 .orgproj）
   // v2.3.2：文件名带时间戳 —— 旧实现固定叫「组织架构项目.orgproj」，多次备份互相覆盖且无法分辨。
   const handleExportProject = useCallback(async () => {
@@ -1117,14 +1171,10 @@ export default function App() {
 
   const handleOpenReport = useCallback(() => {
     flushCurrent();
-    setHealthOpen(false);
+    // 诊断报告是弹窗（它是一次性阅读物），打开前把子页面收回画布，避免"页面里再叠弹窗"
+    setView('canvas');
     setReportOpen(true);
   }, [flushCurrent]);
-
-  const handleOpenHealth = useCallback(() => {
-    setHealthFocusDeptId(undefined);
-    setHealthOpen(true);
-  }, []);
 
   // —— v2.2.0 胜任度接线 ——
 
@@ -1409,7 +1459,7 @@ export default function App() {
 
   /** 打开差异视图：flushCurrent 确保快照已落盘（S2 实时性）；基线 = 第一个场景，目标 = 当前场景。 */
   const handleOpenScenarioDiff = useCallback(() => {
-    setHealthOpen(false);
+    setView('canvas');
     flushCurrent();
     const first = project.scenarios[0];
     const baselineId = first?.id ?? '';
@@ -1520,13 +1570,10 @@ export default function App() {
 
   return (
     <div className="workspace-shell flex flex-col h-screen">
-      {(placementIssues.length > 0 || unresolvedOverflow.length > 0) && <button onClick={() => setIssuesOpen(true)}
-        className="shrink-0 bg-amber-50 border-b border-amber-200 px-5 py-2 text-left text-sm text-amber-900">
-        人岗核对：{placementIssues.length} 项数据问题 · {unresolvedOverflow.length} 个超额岗位待判断（查看明细）
-      </button>}
-      <AppModal open={issuesOpen} onClose={() => setIssuesOpen(false)} title="人岗核对明细">
-        <ul className="space-y-2 text-sm text-slate-700">{[...placementIssues, ...unresolvedOverflow].map((issue, i) => <li key={i}>{issue}</li>)}</ul>
-      </AppModal>
+      {/*
+        V2.4.0：原来这里常驻一条「人岗核对：N 项数据问题…」的琥珀色横幅。
+        用户要求：它属于组织健康的诊断信息，放到「组织健康度」子界面里，不要一直占着主页面顶部。
+      */}
       <AppModal open={pendingImport !== null} onClose={() => setPendingImport(null)} title="确认导入到新场景" footer={<>
         <button className="px-3 py-2" onClick={() => setPendingImport(null)}>取消</button>
         <button className="rounded-lg bg-indigo-600 px-3 py-2 text-white" onClick={() => {
@@ -1545,6 +1592,16 @@ export default function App() {
           {inspectPlacements(pendingImport.employees, pendingImport.departments).length > 0 && <p role="alert">新数据存在人岗关联问题，导入后需核对：{inspectPlacements(pendingImport.employees, pendingImport.departments).slice(0, 5).join('；')}</p>}
         </div>}
       </AppModal>
+      {/* V2.4.0：删除部门被挡住时的说明弹窗（列出卡里还有谁 / 哪些子部门） */}
+      <AppModal
+        open={deptDeleteBlocked !== null}
+        onClose={() => setDeptDeleteBlocked(null)}
+        title={deptDeleteBlocked?.title ?? '无法删除部门'}
+        footer={<button className="rounded-lg bg-indigo-600 px-3 py-2 text-white" onClick={() => setDeptDeleteBlocked(null)}>知道了</button>}
+      >
+        <p className="text-sm text-slate-700" role="alert">{deptDeleteBlocked?.message}</p>
+      </AppModal>
+
       <AppModal open={pendingAction !== null} onClose={() => setPendingAction(null)} title={pendingAction?.title ?? '确认操作'} footer={<>
         <button className="px-3 py-2" onClick={() => setPendingAction(null)}>取消</button>
         <button className="rounded-lg bg-indigo-600 px-3 py-2 text-white" onClick={() => {
@@ -1554,7 +1611,6 @@ export default function App() {
         }}>确认执行</button>
       </>}><p className="text-sm text-slate-700 whitespace-pre-line">{pendingAction?.description}</p></AppModal>
       <TopBar
-        projectName={project.name}
         scenarios={project.scenarios}
         currentScenarioId={project.currentScenarioId}
         onSwitchScenario={switchScenario}
@@ -1569,21 +1625,17 @@ export default function App() {
         canRedo={canRedo}
         onUndo={handleUndo}
         onRedo={handleRedo}
-        onOpenHealth={handleOpenHealth}
+        onOpenHealth={() => setView('health')}
         onOpenScenarioDiff={handleOpenScenarioDiff}
         canCompare={project.scenarios.length >= 2}
         hasData={departments.length > 0}
-        onDownloadEmployeeTemplate={handleDownloadEmployeeTemplate}
-        onDownloadOrgTemplate={handleDownloadOrgTemplate}
         onManageLevels={() => setLevelManagerOpen(true)}
         zoom={zoom}
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
         onOpenSearch={() => setSearchOpen(true)}
-        onLoadIndustryTemplate={handleLoadIndustryTemplate}
-        onOpenPositionOps={() => setPositionOpsOpen(true)}
-        onOpenCompetency={() => setCompetencyOpen(true)}
-        onOpenGapList={() => setGapListOpen(true)}
+        onOpenPositionBoard={() => setView('positionBoard')}
+        onOpenCompetency={() => setView('competency')}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -1593,11 +1645,12 @@ export default function App() {
           onExportPng={handleExportPng}
           onExportExcel={handleExportExcel}
           onReset={handleReset}
-          onLoadTestData={handleLoadTestData}
+          onOpenSamplePicker={() => setSamplePickerOpen(true)}
           onCreateDepartment={handleCreateDepartment}
-          onOpenHealth={handleOpenHealth}
           onOpenReport={handleOpenReport}
           onExportProject={handleExportProject}
+          onDownloadEmployeeTemplate={handleDownloadEmployeeTemplate}
+          onDownloadOrgTemplate={handleDownloadOrgTemplate}
           onRestoreProject={handleRestoreProject}
           departments={departments}
           hasData={departments.length > 0}
@@ -1610,6 +1663,66 @@ export default function App() {
           ref={mainRef}
           className="workspace-canvas flex-1 min-w-0 overflow-auto p-6"
         >
+          {/* V2.4.0：「岗位与编制」是**页面级**子界面 —— 占用整个画布区，而不是弹窗 */}
+          {boardOpen ? (
+            <PositionBoardPage
+              onBack={() => setView('canvas')}
+              projectName={project.name}
+              scenario={currentScenario}
+              departments={departments}
+              allEmployees={allEmployeesFlat}
+              assessments={assessments}
+              competencyModel={competencyModel}
+              positionAssignments={positionAssignments}
+              levelConfigs={levelConfigs}
+              positionSummaries={positionSummaries}
+              onSetPositionHeadcount={handleSetPositionHeadcount}
+              onCreatePosition={handleCreatePosition}
+              onUpdatePosition={handleUpdatePosition}
+              onArchivePosition={handleArchivePosition}
+              onAssignEmployee={handleAssignEmployeeToPosition}
+              onToast={showToast}
+              onLocateDept={(deptId) => { setView('canvas'); handleCompetencyFocusDept(deptId); }}
+            />
+          ) : view === 'health' ? (
+            <HealthPage
+            placementIssues={placementIssues}
+            unresolvedOverflow={unresolvedOverflow}
+            open={view === 'health'}
+            onClose={() => setView('canvas')}
+            departments={departments}
+            focusDeptId={healthFocusDeptId}
+            onClearFocus={() => setHealthFocusDeptId(undefined)}
+            onFocusDept={(id) => setHealthFocusDeptId(id)}
+            onUpdateHeadcount={handleUpdateHeadcount}
+            onSetPositionHeadcount={handleSetPositionHeadcount}
+            positionSummaries={positionSummaries}
+            onExportReport={handleOpenReport}
+            currentScenarioName={currentScenario?.name ?? "场景"}
+            scenarios={project.scenarios}
+            onOpenScenarioDiff={handleOpenScenarioDiff}
+            />
+          ) : view === 'competency' ? (
+            <CompetencyPage
+            open={view === 'competency'}
+            onClose={() => setView('canvas')}
+            competencySummaries={competencySummaries}
+            matchStates={matchStates}
+            departments={departments}
+            allEmployees={allEmployeesFlat}
+            allPositions={allPositions}
+            onFocusDept={handleCompetencyFocusDept}
+            onOpenDetail={(empId) => setDetailEmpId(empId)}
+            onStartBatch={() => setBatchOpen(true)}
+            onOpenModelConfig={() => setModelOpen(true)}
+            assessments={assessments}
+            competencyModel={competencyModel}
+            positionAssignments={positionAssignments}
+            levelConfigs={levelConfigs}
+            onExportGapList={handleExportGapList}
+            confirmedNotCompetent={confirmedNotCompetent}
+            />
+          ) : (
           <OrgChart
             departments={departments}
             onToggleExpand={handleToggleExpand}
@@ -1622,14 +1735,14 @@ export default function App() {
             onChangeDepartmentLevel={handleChangeDepartmentLevel}
             onDeleteEmployee={handleDeleteEmployee}
             onCreateVirtualFromEmployee={handleCreateVirtualFromEmployee}
+            onDeleteDepartment={handleDeleteDepartment}
             allEmployees={allEmployeesFlat}
             zoom={zoom}
             canvasRef={canvasRef}
             zoomContainerRef={mainRef}
             onZoomChange={handleZoomChange}
             onDownloadTemplate={handleDownloadEmployeeTemplate}
-            onLoadTestData={handleLoadTestData}
-            onLoadIndustryTemplate={() => handleLoadIndustryTemplate('internet')}
+            onOpenSamplePicker={() => setSamplePickerOpen(true)}
             searchHighlight={searchHighlight}
             onSetTargetLevel={handleSetTargetLevel}
             positionSummaries={positionSummaries}
@@ -1639,6 +1752,7 @@ export default function App() {
             competencySummaries={competencySummaries}
             onOpenCompetencyDetail={(empId) => setDetailEmpId(empId)}
           />
+          )}
         </main>
       </div>
 
@@ -1669,22 +1783,6 @@ export default function App() {
         open={levelManagerOpen}
         onClose={() => setLevelManagerOpen(false)}
         allEmployees={allEmployeesFlat}
-      />
-
-      <HealthDrawer
-        open={healthOpen}
-        onClose={() => setHealthOpen(false)}
-        departments={departments}
-        focusDeptId={healthFocusDeptId}
-        onClearFocus={() => setHealthFocusDeptId(undefined)}
-        onFocusDept={(id) => setHealthFocusDeptId(id)}
-        onUpdateHeadcount={handleUpdateHeadcount}
-        onSetPositionHeadcount={handleSetPositionHeadcount}
-        positionSummaries={positionSummaries}
-        onExportReport={handleOpenReport}
-        currentScenarioName={currentScenario?.name ?? "场景"}
-        scenarios={project.scenarios}
-        onOpenScenarioDiff={handleOpenScenarioDiff}
       />
 
       <ProjectModal
@@ -1773,54 +1871,29 @@ export default function App() {
         open={onboardingOpen}
         onClose={dismissOnboarding}
         onDownloadTemplate={handleDownloadEmployeeTemplate}
+        onLoadTemplate={() => setSamplePickerOpen(true)}
+      />
+
+      {/* V2.4.0：行业模板选择器 —— 组件早已存在（v2.3.1 补的对话框语义），但全仓从未渲染过；
+          现在把顶部「行业模板」合并进「载入示例数据」后，它成为唯一入口。 */}
+      <VirtualAssignmentModal
+        open={virtualDraft !== null}
+        onClose={() => setVirtualDraft(null)}
+        draft={virtualDraft}
+        departments={departments}
+        employees={allEmployeesFlat}
+        onConfirm={handleConfirmVirtualAssignment}
+      />
+
+      <TemplatePreviewModal
+        open={samplePickerOpen}
+        onClose={() => setSamplePickerOpen(false)}
         onLoadTemplate={handleLoadIndustryTemplate}
-      />
-
-      <PositionOpsModal
-        open={positionOpsOpen}
-        onClose={() => setPositionOpsOpen(false)}
-        departments={departments}
-        allEmployees={allEmployeesFlat}
-        levelConfigs={levelConfigs}
-        positionSummaries={positionSummaries}
-        onCreatePosition={handleCreatePosition}
-        onSetPositionHeadcount={handleSetPositionHeadcount}
-        onAssignEmployeeToPosition={handleAssignEmployeeToPosition}
-        onCreateVirtualForPosition={handleCreateVirtualForPosition}
-        onArchivePosition={handleArchivePosition}
-      />
-
-      {/* —— v2.2.0 胜任度：看板抽屉 / 批量评估 / 详情 / 维度配置 —— */}
-      <CompetencyDrawer
-        open={competencyOpen}
-        onClose={() => setCompetencyOpen(false)}
-        competencySummaries={competencySummaries}
-        matchStates={matchStates}
-        departments={departments}
-        allEmployees={allEmployeesFlat}
-        allPositions={allPositions}
-        onFocusDept={handleCompetencyFocusDept}
-        onOpenDetail={(empId) => setDetailEmpId(empId)}
-        onStartBatch={() => setBatchOpen(true)}
-        onOpenModelConfig={() => setModelOpen(true)}
-        assessments={assessments}
-        competencyModel={competencyModel}
-        positionAssignments={positionAssignments}
-        levelConfigs={levelConfigs}
-        onExportGapList={handleExportGapList}
-        confirmedNotCompetent={confirmedNotCompetent}
-      />
-
-      {/* v2.3 M4：岗位缺口清单（当前场景直读；与看板同一派生口径） */}
-      <GapListModal
-        open={gapListOpen}
-        onClose={() => setGapListOpen(false)}
-        projectName={project.name}
-        scenario={currentScenario}
-        onLocateDept={handleCompetencyFocusDept}
         onToast={showToast}
       />
 
+      {/* —— v2.2.0 胜任度：看板抽屉 / 批量评估 / 详情 / 维度配置 —— */}
+      {/* v2.3 M4：岗位缺口清单（当前场景直读；与看板同一派生口径） */}
       <BatchAssessmentModal
         open={batchOpen}
         onClose={() => setBatchOpen(false)}

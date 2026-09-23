@@ -12,6 +12,9 @@ import type { Department, Employee, PositionAssignment } from '../types';
  * —— v2.3.1 复核留痕与反馈诚实性回归（审计报告 Q-19 / Q-20 / Q-03）——
  */
 
+/** V2.4.0：胜任度 / 健康度已是**页面级**子界面（不再是抽屉弹窗） */
+const competencyPage = () => document.querySelector('[data-page="competency"]') as HTMLElement;
+
 const storage = new Map<string, string>();
 const t = '2026-09-01T00:00:00.000Z';
 
@@ -63,7 +66,7 @@ describe('v2.3.1 Q-19：无法写入时必须说真话，不得假报成功', ()
     seedMismatch();
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: '胜任度' }));
-    const drawer = screen.getByRole('dialog', { name: '胜任度看板' });
+    const drawer = competencyPage();
     fireEvent.click(within(drawer).getByRole('button', { name: /研发部\s*1 人/ }));
     fireEvent.click(within(drawer).getByTitle('展开员工'));
     fireEvent.click(within(drawer).getByRole('button', { name: '查看 M2员工 的胜任度详情' }));

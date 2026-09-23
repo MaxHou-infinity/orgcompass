@@ -49,7 +49,8 @@ function chartProps(departments: Department[]) {
     zoomContainerRef: createRef<HTMLDivElement>(),
     onZoomChange: vi.fn(),
     onDownloadTemplate: vi.fn(),
-    onLoadTestData: vi.fn(),
+    onOpenSamplePicker: vi.fn(),
+    onDeleteDepartment: vi.fn(),
   };
 }
 

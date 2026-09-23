@@ -5,7 +5,7 @@
 > 范围：仅交互 + 视觉设计，**不改动 `src/` 代码**（实现由前端设计专家负责）。
 > 设计基调：完全延续 v2.0.1/v2.0.2 的 2026 现代 SaaS「液态玻璃 / Aurora 渐变」语言（indigo 主色 + emerald/amber/red 状态色），本迭代为**画布交互升级（P0）+ 决策层深化（P1）+ 体验增强（P2）**。
 > 版本目标：v2.0.3 = P0 批量选择/移动 + Ctrl+F 搜索 + P1 健康度建议/行业模板 + P2 新手引导打磨。
-> 前置：已通读 `docs/v201-design.md`、`docs/v202-design.md` 及 `src/` 关键组件。
+> 前置：已通读 `docs/design/v201-design.md`、`docs/design/v202-design.md` 及 `src/` 关键组件。
 
 ---
 
@@ -536,4 +536,4 @@ animation: {
 
 ## 9. 参照文件
 
-`src/App.tsx`、`src/components/OrgChart.tsx`、`src/components/DepartmentCard.tsx`、`src/components/TopBar.tsx`、`src/components/Sidebar.tsx`、`src/components/HealthDrawer.tsx`、`src/types/index.ts`、`src/utils/analytics.ts`、`src/utils/statusUI.ts`、`src/utils/excel.ts`、`src/index.css`、`docs/v201-design.md`、`docs/v202-design.md`。
+`src/App.tsx`、`src/components/OrgChart.tsx`、`src/components/DepartmentCard.tsx`、`src/components/TopBar.tsx`、`src/components/Sidebar.tsx`、`src/components/HealthDrawer.tsx`、`src/types/index.ts`、`src/utils/analytics.ts`、`src/utils/statusUI.ts`、`src/utils/excel.ts`、`src/index.css`、`docs/design/v201-design.md`、`docs/design/v202-design.md`。

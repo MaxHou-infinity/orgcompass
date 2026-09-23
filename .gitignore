@@ -13,6 +13,11 @@ dist-ssr/
 # 测试产物
 coverage/
 .vitest/
+__pycache__/
+*.pyc
+
+# 视觉回归截图（每次运行都会重新生成，属产物不入库；人工复核时本地查看 tests/e2e/shots/）
+tests/e2e/shots/
 
 # 编辑器/系统
 .vscode/*
@@ -62,3 +67,4 @@ docs/v231-*.md
 
 # v2.3.2 内部导入契约与交付文档（本地归档，不公开、勿提交到 GitHub）
 docs/v232-*.md
+docs/v240-*.md

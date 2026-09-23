@@ -3,6 +3,7 @@ import { Department } from '../types';
 import { useState } from 'react';
 import { useDisplaySettings, setDisplaySetting } from '../utils/displaySettings';
 import { validateImportFile, getImportErrorMessage, WARN_IMPORT_FILE_BYTES } from '../utils/excel';
+import { eligibleParents } from '../utils/departments';
 
 interface SidebarProps {
   onEmployeeFileUpload: (file: File) => void;
@@ -10,11 +11,14 @@ interface SidebarProps {
   onExportPng: () => void;
   onExportExcel: () => void;
   onReset: () => void;
-  onLoadTestData: () => void;
+  /** V2.4.0：打开「示例数据」选择器（5 个行业模板）；原「行业模板」顶部入口已并入此处 */
+  onOpenSamplePicker: () => void;
   onCreateDepartment: (name: string, level: number, parentId: string | null, leaderId?: string, leaderName?: string) => void;
-  onOpenHealth: () => void;
   onOpenReport: () => void;
   onExportProject: () => void;
+  /** V2.4.0：Excel 模板下载从顶部「工具模板」挪进来 —— 上传什么就下载什么模板，最直观 */
+  onDownloadEmployeeTemplate: () => void;
+  onDownloadOrgTemplate: () => void;
   /** v2.3.2：从 .orgproj 恢复（与「数据备份」并排，避免「有备份但找不到恢复入口」） */
   onRestoreProject: () => void;
   onRefreshCanvas: () => void;
@@ -31,11 +35,12 @@ export function Sidebar({
   onExportPng,
   onExportExcel,
   onReset,
-  onLoadTestData,
+  onOpenSamplePicker,
   onCreateDepartment,
-  onOpenHealth,
   onOpenReport,
   onExportProject,
+  onDownloadEmployeeTemplate,
+  onDownloadOrgTemplate,
   onRestoreProject,
   onRefreshCanvas,
   departments,
@@ -74,18 +79,12 @@ export function Sidebar({
     setShowCreateDept(false);
   };
 
-  // 收集所有部门用于选择父部门
-  const flattenDepts = (depts: Department[], prefix = ''): { id: string; name: string }[] => {
-    let result: { id: string; name: string }[] = [];
-    depts.forEach(dept => {
-      result.push({ id: dept.id, name: prefix + dept.name });
-      if (dept.children.length > 0) {
-        result = result.concat(flattenDepts(dept.children, prefix + '  '));
-      }
-    });
-    return result;
-  };
-  const allDepts = flattenDepts(departments);
+  /**
+   * V2.4.0：归属候选**只列层级更浅的部门**（用户规则：不得归属同级或下级）。
+   * 旧实现把全部部门平铺进下拉，选到同级/下级也能建出来，等于没有约束。
+   */
+  const parentOptions = eligibleParents(departments, newDeptLevel);
+  const noEligibleParent = parentOptions.length === 0;
   return (
     <div className="workspace-sidebar flex flex-col h-full">
       <div className="flex-1 overflow-y-auto p-3 space-y-5">
@@ -142,6 +141,33 @@ export function Sidebar({
                 }}
               />
             </label>
+
+            {/*
+              V2.4.0：Excel 模板下载从顶部「工具模板」挪进来 —— 放在两个上传行正下方，
+              「按这份模板填写，然后上传到上面那一行」的关系一眼可读。
+              这里**不把按钮塞进上传行**：塞进去会把行宽从 203px 压到 145px，
+              导致「组织架构（补充）」换行、两行高度不一致（Chromium 实测 33px vs 46px）。
+              单独一行还有个好处：可以加「模板」前缀 + 写清是哪份模板，比笼统的「模板」按钮好认。
+            */}
+            <div className="flex items-center gap-1.5 pt-0.5">
+              <span className="shrink-0 text-[10px] text-slate-400">模板</span>
+              <button
+                onClick={onDownloadEmployeeTemplate}
+                title="下载「员工信息」Excel 模板（姓名/工号/职级/岗位/一~六级部门）—— 填好后上传到上面的「员工信息」行，即可生成架构图"
+                className="flex flex-1 min-w-0 items-center justify-center gap-1 px-1.5 py-1 rounded-lg text-[10px] text-slate-500 whitespace-nowrap border border-slate-200 bg-white hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/50 transition-colors"
+              >
+                <Download className="w-3 h-3 shrink-0" />
+                员工信息
+              </button>
+              <button
+                onClick={onDownloadOrgTemplate}
+                title="下载「组织架构」Excel 模板（一~六级部门/部门级别/部门负责人）—— 用于补充「无人的空部门」与「部门负责人」"
+                className="flex flex-1 min-w-0 items-center justify-center gap-1 px-1.5 py-1 rounded-lg text-[10px] text-slate-500 whitespace-nowrap border border-slate-200 bg-white hover:text-emerald-600 hover:border-emerald-300 hover:bg-emerald-50/50 transition-colors"
+              >
+                <Download className="w-3 h-3 shrink-0" />
+                组织架构
+              </button>
+            </div>
           </div>
 
           {/* 导入护栏提示 + 本地处理微文案 */}
@@ -231,14 +257,8 @@ export function Sidebar({
             分析 & 备份
           </h2>
           <div className="space-y-1.5">
-            <button
-              onClick={onOpenHealth}
-              disabled={!hasData}
-              className="flex items-center justify-center gap-1.5 w-full px-3 py-1.5 bg-white text-slate-700 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
-            >
-              <Activity className="w-3.5 h-3.5" />
-              组织健康度
-            </button>
+            {/* V2.4.0：移除左侧「组织健康度」——与顶部「健康度」完全同一个抽屉，
+                按「顶部放高频操作、左侧管导入导出备份」的分工，只保留顶部入口。 */}
             <button
               onClick={onOpenReport}
               disabled={!hasData}
@@ -291,14 +311,23 @@ export function Sidebar({
             <div className="space-y-1.5 p-2 bg-slate-50 rounded-lg border border-slate-100">
               <input
                 type="text"
+                aria-label="部门名称"
                 placeholder="部门名称"
                 value={newDeptName}
                 onChange={(e) => setNewDeptName(e.target.value)}
                 className="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs focus-ring"
               />
               <select
+                aria-label="部门层级"
                 value={newDeptLevel}
-                onChange={(e) => setNewDeptLevel(Number(e.target.value))}
+                onChange={(e) => {
+                  const lv = Number(e.target.value);
+                  setNewDeptLevel(lv);
+                  // 层级变更后原归属可能变成同级/下级 → 自动退回「无」
+                  if (newDeptParent && !eligibleParents(departments, lv).some((o) => o.id === newDeptParent)) {
+                    setNewDeptParent(null);
+                  }
+                }}
                 className="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs focus-ring"
               >
                 <option value={1}>L1 (一级部门)</option>
@@ -309,15 +338,23 @@ export function Sidebar({
                 <option value={6}>L6 (六级部门)</option>
               </select>
               <select
+                aria-label="归属部门"
                 value={newDeptParent || 'root'}
                 onChange={(e) => setNewDeptParent(e.target.value === 'root' ? null : e.target.value)}
                 className="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs focus-ring"
               >
-                <option value="root">无 (根级别)</option>
-                {allDepts.map(dept => (
-                  <option key={dept.id} value={dept.id}>{dept.name}</option>
+                <option value="root">
+                  {newDeptLevel === 1 ? '无（一级部门没有上级）' : '暂不指定（之后在画布上拖动归属）'}
+                </option>
+                {parentOptions.map(dept => (
+                  <option key={dept.id} value={dept.id}>{dept.label}</option>
                 ))}
               </select>
+              <p data-dept-parent-hint className="text-[10px] leading-snug text-slate-400">
+                {noEligibleParent
+                  ? `一级部门没有上级，直接创建即可（之后可在画布上拖动调整归属）`
+                  : `只能归属层级更浅的部门（可选 ${parentOptions.length} 个）；不得归属同级或下级部门`}
+              </p>
               <div className="flex gap-1.5">
                 <button
                   onClick={handleCreateDept}
@@ -360,7 +397,7 @@ export function Sidebar({
       {/* 测试数据按钮 */}
       <div className="p-3 border-t border-slate-200 bg-white">
         <button
-          onClick={onLoadTestData}
+          onClick={onOpenSamplePicker}
           className="w-full px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium mb-1.5 shadow-md"
         >
           载入示例数据

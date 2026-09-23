@@ -6,6 +6,9 @@ import * as excel from '../utils/excel';
 import { createProject, loadProject, PROJECT_STORAGE_KEY } from '../utils/project';
 import type { Employee, Department } from '../types';
 
+/** V2.4.0：「岗位与编制」是页面级子界面（不是弹窗），用 data-page 锚点取容器 */
+const boardPage = () => document.querySelector('[data-page="position-board"]') as HTMLElement;
+
 const storage = new Map<string, string>();
 const t = '2026-09-01T00:00:00.000Z';
 function seed() {
@@ -32,16 +35,26 @@ afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.resto
 const save = () => act(() => vi.advanceTimersByTime(850));
 
 describe('M1 真实 App 入口', () => {
+  /**
+   * V2.4.0：「行业模板」已并入「载入示例数据」——点它先打开模板选择器，再选一个模板载入。
+   * 所以这里多一步「使用此模板」。
+   */
+  const loadSampleTemplate = () => {
+    fireEvent.click(screen.getByRole('button', { name: '载入示例数据' }));
+    const picker = screen.getByRole('dialog', { name: '行业模板' });
+    fireEvent.click(within(picker).getAllByRole('button', { name: '使用此模板' })[0]);
+  };
+
   it('A22 导入预览取消无变化，确认后保留原场景及评分关系', () => {
     const original = seed();
     render(<App />);
     const before = storage.get(PROJECT_STORAGE_KEY);
-    fireEvent.click(screen.getByRole('button', { name: '载入示例数据' }));
+    loadSampleTemplate();
     let dialog = screen.getByRole('dialog', { name: '确认导入到新场景' });
     expect(dialog.textContent).toContain('1 条评分');
     fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
     expect(storage.get(PROJECT_STORAGE_KEY)).toBe(before);
-    fireEvent.click(screen.getByRole('button', { name: '载入示例数据' }));
+    loadSampleTemplate();
     dialog = screen.getByRole('dialog', { name: '确认导入到新场景' });
     fireEvent.click(within(dialog).getByRole('button', { name: '保留原场景并导入' }));
     save();
@@ -55,33 +68,36 @@ describe('M1 真实 App 入口', () => {
 
   it('岗位操作跨部门套岗同步名册、画布与历史；撤销一步恢复', () => {
     seed(); render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '岗位' }));
-    const dialog = screen.getByRole('dialog', { name: '岗位操作' });
-    fireEvent.change(within(dialog).getByRole('combobox', { name: '目标部门' }), { target: { value: 'b' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: '套岗（选员工）' }));
-    fireEvent.click(within(dialog).getByRole('button', { name: 'M1员工（E01）' }));
+    // V2.4.0：原「岗位操作」弹窗已并入页面级「岗位与编制」；套岗改为**行内**展开候选人
+    fireEvent.click(screen.getByRole('button', { name: '岗位与编制' }));
+    const page = boardPage();
+    const bRow = page.querySelector('[data-position-row="pb"]') as HTMLElement;
+    expect(bRow).toBeTruthy();
+    fireEvent.click(within(bRow).getByRole('button', { name: '套岗' }));
+    const assign = page.querySelector('[data-assign-row="pb"]') as HTMLElement;
+    fireEvent.click(within(assign).getByRole('button', { name: /M1员工/ }));
     save();
     const sc = loadProject()!.scenarios[0];
     expect(sc.allEmployeesFlat[0].positionId).toBe('pb');
     expect(sc.departments[0].employees).toEqual([]);
     expect(sc.departments[1].employees[0].positionId).toBe('pb');
     expect(sc.positionAssignments!.find((r) => r.id === 'rel')!.status).toBe('ended');
-    fireEvent.click(within(dialog).getByRole('button', { name: '关闭' }));
     fireEvent.keyDown(window, { key: 'z', ctrlKey: true }); save();
     expect(loadProject()!.scenarios[0].allEmployeesFlat[0].positionId).toBe('pa');
     expect(loadProject()!.scenarios[0].positionAssignments).toHaveLength(1);
   });
 
-  it('岗位归档先展示影响，取消不改；确认后关系结束、评分保留', () => {
+  it('岗位删除（归档）先展示影响，取消不改；确认后关系结束、评分保留', () => {
     seed(); render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '岗位' }));
-    const ops = screen.getByRole('dialog', { name: '岗位操作' });
-    fireEvent.click(within(ops).getByRole('button', { name: '归档岗位' }));
+    fireEvent.click(screen.getByRole('button', { name: '岗位与编制' }));
+    const page = boardPage();
+    const row = () => page.querySelector('[data-position-row="pa"]') as HTMLElement;
+    fireEvent.click(within(row()).getByRole('button', { name: '删除' }));
     let dialog = screen.getByRole('dialog', { name: '确认归档岗位' });
     expect(dialog.textContent).toContain('M1员工');
     fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
     expect(loadProject()!.scenarios[0].allEmployeesFlat[0].positionId).toBe('pa');
-    fireEvent.click(within(ops).getByRole('button', { name: '归档岗位' }));
+    fireEvent.click(within(row()).getByRole('button', { name: '删除' }));
     dialog = screen.getByRole('dialog', { name: '确认归档岗位' });
     fireEvent.click(within(dialog).getByRole('button', { name: '确认执行' })); save();
     const sc = loadProject()!.scenarios[0];
@@ -89,6 +105,11 @@ describe('M1 真实 App 入口', () => {
     expect(sc.allEmployeesFlat[0].positionId).toBeUndefined();
     expect(sc.assessments).toHaveLength(1);
     expect(sc.positionAssignments![0].status).toBe('ended');
+    // V2.4.0：删除后必须**持续可见**地提示「无明确岗位」员工（用户明确要求）
+    const banner = document.querySelector('[data-positionless-banner]') as HTMLElement;
+    expect(banner).toBeTruthy();
+    expect(banner.textContent).toContain('无明确岗位');
+    expect(banner.textContent).toContain('M1员工');
   });
 });
 

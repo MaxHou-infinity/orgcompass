@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronRight, ChevronUp, User, Users, Building2, Briefcase } from 'lucide-react';
+import { ChevronDown, ChevronRight, ChevronUp, User, Users, Building2, Briefcase, Trash2 } from 'lucide-react';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { Department, Employee, MatchStatus, LeaderType } from '../types';
 import { useLevelConfigs, getLevelColor } from '../utils/levels';
@@ -24,6 +24,8 @@ interface DepartmentCardProps {
   onUpdateLeaderType: (deptId: string, leaderType: LeaderType | undefined) => void;
   onDeleteEmployee: (deptId: string, empId: string) => void;
   onCreateVirtualFromEmployee: (deptId: string, empId: string) => void;
+  /** V2.4.0：删除部门（空部门才允许；有成员/子部门时由 App 弹出说明） */
+  onDeleteDepartment?: (deptId: string) => void;
   onChangeDepartmentLevel: (deptId: string, newLevel: number, newParentId: string | null) => void;
   allEmployees: Employee[];
   /** 当前选中的员工 id（批量操作用） */
@@ -130,15 +132,23 @@ function PositionSection({
                       冻结
                     </span>
                   )}
-                  {/* 右侧数字簇**整体不可压缩**：它是「这个岗位到底几个人」的唯一答案，不能被挤掉 */}
+                  {/*
+                    右侧数字簇**整体不可压缩**：它是「这个岗位到底几个人」的唯一答案，不能被挤掉。
+
+                    v2.4.0：簇内两块**会随内容变宽**的文字必须预留固定宽度 ——
+                    这一簇是右对齐（ml-auto）的，文字一变宽就把左边的元素整体顶走：
+                    实测「未配编制」(40px) ↔ 「缺 1」(17.8px) 之间切换时，**编制输入框横向位移 22.2px**，
+                    点上下箭头调数字时输入框会左右跳（用户实测反馈）。
+                    现在「在岗 N」与状态文字各占固定宽度（tabular-nums + 居中/右对齐），整簇宽度恒定。
+                  */}
                   <span className="ml-auto flex shrink-0 items-center gap-1 whitespace-nowrap">
                     {/*
-                      v2.3.2：在岗人数 = 员工表里该部门下「岗位」列同名的员工自动汇总（在岗）。
+                      在岗人数 = 员工表里该部门下「岗位」列同名的员工自动汇总（在岗）。
                       此前它只是「/ 在岗 N」的小灰字，被挤成竖排后用户只看到编制输入框里的 0，
                       误以为岗位数量算错了。现在把在岗提到编制之前、做成有色胶囊。
                     */}
                     <span
-                      className="text-[10px] px-1 py-0.5 rounded font-medium bg-indigo-50 text-indigo-700 tabular-nums"
+                      className="w-11 shrink-0 text-center text-[10px] py-0.5 rounded font-medium bg-indigo-50 text-indigo-700 tabular-nums"
                       title={`在岗 ${assignedCount} 人：按员工表里本部门下「岗位」列与本岗位同名的员工自动汇总`}
                     >
                       在岗 {assignedCount}
@@ -155,7 +165,12 @@ function PositionSection({
                       title="岗位编制（可编辑）。员工信息表不含编制列，所以新导入的岗位编制默认为 0，需要在这里按实际编制填写"
                       className="w-11 shrink-0 px-1 py-0.5 rounded border border-slate-200 text-right text-xs tabular-nums focus-ring"
                     />
-                    <span className={`text-[10px] font-medium ${gap === null ? 'text-slate-400' : gap > 0 ? 'text-amber-600' : gap < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                    {/* 固定宽度 + 右对齐：状态文案长短不一（满编 / 缺 12 / 未配编制），
+                        只有定宽才不会把左边的输入框顶来顶去；w-11 按最长的「未配编制」留位。 */}
+                    <span
+                      className={`w-11 shrink-0 text-right text-[10px] font-medium tabular-nums ${gap === null ? 'text-slate-400' : gap > 0 ? 'text-amber-600' : gap < 0 ? 'text-red-600' : 'text-emerald-600'}`}
+                      title={gap === null ? (frozen ? '编制已冻结，不计缺口' : '未配置编制：填入编制后才会计算缺口') : undefined}
+                    >
                       {gap === null ? (frozen ? '冻结' : '未配编制') : gap > 0 ? `缺 ${gap}` : gap < 0 ? `超 ${Math.abs(gap)}` : '满编'}
                     </span>
                   </span>
@@ -474,6 +489,7 @@ export function DepartmentCard({
   onUpdateLeaderType,
   onDeleteEmployee,
   onCreateVirtualFromEmployee,
+  onDeleteDepartment,
   onChangeDepartmentLevel,
   onSetTargetLevel,
   onMoveMultiple,
@@ -861,6 +877,24 @@ export function DepartmentCard({
               调整层级归属
               <span className="ml-auto text-gray-400">{showLevelMenu ? '▲' : '▼'}</span>
             </button>
+
+            {/* V2.4.0：删除部门（用户实测反馈：建出来的部门删不掉）。
+                只在**空部门**上生效；卡里还有员工或子部门时由 App 弹出说明并指引先挪人。 */}
+            {onDeleteDepartment && (
+              <button
+                data-dept-delete
+                className="w-full px-4 py-2 text-left text-sm text-rose-600 hover:bg-rose-50 flex items-center gap-2 border-t border-gray-100"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowContextMenu(false);
+                  setShowLevelMenu(false);
+                  onDeleteDepartment(department.id);
+                }}
+              >
+                <Trash2 className="w-4 h-4" />
+                删除该部门
+              </button>
+            )}
 
             {showLevelMenu && (
               <div className="border-t border-gray-100 py-1">

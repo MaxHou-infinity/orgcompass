@@ -277,24 +277,30 @@ body {
 
 
 /* 工作台：项目上下文与工具分层，窄窗口仍保留所有入口。 */
+/*
+  V2.4.0：顶部栏由「两行」合并为「一行」。
+  旧结构是 .workspace-context（品牌/保存/场景，min-height 58）+ .workspace-toolbar（工具条），
+  合计约 104px；现在整条 header 自己就是那一行，高度由最高的按钮决定（约 48px）。
+  窄窗口下仍允许换行（宁可换行，也不要横向溢出把按钮推出可视区）。
+*/
 .workspace-header {
   flex: none;
   position: relative;
   z-index: 20;
   background: #fff;
   border-bottom: 1px solid #dce2ea;
-}
-.workspace-context {
-  min-height: 58px;
   display: flex;
   align-items: center;
-  gap: 24px;
-  padding: 8px 20px;
-  border-bottom: 1px solid #edf0f4;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 5px 12px;
+  min-height: 48px;
 }
-.workspace-save { display: flex; align-items: center; gap: 16px; min-width: 0; flex: 1; }
-.workspace-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; padding: 5px 12px; }
+.workspace-brand { display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin-right: 2px; }
+.workspace-save { display: flex; align-items: center; gap: 10px; min-width: 0; flex-shrink: 0; }
 .workspace-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
+/* 右侧工具组靠右推；换行后仍自成一组 */
+.workspace-tools { margin-left: auto; }
 .workspace-header button { white-space: nowrap; flex-shrink: 0; }
 .workspace-actions > button, .workspace-actions > div > button { padding: 8px 10px; border-radius: 7px; }
 .workspace-sidebar { width: 232px; flex-shrink: 0; background: #fff; border-right: 1px solid #dce2ea; }
@@ -306,17 +312,24 @@ body {
   outline-offset: 3px;
 }
 :where(button:not(:disabled), [role="button"]) { cursor: pointer; }
+/*
+  紧凑档：顶部只有一行之后，1024~960（Tauri 最小窗口宽度）这一段会差几十像素而换行。
+  收紧按钮内边距与间距即可恢复单行，不必牺牲任何入口。
+*/
+@media (max-width: 1100px) {
+  .workspace-header { gap: 2px 6px; padding-inline: 10px; }
+  .workspace-actions > button, .workspace-actions > div > button { padding: 7px 7px; }
+}
 @media (max-width: 900px) {
-  .workspace-context { gap: 12px; padding-inline: 12px; }
-  .workspace-save { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .workspace-header { gap: 4px 8px; padding-inline: 10px; }
   .workspace-sidebar { width: 208px; }
 }
-@media (max-width: 600px) {
-  .workspace-context { flex-wrap: wrap; }
+@media (max-width: 700px) {
+  /* 极窄时先让出保存状态（它只是提示，不承担操作） */
   .workspace-save { display: none; }
   .workspace-sidebar { width: 164px; }
   .workspace-sidebar > div:first-child { padding: 12px 8px; }
-  .workspace-toolbar { padding: 4px; }
+  /* 顶部只有一行了，窄窗口靠收紧按钮内边距降高（不再有 .workspace-toolbar） */
   .workspace-actions > button, .workspace-actions > div > button { padding: 7px; font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) {

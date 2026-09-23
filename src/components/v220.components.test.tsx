@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
-import { CompetencyRing, CompetencyCapsule, CompetencyDrawer } from './CompetencyDrawer';
+import { CompetencyRing, CompetencyCapsule, CompetencyPage } from './CompetencyDrawer';
 import { BatchAssessmentModal } from './BatchAssessmentModal';
 import { CompetencyDetailModal } from './CompetencyDetailModal';
 import { CompetencyModelModal } from './CompetencyModelModal';
@@ -110,10 +110,10 @@ describe('v2.2.0 组件交互冒烟', () => {
     expect(screen.getByText(/4/)).toBeTruthy();
   });
 
-  it('CompetencyDrawer 渲染图例 + 部门卡 + 未评统计（未评=中性灰不伪装）', () => {
+  it('CompetencyPage 渲染图例 + 部门卡 + 未评统计（未评=中性灰不伪装）', () => {
     const onClose = vi.fn();
     render(
-      <CompetencyDrawer
+      <CompetencyPage
         open
         onClose={onClose}
         competencySummaries={new Map()}

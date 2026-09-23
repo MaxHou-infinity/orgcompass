@@ -1,6 +1,6 @@
-import { useDialogFocus } from '../utils/useDialogFocus';
+
 import { useMemo, useState, Fragment } from 'react';
-import { X, RefreshCw, Activity, Download, Building2, Lightbulb, SlidersHorizontal, GitCompare, ChevronDown, ChevronRight, Briefcase } from 'lucide-react';
+import { RefreshCw, Activity, Download, Building2, Lightbulb, SlidersHorizontal, GitCompare, ChevronDown, ChevronRight, Briefcase, AlertTriangle } from 'lucide-react';
 import { Department, LevelConfig, Scenario } from '../types';
 import {
   computeHealthReport,
@@ -26,8 +26,12 @@ import {
 } from '../utils/analytics';
 import { STATUS_STYLE, fmt, fmtCost } from '../utils/statusUI';
 import { useLevelConfigs, getLevelColor } from '../utils/levels';
+import { SubPageShell } from './SubPageShell';
 
-interface HealthDrawerProps {
+interface HealthPageProps {
+  /** V2.4.0：人岗核对问题（页面内呈现，不再占用主页面顶部） */
+  placementIssues?: string[];
+  unresolvedOverflow?: string[];
   open: boolean;
   onClose: () => void;
   departments: Department[];
@@ -328,7 +332,7 @@ function SuggestionItem({ s }: { s: HealthSuggestion }) {
   );
 }
 
-export function HealthDrawer({
+export function HealthPage({
   open,
   onClose,
   departments,
@@ -342,8 +346,9 @@ export function HealthDrawer({
   currentScenarioName,
   scenarios,
   onOpenScenarioDiff,
-}: HealthDrawerProps) {
-  const dialogRef = useDialogFocus(open, onClose);
+  placementIssues = [],
+  unresolvedOverflow = [],
+}: HealthPageProps) {
   const configs = useLevelConfigs();
   const [thresholds, setThresholds] = useState<HealthThresholds>(() => getHealthThresholds());
   const [thresholdsOpen, setThresholdsOpen] = useState(false);
@@ -404,56 +409,60 @@ export function HealthDrawer({
     : null;
 
   return (
-    <div className="fixed inset-0 z-[80]">
-      {/* 轻遮罩 */}
-      <div className="absolute inset-0 bg-slate-900/10 backdrop-blur-[2px]" onClick={onClose} />
-      {/* 抽屉 */}
-      <aside ref={dialogRef} role="dialog" aria-modal="true" aria-label="组织健康度" tabIndex={-1} className="absolute inset-y-0 right-0 w-[640px] max-w-[92vw] glass border-l border-white/40 shadow-2xl flex flex-col animate-slideInRight">
-        {/* 头部 */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-          <div>
-            <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-              <Activity className="w-4 h-4 text-indigo-500" />
-              {focusedName ? `${focusedName} · 组织健康度` : '组织健康度'}
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              数据快照 · 基于当前场景「{currentScenarioName}」
-              {scenarios.length < 2 && ' · 单场景：先复制一个场景再对比'}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onOpenScenarioDiff}
-              disabled={scenarios.length < 2}
-              title={scenarios.length >= 2 ? '基线 vs 目标场景 差异比较' : '先复制一个场景再对比'}
-              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium border transition-all ${
-                scenarios.length >= 2
-                  ? 'text-indigo-600 border-indigo-200 bg-indigo-50 hover:bg-indigo-100'
-                  : 'text-slate-300 border-slate-200 bg-slate-50 cursor-not-allowed'
-              }`}
-            >
-              <GitCompare className="w-4 h-4" />
-              场景对比
-            </button>
-            <button
-              onClick={onExportReport}
-              disabled={departments.length === 0}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-indigo-500 to-violet-500 shadow-md hover:shadow-lg transition-all"
-            >
-              <Download className="w-4 h-4" />
-              导出诊断报告
-            </button>
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-600 transition-colors"
-              aria-label="关闭"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
+    /*
+      V2.4.0：由**抽屉弹窗**改为**页面级子界面**（用户要求与「岗位与编制」一致）。
+      页面比抽屉空间大、可与指标并排看明细，也不需要遮罩打断上下文。
+      内部逻辑（指标派生、阈值、下钻、L3 岗位展开）一行未动，只换外壳。
+    */
+    <SubPageShell
+      name="health"
+      title={focusedName ? `${focusedName} · 组织健康度` : '组织健康度'}
+      subtitle={`数据快照 · 基于当前场景「${currentScenarioName}」${scenarios.length < 2 ? ' · 单场景：先复制一个场景再对比' : ''}`}
+      icon={<Activity className="w-5 h-5 text-indigo-500" />}
+      onBack={onClose}
+      actions={<>
+        <button
+          onClick={onOpenScenarioDiff}
+          disabled={scenarios.length < 2}
+          title={scenarios.length >= 2 ? '基线 vs 目标场景 差异比较' : '先复制一个场景再对比'}
+          className={`flex items-center gap-1.5 h-9 px-3.5 rounded-xl text-sm font-medium border transition-all ${
+            scenarios.length >= 2
+              ? 'text-indigo-600 border-indigo-200 bg-indigo-50 hover:bg-indigo-100'
+              : 'text-slate-300 border-slate-200 bg-slate-50 cursor-not-allowed'
+          }`}
+        >
+          <GitCompare className="w-4 h-4" />
+          场景对比
+        </button>
+        <button
+          onClick={onExportReport}
+          disabled={departments.length === 0}
+          className="flex items-center gap-1.5 h-9 px-3.5 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-indigo-500 to-violet-500 shadow-md hover:shadow-lg transition-all"
+        >
+          <Download className="w-4 h-4" />
+          导出诊断报告
+        </button>
+      </>}
+    >
+      <div className="space-y-6">
+          {/*
+            V2.4.0：人岗核对从**主页面顶部横幅**搬到这里。
+            它属于诊断信息（属于健康度），不该在主页面常驻；这里还能一次给全清单，
+            不必再点「查看明细」开弹窗。
+          */}
+          {(placementIssues.length > 0 || unresolvedOverflow.length > 0) && (
+            <section data-issues-section className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+              <h3 className="text-sm font-bold text-amber-900 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4" />
+                人岗核对：{placementIssues.length} 项数据问题 · {unresolvedOverflow.length} 个超额岗位待判断
+              </h3>
+              <ul className="mt-2 space-y-1 text-xs text-amber-900 list-disc list-inside">
+                {[...placementIssues, ...unresolvedOverflow].map((issue, idx) => <li key={idx}>{issue}</li>)}
+              </ul>
+            </section>
+          )}
 
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
+
           {/* 全局条 */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -855,7 +864,6 @@ export function HealthDrawer({
             </div>
           </section>
         </div>
-      </aside>
-    </div>
+    </SubPageShell>
   );
 }

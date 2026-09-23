@@ -3,12 +3,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { AppModal } from './AppModal';
 import { BatchAssessmentModal } from './BatchAssessmentModal';
-import { CompetencyDrawer } from './CompetencyDrawer';
+import { CompetencyPage } from './CompetencyDrawer';
 import { DEFAULT_COMPETENCY_MODEL, Department, Employee, Position } from '../types';
 import { isManager } from '../utils/competency';
 import { findIndustryTemplate, loadIndustryTemplate } from '../utils/industryTemplates';
 
 afterEach(cleanup);
+/** V2.4.0：胜任度已是**页面级**子界面（不再是抽屉弹窗） */
+const competencyPage = () => document.querySelector('[data-page="competency"]') as HTMLElement;
+
 const manager: Employee = { id: 'uuid-m', employeeId: 'M001', name: '测试主管', level: 'L3.1' };
 const worker: Employee = { id: 'uuid-w', employeeId: 'W001', name: '测试员工', level: 'L1.1' };
 const outsider: Employee = { id: 'uuid-o', employeeId: 'O001', name: '其他员工', level: 'L1.1' };
@@ -70,12 +73,12 @@ describe('体验断点回归', () => {
     const position: Position = { id: 'p', name: '工程师', departmentId: 'child', headcount: 1, status: 'active', createdAt: '', updatedAt: '' };
     const assigned = { ...worker, positionId: 'p' };
     const tree = [{ ...depts[0], children: [{ ...depts[0].children[0], employees: [assigned], positions: [position] }] }];
-    render(<CompetencyDrawer open onClose={vi.fn()} competencySummaries={new Map()} matchStates={[]} departments={tree} allEmployees={[manager, assigned]} allPositions={[position]} onFocusDept={vi.fn()} onOpenDetail={vi.fn()} onStartBatch={vi.fn()} onOpenModelConfig={vi.fn()} />);
+    render(<CompetencyPage open onClose={vi.fn()} competencySummaries={new Map()} matchStates={[]} departments={tree} allEmployees={[manager, assigned]} allPositions={[position]} onFocusDept={vi.fn()} onOpenDetail={vi.fn()} onStartBatch={vi.fn()} onOpenModelConfig={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: /技术部\s*2 人/ }));
     expect(screen.getByText('工程师')).toBeTruthy();
     expect(screen.queryByText('无胜任者')).toBeNull();
     fireEvent.click(screen.getByTitle('展开员工'));
-    expect(within(screen.getByRole('dialog', { name: '胜任度看板' })).getByText('测试员工')).toBeTruthy();
+    expect(within(competencyPage()).getByText('测试员工')).toBeTruthy();
     expect(screen.getByRole('button', { name: '查看 测试主管 的胜任度详情' })).toBeTruthy();
   });
   it('切换部门后保存包含之前已输入的评分', () => {

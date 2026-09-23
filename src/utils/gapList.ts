@@ -25,6 +25,32 @@ export const GAP_LIST_FILTER_LABEL: Record<GapListStatusFilter, string> = {
   balanced: '真实满编',
 };
 
+/**
+ * V2.4.0：暂不向用户提供的筛选项。
+ *
+ * `frozen`（编制冻结）——`Position.status = 'frozen'` 全仓**没有任何写入点**：
+ * 唯一会写 status 的动作是「归档岗位」，而它只写 `'archived'`（新建/导入建岗一律 `'active'`）。
+ * 因此这个筛选项对真实用户**永远匹配 0 行**，点进去只有空列表且不带解释 —— 属于误导性反馈
+ * （用户实测确认：15 个岗位全部 active，筛「编制冻结」得 0 / 15）。
+ *
+ * 本次**只从界面隐藏**，不做任何数据层改动：
+ * - `filterGapListRows(rows, 'frozen')`、`HEADCOUNT_STATUS_LABEL.frozen`、
+ *   `summarizeGapList().frozenPositions` 与导出列全部保留，口径（frozen 不计缺口）不变；
+ * - 待将来补上「冻结 / 解冻编制」的操作入口后，把这里清空即可恢复该筛选项。
+ *
+ * 背景（原始设计意图见 docs/v211-hr-value.md）：编制批了但被冻结（预算冻结 / 业务转型）时，
+ * 岗位级会虚高缺口，导致招聘 BP 去招一个公司并不打算招的岗 —— 所以 frozen 必须不计缺口。
+ * 该能力在 v2.1.1 建了模型、v2.3.x 建了展示与导出，**唯独漏了写入点**。
+ */
+export const GAP_LIST_HIDDEN_FILTERS: ReadonlySet<GapListStatusFilter> = new Set(['frozen']);
+
+/** 界面实际提供的筛选项（顺序与 GAP_LIST_FILTER_LABEL 一致；导出与口径不受影响） */
+export function gapListVisibleFilters(): GapListStatusFilter[] {
+  return (Object.keys(GAP_LIST_FILTER_LABEL) as GapListStatusFilter[]).filter(
+    (f) => !GAP_LIST_HIDDEN_FILTERS.has(f),
+  );
+}
+
 const POSITION_STATUS_LABEL: Record<BoardPositionRow['status'], string> = {
   active: '正常',
   frozen: '编制冻结',

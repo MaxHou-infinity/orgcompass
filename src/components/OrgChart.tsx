@@ -23,6 +23,8 @@ interface OrgChartProps {
   onChangeDepartmentLevel: (deptId: string, newLevel: number, newParentId: string | null) => void;
   onDeleteEmployee: (deptId: string, empId: string) => void;
   onCreateVirtualFromEmployee: (deptId: string, empId: string) => void;
+  /** V2.4.0：删除部门（空部门才允许；有成员时由 App 弹出说明） */
+  onDeleteDepartment: (deptId: string) => void;
   onSetTargetLevel: (empId: string, target: string) => void;
   allEmployees: Employee[];
   zoom: number;
@@ -30,9 +32,8 @@ interface OrgChartProps {
   zoomContainerRef: React.RefObject<HTMLDivElement>;
   onZoomChange: (nextZoom: number) => void;
   onDownloadTemplate: () => void;
-  onLoadTestData: () => void;
-  /** 载入内置行业模板（空状态吸引点，可选） */
-  onLoadIndustryTemplate?: () => void;
+  /** V2.4.0：打开「示例数据」选择器（5 个行业模板）——原「载入示例模板」入口已并入 */
+  onOpenSamplePicker: () => void;
   /** 搜索命中高亮（可选） */
   searchHighlight?: SearchHighlight;
   // —— v2.1.1 岗位化（UI 层消费；数据源为部门树内嵌 positions） ——
@@ -321,6 +322,7 @@ const renderTreeRecursive = (
   onUpdateLeaderType: (deptId: string, leaderType: LeaderType | undefined) => void,
   onDeleteEmployee: (deptId: string, empId: string) => void,
   onCreateVirtualFromEmployee: (deptId: string, empId: string) => void,
+  onDeleteDepartment: (deptId: string) => void,
   onChangeDepartmentLevel: (deptId: string, newLevel: number, newParentId: string | null) => void,
   onSetTargetLevel: (empId: string, target: string) => void,
   onMoveMultiple: (empIds: string[], toDeptId: string) => void,
@@ -359,6 +361,7 @@ const renderTreeRecursive = (
             onUpdateLeaderType={onUpdateLeaderType}
             onDeleteEmployee={onDeleteEmployee}
             onCreateVirtualFromEmployee={onCreateVirtualFromEmployee}
+            onDeleteDepartment={onDeleteDepartment}
             onChangeDepartmentLevel={onChangeDepartmentLevel}
             onSetTargetLevel={onSetTargetLevel}
             onMoveMultiple={onMoveMultiple}
@@ -400,10 +403,10 @@ function computeLayoutHeight(
 }
 
 /** 空状态 Hero（初次使用引导）：三步引导 + CTA */
-function EmptyStateHero({ onDownloadTemplate, onLoadTestData, onLoadIndustryTemplate }: {
+function EmptyStateHero({ onDownloadTemplate, onOpenSamplePicker }: {
   onDownloadTemplate: () => void;
-  onLoadTestData: () => void;
-  onLoadIndustryTemplate?: () => void;
+  /** V2.4.0：打开「示例数据」选择器（5 个行业模板）——原「载入示例模板」入口已并入 */
+  onOpenSamplePicker: () => void;
 }) {
   return (
     <div className="flex items-center justify-center min-h-full p-10">
@@ -442,20 +445,13 @@ function EmptyStateHero({ onDownloadTemplate, onLoadTestData, onLoadIndustryTemp
           >
             去下载模板
           </button>
+          {/* V2.4.0：原「载入示例数据」与「载入示例模板」两个按钮合并为一个 —— 都进同一个选择器 */}
           <button
-            onClick={onLoadTestData}
-            className="px-5 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-600 font-medium hover:bg-slate-50 hover:shadow-sm transition-all"
+            onClick={onOpenSamplePicker}
+            className="px-5 py-2.5 rounded-xl bg-emerald-500 text-white font-medium shadow-md hover:bg-emerald-600 hover:shadow-lg transition-all"
           >
             载入示例数据
           </button>
-          {onLoadIndustryTemplate && (
-            <button
-              onClick={onLoadIndustryTemplate}
-              className="px-5 py-2.5 rounded-xl bg-emerald-500 text-white font-medium shadow-md hover:bg-emerald-600 hover:shadow-lg transition-all"
-            >
-              载入示例模板
-            </button>
-          )}
         </div>
       </div>
     </div>
@@ -474,6 +470,7 @@ export function OrgChart({
   onChangeDepartmentLevel,
   onDeleteEmployee,
   onCreateVirtualFromEmployee,
+  onDeleteDepartment,
   onSetTargetLevel,
   allEmployees,
   zoom,
@@ -481,8 +478,7 @@ export function OrgChart({
   zoomContainerRef,
   onZoomChange,
   onDownloadTemplate,
-  onLoadTestData,
-  onLoadIndustryTemplate,
+  onOpenSamplePicker,
   searchHighlight,
   positionSummaries = [],
   matchStates = [],
@@ -947,6 +943,7 @@ export function OrgChart({
               onUpdateLeaderType,
               onDeleteEmployee,
               onCreateVirtualFromEmployee,
+              onDeleteDepartment,
               onChangeDepartmentLevel,
               onSetTargetLevel,
               onMoveMultiple,
@@ -975,8 +972,7 @@ export function OrgChart({
           >
             <EmptyStateHero
               onDownloadTemplate={onDownloadTemplate}
-              onLoadTestData={onLoadTestData}
-              onLoadIndustryTemplate={onLoadIndustryTemplate}
+              onOpenSamplePicker={onOpenSamplePicker}
             />
           </div>
         )}

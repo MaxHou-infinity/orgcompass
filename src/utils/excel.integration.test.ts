@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import * as XLSX from 'xlsx';
 import { buildDepartmentTree, mapEmployeeRows, mapPositionRows, resolveReportsToEmployeeIds } from './excel';
 import type { Employee, OrgTemplate, Department } from '../types';
@@ -45,10 +46,16 @@ function rowsToOrgTemplates(rows: Record<string, unknown>[]): OrgTemplate[] {
   }));
 }
 
+/**
+ * V2.4.0：Excel 测试夹具从仓库根目录移到 `tests/fixtures/excel/`（根目录此前混着 4 个 xlsx）。
+ * 这里用相对**测试文件**的绝对路径解析，不再依赖 vitest 的 cwd。
+ */
+const FIXTURES = fileURLToPath(new URL('../../tests/fixtures/excel/', import.meta.url));
+
 function readRows(file: string): Record<string, unknown>[] {
   // 与 App 的 parse*Excel 一致：用 fs 读文件 → Uint8Array → XLSX.read({type:'array'})。
   // （xlsx 0.20.3 在 Node ESM 下 readFile 的 fs 绑定不可用，改用与解析入口一致的 buffer 路径。）
-  const data = new Uint8Array(readFileSync(file));
+  const data = new Uint8Array(readFileSync(file.startsWith('/') ? file : FIXTURES + file));
   const wb = XLSX.read(data, { type: 'array' });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   return XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet);

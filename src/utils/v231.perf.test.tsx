@@ -153,7 +153,7 @@ describe('v2.3.1 Q-24/Q-33：computeManagerIdSet 与 isManager 语义一致', ()
 // ───────────────────── Q-23：关闭态的常驻抽屉不得空跑派生 ─────────────────────
 
 describe('v2.3.1 Q-23：抽屉关闭时按空输入派生（不白烧 CPU）', () => {
-  it('CompetencyDrawer 关闭态传给 deriveBoard 的是空输入', async () => {
+  it('CompetencyPage 关闭态传给 deriveBoard 的是空输入', async () => {
     const seen: Array<{ departments: unknown[]; allEmployees: unknown[] }> = [];
     vi.doMock('./boardScope', async (importOriginal) => {
       const actual = await importOriginal<typeof import('./boardScope')>();
@@ -165,7 +165,7 @@ describe('v2.3.1 Q-23：抽屉关闭时按空输入派生（不白烧 CPU）', (
         },
       };
     });
-    const { CompetencyDrawer } = await import('../components/CompetencyDrawer');
+    const { CompetencyPage } = await import('../components/CompetencyDrawer');
         const emp: Employee = { id: 'e1', name: 'A', employeeId: 'E1', level: 'L1' };
     const dept: Department = {
       id: 'd1',
@@ -176,7 +176,7 @@ describe('v2.3.1 Q-23：抽屉关闭时按空输入派生（不白烧 CPU）', (
       employees: [emp],
     };
     render(
-      <CompetencyDrawer
+      <CompetencyPage
         open={false}
         onClose={() => {}}
         competencySummaries={new Map()}

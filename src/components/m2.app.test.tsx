@@ -10,6 +10,9 @@ import type { Employee, Department } from '../types';
  * 走真实 App + 工作区 + 组件，验证 HRBP 校准录入、同日修订写入与复核留痕的落库结果。
  */
 
+/** V2.4.0：胜任度 / 健康度已是**页面级**子界面（不再是抽屉弹窗） */
+const competencyPage = () => document.querySelector('[data-page="competency"]') as HTMLElement;
+
 const storage = new Map<string, string>();
 const t = '2026-09-01T00:00:00.000Z';
 
@@ -126,7 +129,7 @@ describe('M2 应用入口：校准 / 修订 / 复核留痕', () => {
     render(<App />);
     // 打开胜任度看板 → 展开员工 → 进入详情
     fireEvent.click(screen.getByRole('button', { name: '胜任度' }));
-    const drawer = screen.getByRole('dialog', { name: '胜任度看板' });
+    const drawer = competencyPage();
     fireEvent.click(within(drawer).getByRole('button', { name: /研发部\s*1 人/ }));
     fireEvent.click(within(drawer).getByTitle('展开员工'));
     fireEvent.click(within(drawer).getByRole('button', { name: '查看 M2员工 的胜任度详情' }));

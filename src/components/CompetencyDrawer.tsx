@@ -1,17 +1,5 @@
-import { useDialogFocus } from '../utils/useDialogFocus';
 import { useMemo, useState } from 'react';
-import {
-  X,
-  Target,
-  Briefcase,
-  ChevronDown,
-  ChevronRight,
-  Building2,
-  ClipboardList,
-  SlidersHorizontal,
-  AlertTriangle,
-  UserMinus,
-} from 'lucide-react';
+import { Target, Briefcase, ChevronDown, ChevronRight, Building2, ClipboardList, SlidersHorizontal, AlertTriangle, UserMinus } from 'lucide-react';
 import { Assessment, CompetencyModel, Department, Employee, LevelConfig, MatchStatus, Position, PositionAssignment } from '../types';
 import { MatchResult } from '../utils/match';
 import { CompetencySummary } from '../utils/competency';
@@ -24,6 +12,7 @@ import {
 } from '../utils/boardScope';
 import { employeeLevelGap } from '../utils/analytics';
 import { COMPETENCY_STYLE, COMPETENCY_LABEL, CompetencyStatus, fmt } from '../utils/statusUI';
+import { SubPageShell } from './SubPageShell';
 
 /**
  * —— v2.2.0 / v2.3 M3 胜任度看板抽屉 ——
@@ -147,7 +136,7 @@ interface CompetencyDrawerProps {
   confirmedNotCompetent?: ReadonlySet<string>;
 }
 
-export function CompetencyDrawer({
+export function CompetencyPage({
   open,
   onClose,
   competencySummaries,
@@ -204,7 +193,6 @@ export function CompetencyDrawer({
       levelConfigs, competencySummaries, emptySummaries, matchStates, confirmedNotCompetent, selectedDeptId, includeChildren, filter],
   );
 
-  const dialogRef = useDialogFocus(open, onClose);
   const matchById = useMemo(
     () => new Map<string, MatchResult>(matchStates.map((r) => [r.employeeId, r])),
     [matchStates],
@@ -312,49 +300,35 @@ export function CompetencyDrawer({
   };
 
   return (
-    <div className="fixed inset-0 z-[80]">
-      {/* 轻遮罩 */}
-      <div className="absolute inset-0 bg-slate-900/10 backdrop-blur-[2px]" onClick={onClose} />
-      {/* 抽屉 */}
-      <aside ref={dialogRef} role="dialog" aria-modal="true" aria-label="胜任度看板" tabIndex={-1} className="absolute inset-y-0 right-0 competency-drawer w-[760px] max-w-full bg-white border-l border-white/40 shadow-2xl flex flex-col animate-slideInRight">
-        {/* 头部 */}
-        <div className="flex flex-wrap items-center justify-between gap-4 px-5 py-4 border-b border-slate-200">
-          <div>
-            <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-              <Target className="w-4 h-4 text-indigo-500" />
-              {selectedDeptId ? `${board.scopeLabel.split('（')[0]} · 胜任度` : '胜任度'}
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              选择部门查看岗位和人员，点击姓名复核评分依据
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onStartBatch}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 transition-all"
-            >
-              <ClipboardList className="w-4 h-4" />
-              发起批量评估
-            </button>
-            <button
-              onClick={onOpenModelConfig}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium text-slate-600 border border-slate-200 bg-white/70 hover:bg-slate-50 transition-colors"
-              title="维度配置：新增/停用/权重/定义"
-            >
-              <SlidersHorizontal className="w-4 h-4" />
-              维度配置
-            </button>
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-600 transition-colors"
-              aria-label="关闭"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-5">
+    /*
+      V2.4.0：由**抽屉弹窗**改为**页面级子界面**（用户要求与「岗位与编制」一致）。
+      内部逻辑（看板派生、范围下钻、灯号、下钻到人）一行未动，只换外壳。
+    */
+    <SubPageShell
+      name="competency"
+      title={selectedDeptId ? `${board.scopeLabel.split('（')[0]} · 胜任度` : '胜任度'}
+      subtitle="选择部门查看岗位和人员，点击姓名复核评分依据"
+      icon={<Target className="w-5 h-5 text-indigo-500" />}
+      onBack={onClose}
+      actions={<>
+        <button
+          onClick={onStartBatch}
+          className="flex items-center gap-1.5 h-9 px-3.5 rounded-xl text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 transition-all"
+        >
+          <ClipboardList className="w-4 h-4" />
+          发起批量评估
+        </button>
+        <button
+          onClick={onOpenModelConfig}
+          className="flex items-center gap-1.5 h-9 px-3.5 rounded-xl text-sm font-medium text-slate-600 border border-slate-200 bg-white/70 hover:bg-slate-50 transition-colors"
+          title="维度配置：新增/停用/权重/定义"
+        >
+          <SlidersHorizontal className="w-4 h-4" />
+          维度配置
+        </button>
+      </>}
+    >
+      <div className="space-y-5">
           {/* 常驻图例 */}
           <LegendBar />
 
@@ -718,7 +692,6 @@ export function CompetencyDrawer({
             本页组织指标 / 岗位缺口 / 完整度 / 风险各有口径，不合成总分；只呈现可追溯依据，不自动定级 / 晋升 / 淘汰。
           </p>
         </div>
-      </aside>
-    </div>
+    </SubPageShell>
   );
 }

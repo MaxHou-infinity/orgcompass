@@ -88,7 +88,8 @@ describe('v2.3.2 备份与恢复入口必须挨着（用户反馈的核心缺陷
     return {
       onEmployeeFileUpload: vi.fn(), onOrgTemplateUpload: vi.fn(), onExportPng: vi.fn(),
       onExportExcel: vi.fn(), onReset: vi.fn(), onLoadTestData: vi.fn(), onCreateDepartment: vi.fn(),
-      onOpenHealth: vi.fn(), onOpenReport: vi.fn(), onExportProject: vi.fn(), onRestoreProject: vi.fn(),
+      onOpenReport: vi.fn(), onExportProject: vi.fn(), onRestoreProject: vi.fn(),
+      onDownloadEmployeeTemplate: vi.fn(), onDownloadOrgTemplate: vi.fn(), onOpenSamplePicker: vi.fn(),
       onRefreshCanvas: vi.fn(), departments: [], hasData: true, hasEmployees: false, hasOrgTemplate: false,
     };
   }

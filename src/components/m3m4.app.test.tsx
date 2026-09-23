@@ -10,6 +10,12 @@ import type { Department, Employee } from '../types';
  * 看板抽屉（统一范围派生 + 筛选 + 下钻）与岗位缺口清单（当前场景直读 + 导出）在真实 App 中可用。
  */
 
+/** V2.4.0：「岗位与编制」是页面级子界面（不是弹窗），用 data-page 锚点取容器 */
+const boardPage = () => document.querySelector('[data-page="position-board"]') as HTMLElement;
+
+/** V2.4.0：胜任度 / 健康度已是**页面级**子界面（不再是抽屉弹窗） */
+const competencyPage = () => document.querySelector('[data-page="competency"]') as HTMLElement;
+
 const storage = new Map<string, string>();
 const t = '2026-09-01T00:00:00.000Z';
 
@@ -111,7 +117,7 @@ describe('M3 看板：统一范围、筛选与下钻', () => {
   it('展示五类口径，且筛选与下钻联动', () => {
     seed(); render(<App />);
     fireEvent.click(screen.getByRole('button', { name: '胜任度' }));
-    const drawer = screen.getByRole('dialog', { name: '胜任度看板' });
+    const drawer = competencyPage();
 
     // 五块口径并列（不合成总分）
     for (const label of ['组织指标', '岗位缺口', '评价完整度', '能力风险 · 待复核']) {
@@ -143,7 +149,7 @@ describe('M3 看板：统一范围、筛选与下钻', () => {
     storage.set(PROJECT_STORAGE_KEY, JSON.stringify(p));
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: '胜任度' }));
-    const drawer = screen.getByRole('dialog', { name: '胜任度看板' });
+    const drawer = competencyPage();
     expect(within(drawer).getByText(/全公司另有 1 人已入名册但未进入组织架构/)).toBeTruthy();
     expect(within(drawer).queryByText('未入架构')).toBeNull(); // 不进入明细
   });
@@ -178,15 +184,16 @@ describe('T09 回归：缺口清单与胜任度看板同源（岗位只存在于
 
     // 1) 胜任度看板（既有正确路径）
     fireEvent.click(screen.getByRole('button', { name: '胜任度' }));
-    const drawer = screen.getByRole('dialog', { name: '胜任度看板' });
+    const drawer = competencyPage();
     expect(within(drawer).getByText('体验验证岗位')).toBeTruthy();
     const drawerGap = within(drawer).getByText('岗位缺口').parentElement!;
     expect(within(drawerGap).getByText('1')).toBeTruthy(); // 待补 1
-    fireEvent.click(within(drawer).getByRole('button', { name: '关闭' }));
+    fireEvent.click(within(drawer).getByRole('button', { name: '返回画布' }));
 
     // 2) 缺口清单（修复前为 岗位 0 / 0、待补 0）
-    fireEvent.click(screen.getByRole('button', { name: '缺口清单' }));
-    const modal = screen.getByRole('dialog', { name: '岗位缺口清单' });
+    // V2.4.0：缺口清单已并入**页面级**「岗位与编制」子界面（不再是弹窗）
+    fireEvent.click(screen.getByRole('button', { name: '岗位与编制' }));
+    const modal = boardPage();
     expect(within(modal).getByText(/岗位 1 \/ 1/)).toBeTruthy();
     expect(within(modal).getByText('体验验证岗位')).toBeTruthy();
     const pendingCard = within(modal).getByText('待补人数').parentElement!;
@@ -197,8 +204,9 @@ describe('T09 回归：缺口清单与胜任度看板同源（岗位只存在于
   it('修复后导出的 Excel 含该岗位行（界面与导出一致）', async () => {
     seedTreeOnlyPositions();
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '缺口清单' }));
-    const modal = screen.getByRole('dialog', { name: '岗位缺口清单' });
+    // V2.4.0：缺口清单已并入**页面级**「岗位与编制」子界面（不再是弹窗）
+    fireEvent.click(screen.getByRole('button', { name: '岗位与编制' }));
+    const modal = boardPage();
     await act(async () => {
       fireEvent.click(within(modal).getByRole('button', { name: '导出 Excel' }));
     });
@@ -216,10 +224,11 @@ describe('T09 回归：缺口清单与胜任度看板同源（岗位只存在于
 describe('M4 岗位缺口清单：当前场景直读与导出', () => {
   it('从当前场景打开清单，展示待补/超额与成本缺失，不要求第二个场景', () => {
     seed(); render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '缺口清单' }));
-    const modal = screen.getByRole('dialog', { name: '岗位缺口清单' });
+    // V2.4.0：缺口清单已并入**页面级**「岗位与编制」子界面（不再是弹窗）
+    fireEvent.click(screen.getByRole('button', { name: '岗位与编制' }));
+    const modal = boardPage();
 
-    expect(within(modal).getByText('岗位缺口清单')).toBeTruthy();
+    expect(within(modal).getByText('岗位与编制')).toBeTruthy();
     // 后端岗 编制 3 / 占用 2 → 待补 1；无依据岗 编制 2 / 占用 0 → 待补 2；销售岗 编制 5 / 占用 1 → 待补 4
     expect(within(modal).getByText('后端岗')).toBeTruthy();
     expect(within(modal).getByText('无依据岗')).toBeTruthy();
@@ -237,8 +246,9 @@ describe('M4 岗位缺口清单：当前场景直读与导出', () => {
 
   it('按部门筛选后导出 Excel，消费与界面同一份结果', async () => {
     seed(); render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '缺口清单' }));
-    const modal = screen.getByRole('dialog', { name: '岗位缺口清单' });
+    // V2.4.0：缺口清单已并入**页面级**「岗位与编制」子界面（不再是弹窗）
+    fireEvent.click(screen.getByRole('button', { name: '岗位与编制' }));
+    const modal = boardPage();
 
     fireEvent.change(within(modal).getByRole('combobox', { name: '部门范围' }), { target: { value: 'dev' } });
     // 研发部（含下级）只有后端组两个岗位 → 销售岗被排除
@@ -254,7 +264,7 @@ describe('M4 岗位缺口清单：当前场景直读与导出', () => {
     // 把 buildGapListExcelBytes 改成必抛异常后本文件仍 6/6 全绿。
     // 现在断言真实行为：确实调用了保存、文件名/字节/MIME 正确、且逐行对应当前筛选范围。
     // 按「本用例的场景名」筛选调用，避免任何跨用例的异步泄漏影响判别力。
-    const expectedName = `岗位缺口清单-${loadProject()!.scenarios[0].name}.xlsx`;
+    const expectedName = `岗位与编制_${loadProject()!.scenarios[0].name}.xlsx`;
     const ownCalls = tauriMock.saveFile.mock.calls.filter((c) => c[0] === expectedName);
     expect(ownCalls).toHaveLength(1);
     const [, bytes, mime] = ownCalls[0] as [string, Uint8Array, string];
@@ -273,13 +283,14 @@ describe('M4 岗位缺口清单：当前场景直读与导出', () => {
   it('v2.3.1 T-01：导出失败必须给出可见错误提示，不得静默', async () => {
     seed(); render(<App />);
     tauriMock.saveFile.mockRejectedValue(new Error('disk full'));
-    fireEvent.click(screen.getByRole('button', { name: '缺口清单' }));
-    const modal = screen.getByRole('dialog', { name: '岗位缺口清单' });
+    // V2.4.0：缺口清单已并入**页面级**「岗位与编制」子界面（不再是弹窗）
+    fireEvent.click(screen.getByRole('button', { name: '岗位与编制' }));
+    const modal = boardPage();
     await act(async () => {
       fireEvent.click(within(modal).getByRole('button', { name: '导出 Excel' }));
     });
     await act(async () => { await Promise.resolve(); });
     const toasts = screen.getAllByRole('status').map((el) => el.textContent ?? '').join(' | ');
-    expect(toasts).toContain('导出岗位缺口清单失败');
+    expect(toasts).toContain('导出岗位与编制清单失败');
   });
 });
