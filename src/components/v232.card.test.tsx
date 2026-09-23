@@ -26,11 +26,11 @@ const position: Position = {
   headcount: 0, status: 'active', createdAt: 't', updatedAt: 't',
 };
 const employee: Employee = {
-  id: 'e1', name: '罗安 Ryan LUO', employeeId: '00494', level: 'L3.2',
+  id: 'e1', name: '林清越 Qingyue LIN', employeeId: 'S1001', level: 'L3.2',
   dept1: '技术部', positionId: 'p1',
 };
 const dept: Department = {
-  id: 'd1', name: 'D.A.2 精益制造与品质交付（Agency）', level: 1, expanded: true,
+  id: 'd1', name: 'XX.X 示例部门名（括号后缀）', level: 1, expanded: true,
   children: [], employees: [employee], positions: [position],
 };
 const employees = [employee];

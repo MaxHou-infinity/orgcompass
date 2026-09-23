@@ -79,11 +79,11 @@ describe('v2.3.2 P1 职级未在配置中必须可见', () => {
 
   it('检出「名册里有、配置里没有」的职级，并带人数与样例姓名', () => {
     const list = findUnconfiguredLevels(
-      [emp('张三', 'L1.1'), emp('罗安', 'L3.2Acting'), emp('李四', 'L3.2Acting'), emp('王五', 'NA')],
+      [emp('张三', 'L1.1'), emp('林清越', 'L3.2Acting'), emp('李四', 'L3.2Acting'), emp('王五', 'NA')],
       configs,
     );
     expect(list).toEqual([
-      { level: 'L3.2Acting', count: 2, sampleNames: ['罗安', '李四'] },
+      { level: 'L3.2Acting', count: 2, sampleNames: ['林清越', '李四'] },
       { level: 'NA', count: 1, sampleNames: ['王五'] },
     ]);
   });
@@ -97,13 +97,13 @@ describe('v2.3.2 P1 职级未在配置中必须可见', () => {
   });
 
   it('全部配得上时返回空数组（正常组织零噪音）', () => {
-    expect(findUnconfiguredLevels([emp('张三', 'L1.1'), emp('罗安', 'L3.2')], configs)).toEqual([]);
+    expect(findUnconfiguredLevels([emp('张三', 'L1.1'), emp('林清越', 'L3.2')], configs)).toEqual([]);
   });
 
   it('产出一条 major 级建议，并写清三个后果（颜色 / 成本 / 分布）', () => {
     const tree: Department[] = [{
       id: 'd1', name: '技术部', level: 1, expanded: true, positions: [], children: [],
-      employees: [emp('罗安', 'L3.2Acting')],
+      employees: [emp('林清越', 'L3.2Acting')],
     }];
     const suggestions = generateUnconfiguredLevelSuggestions(tree, configs);
     expect(suggestions).toHaveLength(1);
@@ -116,7 +116,7 @@ describe('v2.3.2 P1 职级未在配置中必须可见', () => {
   it('经 collectAllSuggestions 汇总（缺省不传配置则跳过，保持既有调用方安全）', () => {
     const tree: Department[] = [{
       id: 'd1', name: '技术部', level: 1, expanded: true, positions: [], children: [],
-      employees: [emp('罗安', 'L3.2Acting')],
+      employees: [emp('林清越', 'L3.2Acting')],
     }];
     const report = computeHealthReport(tree, DEFAULT_LEVELS);
     expect(collectAllSuggestions(report, tree, undefined, configs).some((s) => s.id === 'level-unconfigured')).toBe(true);
