@@ -33,7 +33,7 @@ interface DiagnosticReportProps {
 /** 只读组织架构快照（递归嵌套，非交互，适合打印/导出） */
 function ReportOrgChart({ departments }: { departments: Department[] }) {
   if (departments.length === 0) {
-    return <div className="text-sm text-slate-400 py-6 text-center">暂无部门数据</div>;
+    return <div className="text-sm text-slate-500 py-6 text-center">暂无部门数据</div>;
   }
   return (
     <div className="flex flex-wrap gap-3 justify-center">
@@ -59,7 +59,7 @@ function ReportNode({ dept }: { dept: Department }) {
       >
         <div className="text-sm font-bold text-slate-800">{dept.name}</div>
         {dept.leaderName && <div className="text-xs text-slate-500 mt-0.5">负责人 · {dept.leaderName}</div>}
-        <div className="text-xs text-slate-400 mt-1">
+        <div className="text-xs text-slate-500 mt-1">
           {dept.employees.length} 人
           {deptHeadcount(dept) != null ? ` / 编制 ${deptHeadcount(dept)}` : ''}
         </div>
@@ -177,7 +177,7 @@ export function DiagnosticReport({
             返回编辑
           </button>
           <span className="text-sm font-semibold text-slate-800">诊断报告</span>
-          <span className="text-xs text-slate-400">场景：{scenarioName}</span>
+          <span className="text-xs text-slate-500">场景：{scenarioName}</span>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -217,29 +217,29 @@ export function DiagnosticReport({
               <div className={`text-2xl font-bold ${STATUS_STYLE[summary.overall].text}`}>
                 {summary.overall === 'nodata' ? '暂不判定' : HEALTH_STATUS_LABEL[summary.overall]}
               </div>
-              <div className="text-xs text-slate-400 mt-1">红{summary.red} 黄{summary.yellow} 绿{summary.green} · 无数据{summary.unavailable}</div>
+              <div className="text-xs text-slate-500 mt-1">红{summary.red} 黄{summary.yellow} 绿{summary.green} · 无数据{summary.unavailable}</div>
             </div>
             <div className="rounded-2xl bg-white border border-slate-100 shadow-soft p-4">
               <div className="text-xs text-slate-500">总人数</div>
               <div className="text-2xl font-bold text-slate-900">{report.totals.totalEmployees}</div>
-              <div className="text-xs text-slate-400 mt-1">不含虚拟兼岗</div>
+              <div className="text-xs text-slate-500 mt-1">不含虚拟兼岗</div>
             </div>
             <div className="rounded-2xl bg-white border border-slate-100 shadow-soft p-4">
               <div className="text-xs text-slate-500">部门数</div>
               <div className="text-2xl font-bold text-slate-900">{report.totals.totalDepartments}</div>
-              <div className="text-xs text-slate-400 mt-1">全组织节点</div>
+              <div className="text-xs text-slate-500 mt-1">全组织节点</div>
             </div>
             <div className="rounded-2xl bg-white border border-slate-100 shadow-soft p-4">
               <div className="text-xs text-slate-500">编制缺口</div>
-              <div className={`text-2xl font-bold ${report.totals.totalGap == null ? 'text-slate-400' : report.totals.totalGap > 0 ? 'text-amber-600' : report.totals.totalGap < 0 ? 'text-red-600' : 'text-slate-900'}`}>
+              <div className={`text-2xl font-bold ${report.totals.totalGap == null ? 'text-slate-500' : report.totals.totalGap > 0 ? 'text-amber-600' : report.totals.totalGap < 0 ? 'text-red-600' : 'text-slate-900'}`}>
                 {report.totals.totalGap == null ? '未配置' : report.totals.totalGap > 0 ? `+${report.totals.totalGap}` : report.totals.totalGap}
               </div>
-              <div className="text-xs text-slate-400 mt-1">{report.totals.totalGap == null ? '未配置编制，无法计算缺口' : '仅已配置部门；正=空岗，负=超编'}</div>
+              <div className="text-xs text-slate-500 mt-1">{report.totals.totalGap == null ? '未配置编制，无法计算缺口' : '仅已配置部门；正=空岗，负=超编'}</div>
             </div>
             <div className="rounded-2xl bg-white border border-slate-100 shadow-soft p-4">
               <div className="text-xs text-slate-500">月人力成本</div>
               <div className="text-2xl font-bold text-slate-900">{fmtCost(report.totals.totalCost)}</div>
-              <div className="text-xs text-slate-400 mt-1">按职级成本映射</div>
+              <div className="text-xs text-slate-500 mt-1">按职级成本映射</div>
             </div>
           </div>
         </section>
@@ -261,21 +261,21 @@ export function DiagnosticReport({
                 <div className={`text-3xl font-bold ${STATUS_STYLE[m.status].text}`}>{fmt(m.value, m.unit)}</div>
                 {/* v2.0.9 口径小字：中位数/极值、P50/P90、内部/外部/兼岗 */}
                 {m.key === 'span' && m.spanBreakdown && (
-                  <div className="text-[11px] text-slate-400 mt-0.5 leading-snug">
+                  <div className="text-xs text-slate-500 mt-0.5 leading-snug">
                     极值 {fmt(m.spanBreakdown.min)}–{fmt(m.spanBreakdown.max)} 人 · {m.spanBreakdown.count} 名管理者（兼任已合并）
                   </div>
                 )}
                 {m.key === 'depth' && m.depthBreakdown && m.depthBreakdown.deptCount > 0 && (
-                  <div className="text-[11px] text-slate-400 mt-0.5 leading-snug">
+                  <div className="text-xs text-slate-500 mt-0.5 leading-snug">
                     P50={m.depthBreakdown.p50} 层 · 最深 {m.depthBreakdown.max} 层
                   </div>
                 )}
                 {m.key === 'managerRatio' && m.managerBreakdown && (
-                  <div className="text-[11px] text-slate-400 mt-0.5 leading-snug">
+                  <div className="text-xs text-slate-500 mt-0.5 leading-snug">
                     内部 {m.managerBreakdown.internalManagers}/{m.managerBreakdown.totalEmployees} · 外部 {m.managerBreakdown.externalManagers} · 兼岗 {m.managerBreakdown.multiDeptManagers}
                   </div>
                 )}
-                <div className="text-xs text-slate-400 mt-1 leading-snug">{m.verdict}</div>
+                <div className="text-xs text-slate-500 mt-1 leading-snug">{m.verdict}</div>
               </div>
             ))}
           </div>
@@ -289,11 +289,11 @@ export function DiagnosticReport({
             {report.l2.map((m) => (
               <div key={m.key} className="rounded-2xl border border-slate-100 shadow-soft p-4">
                 <div className="text-xs font-semibold text-slate-600 mb-1">{m.label}</div>
-                <div className="text-xs leading-snug text-slate-500">{METRIC_CALIBER_NOTES[m.key]}</div>
+                <div className="text-xs leading-snug text-slate-500">{METRIC_CALIBER_NOTES[m.key].replace(/\*\*/g, '')}</div>
               </div>
             ))}
           </div>
-          <p className="text-xs text-slate-400 mt-2 leading-snug">
+          <p className="text-xs text-slate-500 mt-2 leading-snug">
             指标用于发现值得讨论的结构性信号，不替代业务背景、人才判断与管理责任。阈值可在健康度面板中按企业阶段与口径调整。
           </p>
         </section>
@@ -379,7 +379,7 @@ export function DiagnosticReport({
                     <td className="py-2 text-right text-slate-700">{p.assignedCount}</td>
                     <td className="py-2 text-right">
                       {p.gap === null ? (
-                        <span className="text-slate-400">—</span>
+                        <span className="text-slate-500">—</span>
                       ) : (
                         <span className={p.gap > 0 ? 'text-amber-600' : p.gap < 0 ? 'text-red-600' : 'text-emerald-600'}>
                           {p.gap > 0 ? `+${p.gap} 空岗` : p.gap < 0 ? `${p.gap} 超编` : '满编'}
@@ -402,7 +402,7 @@ export function DiagnosticReport({
                 ))}
               </tbody>
             </table>
-            <p className="text-xs text-slate-400 mt-2 leading-snug">
+            <p className="text-xs text-slate-500 mt-2 leading-snug">
               岗位级缺口 = 平均月成本 × 缺口；目标职级/带宽优先，缺省回退在岗均值。冻结岗位不计缺口。
             </p>
           </section>
@@ -419,7 +419,7 @@ export function DiagnosticReport({
                 {suggestions.slice(0, 30).map((s) => (
                   <li key={s.id} className="flex items-start gap-2">
                     <span
-                      className={`shrink-0 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-full ring-1 font-medium ${SEV_STYLE[s.severity]}`}
+                      className={`shrink-0 mt-0.5 text-xs px-1.5 py-0.5 rounded-full ring-1 font-medium ${SEV_STYLE[s.severity]}`}
                     >
                       {SEV_LABEL[s.severity]}
                     </span>
@@ -435,7 +435,7 @@ export function DiagnosticReport({
           </div>
         </section>
 
-        <footer className="text-xs text-slate-400 text-center pt-4 border-t border-slate-100">
+        <footer className="text-xs text-slate-500 text-center pt-4 border-t border-slate-100">
           由组织罗盘 OrgCompass v{APP_VERSION} 生成 · {projectName} · {scenarioName} · {generatedAt}
         </footer>
       </div>

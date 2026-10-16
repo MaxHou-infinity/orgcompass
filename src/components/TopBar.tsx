@@ -5,6 +5,9 @@ import { ScenarioSwitcher } from './ScenarioSwitcher';
 import { APP_VERSION } from '../version';
 
 interface TopBarProps {
+  onFitView?: () => void;
+  onToggleSidebar?: () => void;
+  sidebarHidden?: boolean;
   scenarios: Scenario[];
   currentScenarioId: string;
   onSwitchScenario: (id: string) => void;
@@ -50,6 +53,7 @@ function SaveIndicator({ saveState, lastSavedAt }: { saveState: SaveState; lastS
 }
 
 export function TopBar({
+  onFitView, onToggleSidebar, sidebarHidden,
   scenarios,
   currentScenarioId,
   onSwitchScenario,
@@ -79,6 +83,7 @@ export function TopBar({
   return (
     <>
     <header className="workspace-header">
+      {onToggleSidebar && <button onClick={onToggleSidebar} aria-expanded={!sidebarHidden} aria-label={sidebarHidden ? "展开侧栏" : "收起侧栏"} className="px-2 py-2 rounded-lg text-sm text-slate-600 hover:bg-slate-100">侧栏</button>}
       {/*
           V2.4.0：顶部栏从两行合并为一行。
           - 删掉「版本号徽标」与「项目名」：项目名是 createProject 的默认值「组织架构项目」，
@@ -165,6 +170,7 @@ export function TopBar({
           场景对比
         </button>
 
+        {onFitView && <button onClick={onFitView} disabled={!hasData} className="px-2 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg disabled:opacity-50" title="按画布边界适配，最低 50%；更大组织可平移浏览">适配视图</button>}
         <div className="flex items-center gap-0.5 px-1 py-0.5 rounded-lg bg-slate-100/80 border border-slate-200/60">
           <button
             onClick={onZoomOut}

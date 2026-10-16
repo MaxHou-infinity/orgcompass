@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { memo, useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, ChevronRight, ChevronUp, User, Users, Building2, Briefcase, Trash2 } from 'lucide-react';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
@@ -481,7 +481,7 @@ function EmployeeList({
   );
 }
 
-export function DepartmentCard({
+export const DepartmentCard = memo(function DepartmentCard({
   department,
   onToggleExpand,
   onUpdateDepartment,
@@ -948,4 +948,4 @@ export function DepartmentCard({
         />
     </div>
   );
-}
+});

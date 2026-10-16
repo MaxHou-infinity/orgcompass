@@ -311,7 +311,7 @@ export function ManagementReport({
             返回编辑
           </button>
           <span className="text-sm font-semibold text-slate-800">管理层报告</span>
-          <span className="text-xs text-slate-400">
+          <span className="text-xs text-slate-500">
             {baseline.name} vs {target.name}
           </span>
         </div>
@@ -365,13 +365,13 @@ export function ManagementReport({
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
               <div className={`rounded-xl border ${diff.overall.baseline ? STATUS_STYLE[diff.overall.baseline].border : 'border-slate-200'} p-3`}>
                 <div className="text-xs text-slate-500">基线整体健康度</div>
-                <div className={`text-xl font-bold ${diff.overall.baseline ? STATUS_STYLE[diff.overall.baseline].text : 'text-slate-400'}`}>
+                <div className={`text-xl font-bold ${diff.overall.baseline ? STATUS_STYLE[diff.overall.baseline].text : 'text-slate-500'}`}>
                   {diff.overall.baseline ? HEALTH_STATUS_LABEL[diff.overall.baseline] : '无数据'}
                 </div>
               </div>
               <div className={`rounded-xl border ${diff.overall.target ? STATUS_STYLE[diff.overall.target].border : 'border-slate-200'} p-3`}>
                 <div className="text-xs text-slate-500">目标整体健康度</div>
-                <div className={`text-xl font-bold ${diff.overall.target ? STATUS_STYLE[diff.overall.target].text : 'text-slate-400'}`}>
+                <div className={`text-xl font-bold ${diff.overall.target ? STATUS_STYLE[diff.overall.target].text : 'text-slate-500'}`}>
                   {diff.overall.target ? HEALTH_STATUS_LABEL[diff.overall.target] : '无数据'}
                 </div>
               </div>
@@ -393,7 +393,7 @@ export function ManagementReport({
             <div className="text-sm text-slate-700">
               <div className="text-xs font-semibold text-slate-500 mb-1.5">关键变化（自动摘录，只陈述事实）</div>
               {highlights.length === 0 ? (
-                <p className="text-sm text-slate-400">两个场景未发现可摘录的差异。</p>
+                <p className="text-sm text-slate-500">两个场景未发现可摘录的差异。</p>
               ) : (
                 <ul className="space-y-1.5 list-disc list-inside text-sm leading-relaxed">
                   {highlights.map((h, i) => (
@@ -426,33 +426,33 @@ export function ManagementReport({
               <div key={m.key} className="rounded-2xl border border-slate-100 shadow-soft p-4">
                 <div className="text-xs text-slate-500">{m.label}</div>
                 <div className="mt-1 flex items-baseline justify-between">
-                  <span className={`text-xl font-bold tabular-nums ${m.baselineStatus ? STATUS_STYLE[m.baselineStatus].text : 'text-slate-400'}`}>
+                  <span className={`text-xl font-bold tabular-nums ${m.baselineStatus ? STATUS_STYLE[m.baselineStatus].text : 'text-slate-500'}`}>
                     {fmt(m.baseline, m.unit)}
                   </span>
                   <span className="text-slate-300 text-xs">→</span>
-                  <span className={`text-xl font-bold tabular-nums text-right ${m.targetStatus ? STATUS_STYLE[m.targetStatus].text : 'text-slate-400'}`}>
+                  <span className={`text-xl font-bold tabular-nums text-right ${m.targetStatus ? STATUS_STYLE[m.targetStatus].text : 'text-slate-500'}`}>
                     {fmt(m.target, m.unit)}
                   </span>
                 </div>
                 <div className="mt-1 text-xs">
                   {m.comparable ? (
                     m.delta === null ? (
-                      <span className="text-slate-400">Δ —</span>
+                      <span className="text-slate-500">Δ —</span>
                     ) : (
-                      <span className={`font-medium ${m.delta > 0 ? 'text-sky-600' : m.delta < 0 ? 'text-slate-500' : 'text-slate-400'}`}>
+                      <span className={`font-medium ${m.delta > 0 ? 'text-sky-600' : m.delta < 0 ? 'text-slate-500' : 'text-slate-500'}`}>
                         Δ {m.delta > 0 ? '↑' : m.delta < 0 ? '↓' : '—'} {fmt(Math.abs(m.delta), m.unit)}
                       </span>
                     )
                   ) : (
-                    <span className="text-slate-400">无数据/不可比</span>
+                    <span className="text-slate-500">无数据/不可比</span>
                   )}
                 </div>
-                <div className="mt-1 flex items-center gap-2 text-[10px]">
-                  <span className={m.baselineStatus ? STATUS_STYLE[m.baselineStatus].text : 'text-slate-400'}>
+                <div className="mt-1 flex items-center gap-2 text-xs">
+                  <span className={m.baselineStatus ? STATUS_STYLE[m.baselineStatus].text : 'text-slate-500'}>
                     ● {m.baselineStatus ? HEALTH_STATUS_LABEL[m.baselineStatus] : '无数据'}
                   </span>
                   <span className="text-slate-300">→</span>
-                  <span className={m.targetStatus ? STATUS_STYLE[m.targetStatus].text : 'text-slate-400'}>
+                  <span className={m.targetStatus ? STATUS_STYLE[m.targetStatus].text : 'text-slate-500'}>
                     ● {m.targetStatus ? HEALTH_STATUS_LABEL[m.targetStatus] : '无数据'}
                   </span>
                 </div>
@@ -472,7 +472,7 @@ export function ManagementReport({
                 {diff.metrics.map((m) => (
                   <div key={m.key}>
                     <div className="text-xs font-semibold text-slate-600 mb-1">{m.label}</div>
-                    <div className="text-xs leading-snug text-slate-500">{METRIC_CALIBER_NOTES[m.key]}</div>
+                    <div className="text-xs leading-snug text-slate-500">{METRIC_CALIBER_NOTES[m.key].replace(/\*\*/g, '')}</div>
                   </div>
                 ))}
               </div>
@@ -484,7 +484,7 @@ export function ManagementReport({
         <section className="report-section">
           <h2 className="text-base font-bold text-slate-900 mb-3">部门结构差异</h2>
           {diff.departmentDiffs.filter((d) => d.changeType !== 'unchanged').length === 0 ? (
-            <p className="text-sm text-slate-400">无部门差异。</p>
+            <p className="text-sm text-slate-500">无部门差异。</p>
           ) : (
             <table className="w-full text-sm">
               <thead>
@@ -515,7 +515,7 @@ export function ManagementReport({
                       <td className="py-2 text-right tabular-nums text-slate-700">
                         {fmt(d.baseline?.headcount ?? null)} → {fmt(d.target?.headcount ?? null)}
                         {d.delta.headcount !== null && (
-                          <span className="block text-[10px] text-slate-400">
+                          <span className="block text-xs text-slate-500">
                             Δ {d.delta.headcount > 0 ? '+' : ''}
                             {d.delta.headcount}
                           </span>
@@ -524,7 +524,7 @@ export function ManagementReport({
                       <td className="py-2 text-right tabular-nums text-slate-700">
                         {d.baseline?.actual ?? 0} → {d.target?.actual ?? 0}
                         {d.delta.actual !== null && (
-                          <span className="block text-[10px] text-slate-400">
+                          <span className="block text-xs text-slate-500">
                             Δ {d.delta.actual > 0 ? '+' : ''}
                             {d.delta.actual}
                           </span>
@@ -533,9 +533,9 @@ export function ManagementReport({
                       <td className="py-2 text-right tabular-nums text-slate-700">
                         {fmt(d.baseline?.gap ?? null)} → {fmt(d.target?.gap ?? null)}
                         {d.delta.gap === null ? (
-                          <span className="block text-[10px] text-slate-400">无数据/不可比</span>
+                          <span className="block text-xs text-slate-500">无数据/不可比</span>
                         ) : (
-                          <span className="block text-[10px] text-slate-400">
+                          <span className="block text-xs text-slate-500">
                             Δ {d.delta.gap > 0 ? '+' : ''}
                             {d.delta.gap}
                           </span>
@@ -544,9 +544,9 @@ export function ManagementReport({
                       <td className="py-2 text-right tabular-nums text-slate-700">
                         {fmtCost(d.baseline?.gapCost ?? null)} → {fmtCost(d.target?.gapCost ?? null)}
                         {d.delta.gapCost === null ? (
-                          <span className="block text-[10px] text-slate-400">无数据/不可比</span>
+                          <span className="block text-xs text-slate-500">无数据/不可比</span>
                         ) : (
-                          <span className="block text-[10px] text-slate-400">
+                          <span className="block text-xs text-slate-500">
                             Δ {d.delta.gapCost > 0 ? '+' : ''}
                             {d.delta.gapCost}w
                           </span>
@@ -563,7 +563,7 @@ export function ManagementReport({
         <section className="report-section">
           <h2 className="text-base font-bold text-slate-900 mb-3">人员调动清单</h2>
           {diff.personnelChanges.length === 0 ? (
-            <p className="text-sm text-slate-400">无人员调动。</p>
+            <p className="text-sm text-slate-500">无人员调动。</p>
           ) : (
             <table className="w-full text-sm">
               <thead>
@@ -594,7 +594,7 @@ export function ManagementReport({
                       {p.type === 'moved-dept' || p.type === 'added' ? (p.toDeptName ?? '未入架构') : '—'}
                       {p.type === 'moved-reporting' ? (p.toLeaderName ?? '—') : ''}
                     </td>
-                    <td className="py-2 text-slate-400 text-xs">
+                    <td className="py-2 text-slate-500 text-xs">
                       {p.isVirtual ? '兼岗' : ''}
                       {p.type === 'added' && !p.toDeptName ? '未入架构' : ''}
                     </td>
@@ -614,7 +614,7 @@ export function ManagementReport({
               <div className="text-xl font-bold tabular-nums text-slate-800">
                 {fmt(bT.totalHeadcount)} → {fmt(tT.totalHeadcount)}
               </div>
-              <div className="text-[11px] text-slate-400">
+              <div className="text-xs text-slate-500">
                 {diff.totals.headcountDelta === null ? '无数据/不可比' : diff.totals.headcountDelta > 0 ? `+${diff.totals.headcountDelta} 人` : `${diff.totals.headcountDelta} 人`}
               </div>
             </div>
@@ -623,7 +623,7 @@ export function ManagementReport({
               <div className="text-xl font-bold tabular-nums text-slate-800">
                 {bT.totalEmployees} → {tT.totalEmployees}
               </div>
-              <div className="text-[11px] text-slate-400">
+              <div className="text-xs text-slate-500">
                 {tT.totalEmployees - bT.totalEmployees > 0
                   ? `+${tT.totalEmployees - bT.totalEmployees} 人`
                   : `${tT.totalEmployees - bT.totalEmployees} 人`}
@@ -634,7 +634,7 @@ export function ManagementReport({
               <div className="text-xl font-bold tabular-nums text-slate-800">
                 {fmt(bT.totalGap)} → {fmt(tT.totalGap)}
               </div>
-              <div className="text-[11px] text-slate-400">
+              <div className="text-xs text-slate-500">
                 {diff.totals.gapDelta === null ? '无数据/不可比' : diff.totals.gapDelta > 0 ? `+${diff.totals.gapDelta} 人` : `${diff.totals.gapDelta} 人`}
               </div>
             </div>
@@ -643,7 +643,7 @@ export function ManagementReport({
               <div className="text-xl font-bold tabular-nums text-slate-800">
                 {fmtCost(bT.totalCost)} → {fmtCost(tT.totalCost)}
               </div>
-              <div className="text-[11px] text-slate-400">
+              <div className="text-xs text-slate-500">
                 {diff.totals.costDelta === null
                   ? '无数据/不可比'
                   : `Δ ${diff.totals.costDelta > 0 ? '+' : ''}${diff.totals.costDelta}w`}
@@ -654,7 +654,7 @@ export function ManagementReport({
               <div className="text-xl font-bold tabular-nums text-slate-800">
                 {fmtCost(bT.totalGapCost)} → {fmtCost(tT.totalGapCost)}
               </div>
-              <div className="text-[11px] text-slate-400">
+              <div className="text-xs text-slate-500">
                 {diff.totals.gapCostDelta === null ? '无数据/不可比' : `Δ ${diff.totals.gapCostDelta > 0 ? '+' : ''}${diff.totals.gapCostDelta}w`}
               </div>
             </div>
@@ -713,7 +713,7 @@ export function ManagementReport({
                 ))}
               </tbody>
             </table>
-            <p className="text-xs text-slate-400 mt-2 leading-snug">
+            <p className="text-xs text-slate-500 mt-2 leading-snug">
               缺成本显示「无法估算」而非 0；冻结与未配置编制单独表达，不当作满编或零缺口。
               成本依据顺序：岗位职级带宽 → 在岗目标职级成本均值 → 在岗实际成本均值。
               本清单不含个人姓名、工号、个人薪酬、评分或复核依据。
@@ -741,7 +741,7 @@ export function ManagementReport({
         </section>
 
         {/* ⑧ 页脚 */}
-        <footer className="text-xs text-slate-400 text-center pt-4 border-t border-slate-100">
+        <footer className="text-xs text-slate-500 text-center pt-4 border-t border-slate-100">
           由组织罗盘 OrgCompass v{APP_VERSION} 生成 · {projectName} · {baseline.name} vs {target.name} · {generatedAt}
         </footer>
       </div>

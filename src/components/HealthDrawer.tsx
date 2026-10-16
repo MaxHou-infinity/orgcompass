@@ -104,12 +104,12 @@ function CaliberNote({ note }: { note: string }) {
         type="button"
         aria-label="指标口径说明"
         onClick={() => setOpen((o) => !o)}
-        className="w-4 h-4 rounded-full bg-slate-200 hover:bg-slate-300 text-slate-500 grid place-items-center text-[10px] font-bold leading-none"
+        className="w-4 h-4 rounded-full bg-slate-200 hover:bg-slate-300 text-slate-500 grid place-items-center text-xs font-bold leading-none"
       >
         ?
       </button>
       {open && (
-        <span className="absolute right-0 top-5 z-20 w-64 rounded-lg bg-white/95 backdrop-blur border border-slate-200 shadow-lg p-2.5 text-[11px] text-slate-600 leading-snug">
+        <span className="absolute right-0 top-5 z-20 w-64 rounded-lg bg-white/95 backdrop-blur border border-slate-200 shadow-lg p-2.5 text-xs text-slate-600 leading-snug">
           {note}
         </span>
       )}
@@ -130,12 +130,12 @@ function SpanCardExtra({
   const [open, setOpen] = useState(false);
   const b = m.spanBreakdown;
   if (!b || b.count === 0) return null;
-  if (b.unresolvedReports) return <p className="mt-2 text-[11px] text-slate-500">汇报关系待核对 {b.unresolvedReports} 条，暂不展示直管判读。</p>;
+  if (b.unresolvedReports) return <p className="mt-2 text-xs text-slate-500">汇报关系待核对 {b.unresolvedReports} 条，暂不展示直管判读。</p>;
   const widest = b.distribution[0];
   const exceeded = b.max !== null && b.max > thresholds.spanWarnMax;
   return (
     <div className="mt-2">
-      <div className="text-[11px] text-slate-500 leading-snug">
+      <div className="text-xs text-slate-500 leading-snug">
         极值 {fmt(b.min)}–{fmt(b.max)} 人 · {b.count} 名管理者（兼任已合并）
         {widest && (
           <span className={exceeded ? 'text-red-500 font-medium' : 'text-slate-500'}>
@@ -148,14 +148,14 @@ function SpanCardExtra({
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
-          className="mt-1 text-[10px] text-indigo-500 hover:underline font-medium"
+          className="mt-1 text-xs text-indigo-500 hover:underline font-medium"
         >
           {open ? '收起直管分布 ▲' : '展开直管分布 ▼'}
         </button>
       )}
       {open && (
         <div className="mt-1.5 max-h-44 overflow-y-auto rounded-xl border border-slate-100 bg-white/60">
-          <table className="w-full text-[11px]">
+          <table className="w-full text-xs">
             <thead>
               <tr className="text-slate-500 border-b border-slate-100 text-left">
                 <th className="px-2.5 py-1.5 font-medium">部门</th>
@@ -211,7 +211,7 @@ function DepthCardExtra({ m, onFocusDept }: { m: L2Metric; onFocusDept: (deptId:
   const b = m.depthBreakdown;
   if (!b || b.deptCount === 0) return null;
   return (
-    <div className="mt-2 text-[11px] text-slate-500 leading-snug">
+    <div className="mt-2 text-xs text-slate-500 leading-snug">
       <div>
         P50={b.p50} 层 · P90={b.p90} 层 · 最深 {b.max} 层 · {b.deptCount} 个部门
       </div>
@@ -242,7 +242,7 @@ function ManagerCardExtra({ m }: { m: L2Metric }) {
       ? Math.round((b.internalManagers / b.nonManagerEmployees) * 100)
       : null;
   return (
-    <div className="mt-2 text-[11px] text-slate-500 leading-snug space-y-0.5">
+    <div className="mt-2 text-xs text-slate-500 leading-snug space-y-0.5">
       <div>
         内部 {b.internalManagers} ÷ {b.totalEmployees} 人（含管理者）= {fmt(m.value, '%')}
       </div>
@@ -322,7 +322,7 @@ function SuggestionItem({ s }: { s: HealthSuggestion }) {
   const st = SEVERITY_STYLE[s.severity];
   return (
     <div className="flex items-start gap-3 rounded-2xl bg-white/70 backdrop-blur-xl border border-white/50 shadow-card p-3.5">
-      <span className={`w-6 h-6 rounded-full grid place-items-center text-[10px] font-bold shrink-0 mt-0.5 ${st.badge}`}>
+      <span className={`w-6 h-6 rounded-full grid place-items-center text-xs font-bold shrink-0 mt-0.5 ${st.badge}`}>
         {SEVERITY_LABEL[s.severity]}
       </span>
       <div className="min-w-0 flex-1">
@@ -496,7 +496,7 @@ export function HealthPage({
             <div className="rounded-2xl bg-white/70 backdrop-blur-xl border border-white/50 shadow-card p-4">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-semibold text-slate-600">企业阶段基准</span>
-                <span className="text-[10px] text-slate-500">仅供校准，非行业规范</span>
+                <span className="text-xs text-slate-500">仅供校准，非行业规范</span>
               </div>
               <div className="flex gap-1.5">
                 {(Object.keys(STAGE_PRESETS) as OrganizationStage[]).map((s) => {
@@ -518,7 +518,7 @@ export function HealthPage({
                   );
                 })}
               </div>
-              <p className="text-[11px] text-slate-500 mt-2 leading-snug">
+              <p className="text-xs text-slate-500 mt-2 leading-snug">
                 {stage ? STAGE_PRESETS[stage].description : '当前使用自定义阈值。基准仅供参考，需结合本企业业务阶段校准。'}
               </p>
             </div>
@@ -551,7 +551,7 @@ export function HealthPage({
                   </div>
                   <div className="mt-3">
                     <LevelDistributionBar distribution={d.levelDistribution} configs={configs} />
-                    <div className="mt-1 text-[10px] text-slate-500">
+                    <div className="mt-1 text-xs text-slate-500">
                       {Object.keys(d.levelDistribution).length} 个职级
                     </div>
                   </div>
@@ -571,7 +571,7 @@ export function HealthPage({
               </h3>
               <button
                 onClick={() => setThresholdsOpen((v) => !v)}
-                className={`flex items-center gap-1 text-[10px] font-medium transition-colors ${
+                className={`flex items-center gap-1 text-xs font-medium transition-colors ${
                   thresholdsOpen ? 'text-indigo-600' : 'text-slate-500 hover:text-slate-600'
                 }`}
               >
@@ -612,7 +612,7 @@ export function HealthPage({
                   <span className="text-xs font-semibold text-slate-600">阈值配置（存 localStorage）</span>
                   <button
                     onClick={resetThresholds}
-                    className="text-[10px] text-slate-500 hover:text-red-500 transition-colors font-medium"
+                    className="text-xs text-slate-500 hover:text-red-500 transition-colors font-medium"
                   >
                     恢复默认
                   </button>
@@ -654,7 +654,7 @@ export function HealthPage({
                 <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
                 组织优化建议
               </h3>
-              <span className="text-[10px] text-slate-500">基于健康度自动生成 · {suggestions.length} 条</span>
+              <span className="text-xs text-slate-500">基于健康度自动生成 · {suggestions.length} 条</span>
             </div>
             {suggestions.length === 0 ? (
               <div className="rounded-2xl bg-white/70 backdrop-blur-xl border border-white/50 shadow-card p-4 text-sm text-slate-500 text-center">
@@ -678,7 +678,7 @@ export function HealthPage({
             </h3>
 
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-[10px] text-slate-500">
+              <span className="text-xs text-slate-500">
                 人数和成本包含下级部门；编制来源与缺口成本依据可悬停查看（成本单位：万元/月）。在途 offer、待入职和待离职尚未计入。
               </span>
             </div>

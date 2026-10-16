@@ -13,6 +13,12 @@ export interface ZoomWheelResult {
   steps: number;
 }
 
+/** 保留现有 50–200% 缩放契约，适配不超过 100%，非法几何不污染持久化。 */
+export function fitViewZoom(width: number, height: number, availableWidth: number, availableHeight: number): number {
+  if (![width, height, availableWidth, availableHeight].every((n) => Number.isFinite(n) && n > 0)) return 100;
+  return Math.max(50, Math.min(100, Math.floor(Math.min(availableWidth / width, availableHeight / height) * 100)));
+}
+
 /**
  * 处理一次 wheel 事件，返回应执行的缩放步数与剩余累积量。
  * @param prevAccum 上一次的累积 delta

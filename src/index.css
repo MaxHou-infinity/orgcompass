@@ -298,7 +298,7 @@ body {
 }
 .workspace-brand { display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin-right: 2px; }
 .workspace-save { display: flex; align-items: center; gap: 10px; min-width: 0; flex-shrink: 0; }
-.workspace-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
+.workspace-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; min-width: 0; max-width: 100%; }
 /* 右侧工具组靠右推；换行后仍自成一组 */
 .workspace-tools { margin-left: auto; }
 .workspace-header button { white-space: nowrap; flex-shrink: 0; }

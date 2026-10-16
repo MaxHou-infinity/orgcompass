@@ -1,3 +1,4 @@
+import { fitViewZoom } from './utils/zoom';
 import { exportCanvas } from './utils/exportCanvas';
 import { useRef, useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
@@ -180,6 +181,7 @@ export default function App() {
   const [diffBaselineId, setDiffBaselineId] = useState<string>('');
   const [diffTargetId, setDiffTargetId] = useState<string>('');
   const [mgmtReportOpen, setMgmtReportOpen] = useState(false);
+  const [sidebarHidden, setSidebarHidden] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1100);
   const [toast, setToast] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchHighlight, setSearchHighlight] = useState<SearchHighlight>(EMPTY_HIGHLIGHT);
@@ -243,6 +245,24 @@ export default function App() {
   useEffect(() => () => {
     if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
   }, []);
+
+  useEffect(() => {
+    setToast(null);
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
+  }, [view]);
+
+  const handleFitView = useCallback(() => {
+    setView('canvas');
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      const canvas = canvasRef.current;
+      const viewport = mainRef.current;
+      if (!canvas || !viewport) return;
+      const next = fitViewZoom(canvas.offsetWidth, canvas.offsetHeight, viewport.clientWidth - 48, viewport.clientHeight - 48);
+      setZoom(next);
+      viewport.scrollTo({ left: 0, top: 0 });
+      if (next === 50) showToast('已缩至 50%；超出视口的部分可平移查看');
+    }));
+  }, [setZoom, showToast]);
 
   // v2.0.7 首次进入引导：画布默认显示岗位/职级，提示可在左侧「画布显示」开关
   useEffect(() => {
@@ -1611,6 +1631,9 @@ export default function App() {
         }}>确认执行</button>
       </>}><p className="text-sm text-slate-700 whitespace-pre-line">{pendingAction?.description}</p></AppModal>
       <TopBar
+        onFitView={handleFitView}
+        onToggleSidebar={() => setSidebarHidden((prev) => !prev)}
+        sidebarHidden={sidebarHidden}
         scenarios={project.scenarios}
         currentScenarioId={project.currentScenarioId}
         onSwitchScenario={switchScenario}
@@ -1639,6 +1662,7 @@ export default function App() {
       />
 
       <div className="flex flex-1 overflow-hidden">
+        <div className={`workspace-sidebar-container ${sidebarHidden ? 'hidden' : 'flex'}`}>
         <Sidebar
           onEmployeeFileUpload={handleEmployeeFileUpload}
           onOrgTemplateUpload={handleOrgTemplateUpload}
@@ -1659,6 +1683,7 @@ export default function App() {
           onRefreshCanvas={handleRefreshCanvas}
         />
 
+        </div>
         <main
           ref={mainRef}
           className="workspace-canvas flex-1 min-w-0 overflow-auto p-6"

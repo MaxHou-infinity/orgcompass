@@ -90,7 +90,7 @@ export function OnboardingOverlay({ open, onClose, onDownloadTemplate, onLoadTem
           <div className="mt-7 flex items-center gap-3">
             <button
               onClick={onDownloadTemplate}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 text-white text-sm font-medium shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all"
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 transition-colors"
             >
               <Download className="w-4 h-4" />
               下载模板

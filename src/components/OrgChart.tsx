@@ -370,7 +370,7 @@ const renderTreeRecursive = (
             selectedEmpIds={selectedEmpIds}
             onToggleSelectEmp={onToggleSelectEmp}
             membersExpanded={membersExpandedIds.has(node.department.id)}
-            onToggleMembers={() => onToggleMemberExpanded(node.department.id)}
+            onToggleMembers={onToggleMemberExpanded}
             positionSummaries={positionSummaries}
             matchStates={matchStates}
             onSetPositionHeadcount={onSetPositionHeadcount}

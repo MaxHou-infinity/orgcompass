@@ -252,11 +252,11 @@ export function PositionBoardPage(props: PositionBoardPageProps) {
   );
 
   const gapCell = (r: { headcountStatus: string; pendingCount: number; overflowCount: number }) => {
-    if (r.headcountStatus === 'frozen') return <span className="text-[11px] text-slate-400">冻结</span>;
-    if (r.headcountStatus === 'unconfigured') return <span className="text-[11px] text-slate-400" title="编制 0 = 未配置，不计缺口">未配编制</span>;
-    if (r.pendingCount > 0) return <span className="text-[11px] font-medium text-amber-600">缺 {r.pendingCount}</span>;
-    if (r.overflowCount > 0) return <span className="text-[11px] font-medium text-red-600">超 {r.overflowCount}</span>;
-    return <span className="text-[11px] font-medium text-emerald-600">满编</span>;
+    if (r.headcountStatus === 'frozen') return <span className="text-xs text-slate-500">冻结</span>;
+    if (r.headcountStatus === 'unconfigured') return <span className="text-xs text-slate-500" title="编制 0 = 未配置，不计缺口">未配编制</span>;
+    if (r.pendingCount > 0) return <span className="text-xs font-medium text-amber-600">缺 {r.pendingCount}</span>;
+    if (r.overflowCount > 0) return <span className="text-xs font-medium text-red-600">超 {r.overflowCount}</span>;
+    return <span className="text-xs font-medium text-emerald-600">满编</span>;
   };
 
   return (
@@ -339,7 +339,7 @@ export function PositionBoardPage(props: PositionBoardPageProps) {
           { k: '未配置编制', v: totals.unconfigured, cls: 'text-slate-500' },
         ].map((c) => (
           <div key={c.k} className="rounded-xl border border-slate-200 bg-white px-3 py-2">
-            <div className="text-[10px] text-slate-500">{c.k}</div>
+            <div className="text-xs text-slate-500">{c.k}</div>
             <div className={`text-lg font-bold tabular-nums ${c.cls}`}>{c.v}</div>
           </div>
         ))}
@@ -357,10 +357,10 @@ export function PositionBoardPage(props: PositionBoardPageProps) {
               当前有 {positionless.length} 名员工处于无明确岗位状态
               {missing.length > 0 ? `（其中 ${missing.length} 人所在岗位已被删除）` : ''}
             </p>
-            <p className="text-[11px] opacity-90">
+            <p className="text-xs opacity-90">
               建议：新建岗位后把他们分配过去，或在上方对应岗位用「套岗」把他们调到其他岗位。
             </p>
-            <p className="text-[11px] opacity-90">
+            <p className="text-xs opacity-90">
               名单：{positionless.slice(0, 8).map((x) => `${x.employee.name}（${x.reason === 'missing-position' ? '岗位已删除' : '未套岗'}${x.deptName ? ` · ${x.deptName}` : ''}）`).join('、')}
               {positionless.length > 8 ? ` 等 ${positionless.length} 人` : ''}
             </p>
@@ -465,7 +465,7 @@ export function PositionBoardPage(props: PositionBoardPageProps) {
 
             {filteredRows.length === 0 && !createDraft && (
               <tr>
-                <td colSpan={7} className="px-3 py-10 text-center text-slate-400">
+                <td colSpan={7} className="px-3 py-10 text-center text-slate-500">
                   {rows.length === 0 ? '当前范围还没有岗位。点右上角「新增岗位」开始。' : '没有符合筛选条件的岗位。'}
                 </td>
               </tr>
@@ -486,8 +486,8 @@ export function PositionBoardPage(props: PositionBoardPageProps) {
                     >
                       {collapsed.has(g.deptId) ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                       <span className="truncate max-w-[220px]" title={g.deptPath}>{g.deptPath.split(' / ').slice(-1)[0]}</span>
-                      <span className="text-[10px] font-normal text-slate-400 truncate" title={g.deptPath}>{g.deptPath}</span>
-                      <span className="text-[10px] font-normal text-slate-500">· {g.rows.length} 个岗位</span>
+                      <span className="text-xs font-normal text-slate-500 truncate" title={g.deptPath}>{g.deptPath}</span>
+                      <span className="text-xs font-normal text-slate-500">· {g.rows.length} 个岗位</span>
                     </button>
                   </td>
                 </tr>
@@ -506,7 +506,7 @@ export function PositionBoardPage(props: PositionBoardPageProps) {
                           <div className="flex items-center gap-2">
                             <span className="text-slate-800 truncate max-w-[240px]" title={r.name}>{r.name}</span>
                             {editing ? null : (
-                              <button onClick={() => onLocateDept?.(r.departmentId)} className="shrink-0 text-[10px] text-slate-400 hover:text-indigo-600" title="在画布中定位该部门">定位</button>
+                              <button onClick={() => onLocateDept?.(r.departmentId)} className="shrink-0 text-xs text-slate-500 hover:text-indigo-600" title="在画布中定位该部门">定位</button>
                             )}
                           </div>
                         </td>
@@ -515,23 +515,23 @@ export function PositionBoardPage(props: PositionBoardPageProps) {
                         <td className="px-2 py-1.5 text-right tabular-nums text-slate-700 whitespace-nowrap">{r.primaryOccupied}</td>
                         <td className="px-2 py-1.5 whitespace-nowrap">{gapCell(r)}</td>
                         <td className="px-3 py-1.5 text-slate-600">
-                          {occ.real.length === 0 && occ.secondary.length === 0 ? <span className="text-slate-400">—</span> : (
+                          {occ.real.length === 0 && occ.secondary.length === 0 ? <span className="text-slate-500">—</span> : (
                             <span
                               className="block truncate max-w-[260px]"
                               title={`${occ.real.join('、')}${occ.secondary.length > 0 ? `（兼：${occ.secondary.join('、')}）` : ''}`}
                             >
                               {occ.real.join('、')}
-                              {occ.secondary.length > 0 && <span className="text-slate-400">（兼：{occ.secondary.join('、')}）</span>}
+                              {occ.secondary.length > 0 && <span className="text-slate-500">（兼：{occ.secondary.join('、')}）</span>}
                             </span>
                           )}
                         </td>
                         <td className="px-3 py-1.5 text-right whitespace-nowrap">
                           <button onClick={() => setAssignTarget(assignTarget === r.positionId ? null : r.positionId)}
-                            className="px-2 py-0.5 rounded-md text-[11px] text-indigo-600 bg-indigo-50 hover:bg-indigo-100" title="把某员工调到本岗位（会同时改所属部门）">套岗</button>
+                            className="px-2 py-0.5 rounded-md text-xs text-indigo-600 bg-indigo-50 hover:bg-indigo-100" title="把某员工调到本岗位（会同时改所属部门）">套岗</button>
                           <button onClick={() => setEditTarget(editing ? null : { positionId: r.positionId, draft: draftOf(r.departmentId, findDeptById(departments, r.departmentId)?.positions?.find((p) => p.id === r.positionId) ?? ({ id: r.positionId, departmentId: r.departmentId, name: r.name, headcount: r.headcount, status: r.status, createdAt: '', updatedAt: '' } as Position)) })}
-                            className="ml-1 px-2 py-0.5 rounded-md text-[11px] text-slate-600 bg-slate-100 hover:bg-slate-200">编辑</button>
+                            className="ml-1 px-2 py-0.5 rounded-md text-xs text-slate-600 bg-slate-100 hover:bg-slate-200">编辑</button>
                           <button onClick={() => onArchivePosition(r.departmentId, r.positionId)}
-                            className="ml-1 px-2 py-0.5 rounded-md text-[11px] text-red-600 bg-red-50 hover:bg-red-100" title="删除岗位（归档）：挂靠人员会进入「无明确岗位」提示">删除</button>
+                            className="ml-1 px-2 py-0.5 rounded-md text-xs text-red-600 bg-red-50 hover:bg-red-100" title="删除岗位（归档）：挂靠人员会进入「无明确岗位」提示">删除</button>
                         </td>
                       </tr>
                       {editing && (
@@ -586,8 +586,8 @@ export function PositionBoardPage(props: PositionBoardPageProps) {
                         <tr className="bg-indigo-50/30" data-assign-row={r.positionId}>
                           <td colSpan={7} className="px-3 py-2">
                             <div className="flex items-start gap-3">
-                              <div className="text-[11px] text-slate-500 max-h-40 overflow-y-auto rounded-lg border border-indigo-100 bg-white py-0.5 min-w-[280px]">
-                                {candidatesOf(r.positionId).length === 0 && <div className="px-2 py-1 text-slate-400">没有可调入的员工</div>}
+                              <div className="text-xs text-slate-500 max-h-40 overflow-y-auto rounded-lg border border-indigo-100 bg-white py-0.5 min-w-[280px]">
+                                {candidatesOf(r.positionId).length === 0 && <div className="px-2 py-1 text-slate-500">没有可调入的员工</div>}
                                 {candidatesOf(r.positionId).map((c) => (
                                   <button
                                     key={c.employee.id}
@@ -596,15 +596,15 @@ export function PositionBoardPage(props: PositionBoardPageProps) {
                                     data-candidate={c.employee.id}
                                   >
                                     <span className="text-slate-700">{c.employee.name}</span>
-                                    <span className="text-slate-400">（{c.employee.employeeId}）</span>
-                                    <span className="ml-auto text-[10px] text-slate-400">
+                                    <span className="text-slate-500">（{c.employee.employeeId}）</span>
+                                    <span className="ml-auto text-xs text-slate-500">
                                       现属 {c.deptName} › {c.curName}
                                       {c.sameDept && <span className="ml-1 text-amber-600">同部门</span>}
                                     </span>
                                   </button>
                                 ))}
                               </div>
-                              <div className="text-[11px] text-slate-400 leading-relaxed">
+                              <div className="text-xs text-slate-500 leading-relaxed">
                                 <p>「套岗」= 把该员工**调入本岗位所在部门**（从原部门移除）。</p>
                                 <p>当前在岗：{occ.real.length ? occ.real.join('、') : '无'}</p>
                                 <button onClick={() => setAssignTarget(null)} className="mt-1 text-slate-500 hover:underline">收起</button>
@@ -635,23 +635,23 @@ export function PositionBoardPage(props: PositionBoardPageProps) {
                       {expandedNames.has(g.name) ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                       {g.name}
                       {g.deptCount > 1 && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-0.5" title={`同名岗位分布在 ${g.deptCount} 个部门，各自独立编制与在岗`}>
+                        <span className="text-xs px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-0.5" title={`同名岗位分布在 ${g.deptCount} 个部门，各自独立编制与在岗`}>
                           <Layers className="w-3 h-3" />分布在 {g.deptCount} 个部门
                         </span>
                       )}
                     </button>
                   </td>
-                  <td className="px-2 py-2 text-slate-400">—</td>
-                  <td className="px-2 py-2 text-right tabular-nums text-slate-700">{g.unconfigured > 0 ? <span className="text-slate-400" title={`${g.unconfigured} 个部门未配置编制`}>—</span> : g.headcount}</td>
+                  <td className="px-2 py-2 text-slate-500">—</td>
+                  <td className="px-2 py-2 text-right tabular-nums text-slate-700">{g.unconfigured > 0 ? <span className="text-slate-500" title={`${g.unconfigured} 个部门未配置编制`}>—</span> : g.headcount}</td>
                   <td className="px-2 py-2 text-right tabular-nums text-slate-700">{g.occupied}</td>
                   <td className="px-2 py-2">
-                    {g.pending > 0 ? <span className="text-[11px] font-medium text-amber-600">缺 {g.pending}</span>
-                      : g.overflow > 0 ? <span className="text-[11px] font-medium text-red-600">超 {g.overflow}</span>
-                      : g.unconfigured === g.rows.length ? <span className="text-[11px] text-slate-400">未配编制</span>
-                      : <span className="text-[11px] font-medium text-emerald-600">满编</span>}
+                    {g.pending > 0 ? <span className="text-xs font-medium text-amber-600">缺 {g.pending}</span>
+                      : g.overflow > 0 ? <span className="text-xs font-medium text-red-600">超 {g.overflow}</span>
+                      : g.unconfigured === g.rows.length ? <span className="text-xs text-slate-500">未配编制</span>
+                      : <span className="text-xs font-medium text-emerald-600">满编</span>}
                   </td>
-                  <td className="px-3 py-2 text-slate-500 text-[11px]">合计 {g.rows.length} 个岗位实体</td>
-                  <td className="px-3 py-2 text-right text-[11px] text-slate-400">展开后可在各部门行内改编制 / 套岗</td>
+                  <td className="px-3 py-2 text-slate-500 text-xs">合计 {g.rows.length} 个岗位实体</td>
+                  <td className="px-3 py-2 text-right text-xs text-slate-500">展开后可在各部门行内改编制 / 套岗</td>
                 </tr>
                 {expandedNames.has(g.name) && g.rows.map((r) => (
                   <tr key={`${g.name}-${r.positionId}`} data-subrow={r.positionId} className="border-t border-slate-100 bg-slate-50/40">
@@ -661,13 +661,13 @@ export function PositionBoardPage(props: PositionBoardPageProps) {
                     <td className="px-2 py-1.5 text-right tabular-nums text-slate-700 whitespace-nowrap">{r.primaryOccupied}</td>
                     <td className="px-2 py-1.5 whitespace-nowrap">{gapCell(r)}</td>
                     <td className="px-3 py-1.5 text-slate-600">
-                      {occupantsOf(r.positionId).real.join('、') || <span className="text-slate-400">—</span>}
+                      {occupantsOf(r.positionId).real.join('、') || <span className="text-slate-500">—</span>}
                     </td>
                     <td className="px-3 py-1.5 text-right whitespace-nowrap">
                       <button onClick={() => setAssignTarget(assignTarget === r.positionId ? null : r.positionId)}
-                        className="px-2 py-0.5 rounded-md text-[11px] text-indigo-600 bg-indigo-50 hover:bg-indigo-100">套岗</button>
+                        className="px-2 py-0.5 rounded-md text-xs text-indigo-600 bg-indigo-50 hover:bg-indigo-100">套岗</button>
                       <button onClick={() => onArchivePosition(r.departmentId, r.positionId)}
-                        className="ml-1 px-2 py-0.5 rounded-md text-[11px] text-red-600 bg-red-50 hover:bg-red-100">删除</button>
+                        className="ml-1 px-2 py-0.5 rounded-md text-xs text-red-600 bg-red-50 hover:bg-red-100">删除</button>
                     </td>
                   </tr>
                 ))}
@@ -677,11 +677,11 @@ export function PositionBoardPage(props: PositionBoardPageProps) {
         </table>
       </div>
 
-      <p className="pt-2 text-[10px] text-slate-400 leading-relaxed">
+      <details className="pt-2 text-xs text-slate-500 leading-relaxed"><summary className="cursor-pointer font-medium">口径说明与成本依据</summary><p>
         {GAP_LIST_CALIBER}
         {totals.costMissing > 0 && ` 另有 ${totals.costMissing} 个待补岗位无法估算成本。`}
         已知缺口成本 {fmtCost(totals.gapCost)} 万元/月（仅含可估算部分）。
-      </p>
+      </p></details>
     </SubPageShell>
   );
 }
