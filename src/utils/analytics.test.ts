@@ -148,18 +148,18 @@ describe('computeL1（一级部门概览）', () => {
 });
 
 describe('computeL2（红黄绿阈值 + 判读）', () => {
-  it('管理幅度绿：有负责人部门直管中位数 3-8 人 → 健康', () => {
+  it('小样本保留数值、暂停评价：管理幅度绿：有负责人部门直管中位数 3-8 人 → 健康', () => {
     // 2 个有负责人的部门，各 4 名直属员工 => 直管数 [4,4]，中位数 = 4 → healthy
     const m1 = dept('m1', 'M1', 1, { leaderId: 'L01', leaderName: '领导A', employees: [emp('a', 'L2.1'), emp('b', 'L2.1'), emp('c', 'L2.1'), emp('d', 'L2.1')] });
     const m2 = dept('m2', 'M2', 1, { leaderId: 'L02', leaderName: '领导B', employees: [emp('e', 'L2.1'), emp('f', 'L2.1'), emp('g', 'L2.1'), emp('h', 'L2.1')] });
     const l2 = computeL2([m1, m2]);
     const span = l2.find((x) => x.key === 'span')!;
     expect(span.value).toBeCloseTo(4, 0);
-    expect(span.status).toBe('healthy');
-    expect(span.verdict).toContain('管理幅度适中');
+    expect(span.status).toBe('nodata');
+    expect(span.verdict).toContain('仅展示数值');
   });
 
-  it('无负责人子部门人员穿透计入最近负责人的直管负荷', () => {
+  it('小样本保留数值、暂停评价：无负责人子部门人员穿透计入最近负责人的直管负荷', () => {
     // 部门 A 有负责人，直属 2 人，但带一个 20 人、未设负责人的子部门：
     // 子部门没有独立负责人，20 人向上归属，加直属 2 人 = 22 → 预警
     const child = dept('a1', 'A1', 2, { employees: Array.from({ length: 20 }, (_, i) => emp(`c${i}`, 'L1.1')) });
@@ -167,10 +167,10 @@ describe('computeL2（红黄绿阈值 + 判读）', () => {
     const l2 = computeL2([a]);
     const span = l2.find((x) => x.key === 'span')!;
     expect(span.value).toBeCloseTo(22, 0);
-    expect(span.status).toBe('danger');
+    expect(span.status).toBe('nodata');
   });
 
-  it('管理者比健康阈值 ≤15%（负责人须在名册内才计内部）', () => {
+  it('小样本保留数值、暂停评价：管理者比健康阈值 ≤15%（负责人须在名册内才计内部）', () => {
     // 2 名内部管理者（leaderId 在员工名册内）+ 5 名非管理员工
     const m1 = dept('m1', 'M1', 1, {
       leaderId: 'L01',
@@ -186,7 +186,7 @@ describe('computeL2（红黄绿阈值 + 判读）', () => {
     const ratio = l2.find((x) => x.key === 'managerRatio')!;
     // totalEmployees=7（含 2 名管理者）, internalManagers=2 => 2/7 ≈ 28.6% -> danger(>25)
     expect(ratio.value).toBeCloseTo(28.6, 1);
-    expect(ratio.status).toBe('danger');
+    expect(ratio.status).toBe('nodata');
     expect(ratio.managerBreakdown).toEqual({
       internalManagers: 2,
       externalManagers: 0,
@@ -374,22 +374,22 @@ describe('computeL2 边界', () => {
     expect(computeL2([chain(7)]).find((x) => x.key === 'depth')!.status).toBe('danger');
   });
 
-  it('管理幅度阈值：3-8 健康、1-2 与 9-12 关注、<1 或 >12 预警', () => {
+  it('小样本保留数值、暂停评价：管理幅度阈值：3-8 健康、1-2 与 9-12 关注、<1 或 >12 预警', () => {
     // 1 个有负责人的部门 + 1 名直属员工 → 平均直管 = 1/1 = 1 → warn（1-2 关注）
     const only = dept('m', 'M', 1, { leaderId: 'L1', leaderName: '领导', employees: [emp('a', 'L1.1')] });
-    expect(computeL2([only]).find((x) => x.key === 'span')!.status).toBe('warn');
+    expect(computeL2([only]).find((x) => x.key === 'span')!.status).toBe('nodata');
 
     // 2 个有负责人的部门，各 2 名直属员工 → 平均直管 = (2+2)/2 = 2 → warn
     const m1 = dept('m1', 'M1', 1, { leaderId: 'L1', leaderName: '领导A', employees: [emp('a', 'L1.1'), emp('b', 'L1.1')] });
     const m2 = dept('m2', 'M2', 1, { leaderId: 'L2', leaderName: '领导B', employees: [emp('c', 'L1.1'), emp('d', 'L1.1')] });
-    expect(computeL2([m1, m2]).find((x) => x.key === 'span')!.status).toBe('warn');
+    expect(computeL2([m1, m2]).find((x) => x.key === 'span')!.status).toBe('nodata');
 
     // 有负责人但 0 直属员工 → 平均直管 = 0 → <1 → 预警
     const empty = dept('e', 'E', 1, { leaderId: 'L3', leaderName: '领导C', employees: [] });
-    expect(computeL2([empty]).find((x) => x.key === 'span')!.status).toBe('danger');
+    expect(computeL2([empty]).find((x) => x.key === 'span')!.status).toBe('nodata');
   });
 
-  it('管理者比阈值：≤15 健康、≤25 关注、>25 预警（内部负责人计分子，分母含管理者）', () => {
+  it('小样本保留数值、暂停评价：管理者比阈值：≤15 健康、≤25 关注、>25 预警（内部负责人计分子，分母含管理者）', () => {
     // 1 名内部管理者（leaderId=L1 且在名册内）+ 4 名非管理员工 → 1/5=20% → warn 边界
     const w = dept('w', 'W', 1, {
       leaderId: 'L1',
@@ -398,7 +398,7 @@ describe('computeL2 边界', () => {
     });
     const wRatio = computeL2([w]).find((x) => x.key === 'managerRatio')!;
     expect(wRatio.value).toBeCloseTo(20, 0);
-    expect(wRatio.status).toBe('warn');
+    expect(wRatio.status).toBe('nodata');
 
     // 1 名内部管理者 + 1 名非管理员工 → 1/2=50% → danger
     const d = dept('d', 'D', 1, {
@@ -408,7 +408,7 @@ describe('computeL2 边界', () => {
     });
     const dRatio = computeL2([d]).find((x) => x.key === 'managerRatio')!;
     expect(dRatio.value).toBeCloseTo(50, 0);
-    expect(dRatio.status).toBe('danger');
+    expect(dRatio.status).toBe('nodata');
   });
 
   it('空岗率阈值：≤10 健康、≤20 关注、>20 预警', () => {
@@ -562,7 +562,7 @@ describe('computeHealthReport 边界', () => {
 });
 
 describe('generateSuggestions（指标级建议，P1-3）', () => {
-  it('健康指标不产生建议', () => {
+  it('小样本仅生成信息说明，健康指标不生成行动建议', () => {
     // 8 人 + 编制 8（满编）+ 1 管理者（12.5%）→ 四项均为健康
     const root = dept('tech', '技术部', 1, {
       leaderId: 'e0',
@@ -571,8 +571,8 @@ describe('generateSuggestions（指标级建议，P1-3）', () => {
       employees: Array.from({ length: 8 }, (_, i) => emp(`e${i}`, 'L1.1')),
     });
     const l2 = computeL2([root]);
-    expect(l2.every((m) => m.status === 'healthy')).toBe(true);
-    expect(generateSuggestions(l2)).toEqual([]);
+    expect(l2.filter((m) => m.status === 'nodata')).toHaveLength(2);
+    expect(generateSuggestions(l2).every((item) => item.severity === 'info')).toBe(true);
   });
 
   it('空岗指标预警 → 生成招聘建议', () => {
@@ -584,13 +584,14 @@ describe('generateSuggestions（指标级建议，P1-3）', () => {
     expect(vacS!.title).toContain('招聘');
   });
 
-  it('管理幅度预警 → 生成优化汇报线建议', () => {
+  it('小样本管理幅度只提供信息说明', () => {
     const only = dept('m', 'M', 1, { leaderId: 'L1', leaderName: '领导', employees: [] });
     const l2 = computeL2([only]);
     const s = generateSuggestions(l2);
     const spanS = s.find((x) => x.metricKey === 'span');
     expect(spanS).toBeDefined();
-    expect(spanS!.detail).toContain('管理幅度');
+    expect(spanS!.severity).toBe('info');
+    expect(spanS!.detail).toContain('仅展示数值');
   });
 });
 
@@ -604,12 +605,11 @@ describe('generateDeptSuggestions（部门级建议，P1-3）', () => {
     expect(vacS!.severity).toBe('critical'); // 60% 空岗
   });
 
-  it('规模偏窄的管理部门 → 建议合并小组', () => {
+  it('样本不足不建议合并小组', () => {
     const root = dept('tech', '技术部', 1, { leaderId: 'L01', leaderName: '领导', employees: [emp('a', 'L1.1')] });
     const s = generateDeptSuggestions([root]);
     const spanS = s.find((x) => x.metricKey === 'span' && x.title.includes('偏窄'));
-    expect(spanS).toBeDefined();
-    expect(spanS!.detail).toContain('合并');
+    expect(spanS).toBeUndefined();
   });
 
   it('未配置编制 → 提示补充编制（info）', () => {
@@ -643,13 +643,13 @@ describe('阈值可配置化（P2-7）', () => {
     expect(vac.status).toBe('healthy');
   });
 
-  it('computeHealthReport 支持自定义管理幅度阈值', () => {
+  it('小样本保留数值、暂停评价：computeHealthReport 支持自定义管理幅度阈值', () => {
     const only = dept('m', 'M', 1, { leaderId: 'L1', leaderName: '领导', employees: [emp('a', 'L1.1')] });
     const strict = { ...DEFAULT_HEALTH_THRESHOLDS, spanWarnMax: 0, spanWarnLow: 0, spanHealthyMin: 0, spanHealthyMax: 0 };
     const report = computeHealthReport([only], COSTS, undefined, strict);
     const span = report.l2.find((x) => x.key === 'span')!;
     // 1 人直管，健康区间 [0,0]，1>0 且 1>warnMax(0) → danger
-    expect(span.status).toBe('danger');
+    expect(span.status).toBe('nodata');
   });
 });
 
@@ -707,10 +707,7 @@ describe('generateDeptSuggestions（部门级建议）边界补充', () => {
     const root = dept('tech', '技术部', 1, { leaderId: 'L01', leaderName: '领导', employees });
     const s = generateDeptSuggestions([root], DEFAULT_HEALTH_THRESHOLDS);
     const wide = s.find((x) => x.id === 'd-tech-spanwide')!;
-    expect(wide).toBeDefined();
-    expect(wide.severity).toBe('major');
-    expect(wide.title).toContain('偏宽');
-    expect(wide.title).toContain('9 人');
+    expect(wide).toBeUndefined(); // 单一管理者不足以作组织级判读
   });
 
   it('超编（gap<0）超编占比 > overWarnRatio=20% → critical', () => {
@@ -1041,7 +1038,7 @@ describe('v2.0.9 A 管理幅度口径修正', () => {
     expect(computeL2([d]).find((x) => x.key === 'span')!.value).toBe(4);
   });
 
-  it('中位数稳健性：直管 [2,3,40] → span.value=3，max=40 触发极值升级 → danger', () => {
+  it('小样本保留数值、暂停评价：中位数稳健性：直管 [2,3,40] → span.value=3，max=40 触发极值升级 → danger', () => {
     const narrow = dept('n', '窄部门', 1, { leaderId: 'L1', leaderName: '领导A', employees: [emp('a', 'L1.1'), emp('b', 'L1.1')] });
     const mid = dept('m', '中部门', 1, { leaderId: 'L2', leaderName: '领导B', employees: [emp('c', 'L1.1'), emp('d', 'L1.1'), emp('e', 'L1.1')] });
     const wide = dept('w', '宽部门', 1, { leaderId: 'L3', leaderName: '领导C', employees: Array.from({ length: 40 }, (_, i) => emp(`w${i}`, 'L1.1')) });
@@ -1054,23 +1051,22 @@ describe('v2.0.9 A 管理幅度口径修正', () => {
     expect(bd.min).toBe(2);
     expect(bd.mean).toBe(15); // 均值保留作参考（回归对照旧 span.value）
     expect(bd.distribution[0].deptId).toBe('w');
-    expect(span.status).toBe('danger'); // 40 ≥ spanWarnMax(12)×1.5=18 → 预警
-    expect(span.verdict).toContain('管理幅度失衡');
+    expect(span.status).toBe('nodata'); // 40 ≥ spanWarnMax(12)×1.5=18 → 预警
+    expect(spanStatusWithBreakdown(bd, DEFAULT_HEALTH_THRESHOLDS)).toBe('danger');
   });
 
-  it('极值兜底：中位数健康但 max 超 spanWarnMax → L2 至少关注 + 部门级建议标 critical', () => {
+  it('小样本保留数值、暂停评价：极值兜底：中位数健康但 max 超 spanWarnMax → L2 至少关注 + 部门级建议标 critical', () => {
     const ok = dept('ok', '正常部门', 1, { leaderId: 'L1', leaderName: '领导A', employees: Array.from({ length: 4 }, (_, i) => emp(`a${i}`, 'L1.1')) });
     const ok2 = dept('ok2', '正常部门2', 1, { leaderId: 'L2', leaderName: '领导B', employees: Array.from({ length: 4 }, (_, i) => emp(`b${i}`, 'L1.1')) });
     const wide = dept('wide', '宽部门', 1, { leaderId: 'L3', leaderName: '领导C', employees: Array.from({ length: 13 }, (_, i) => emp(`w${i}`, 'L1.1')) });
     const l2 = computeL2([ok, ok2, wide]);
     const span = l2.find((x) => x.key === 'span')!;
     expect(span.value).toBe(4); // 中位数 [4,4,13] 在健康区间 [3,8]
-    expect(span.status).toBe('warn'); // max 13 > 12 且 < 18 → 至少关注
-    expect(span.verdict).toContain('单点失衡');
+    expect(span.status).toBe('nodata'); // max 13 > 12 且 < 18 → 至少关注
+    expect(spanStatusWithBreakdown(span.spanBreakdown!, DEFAULT_HEALTH_THRESHOLDS)).toBe('warn');
     const suggestions = generateDeptSuggestions([ok, ok2, wide], DEFAULT_HEALTH_THRESHOLDS);
     const critical = suggestions.find((x) => x.deptId === 'wide' && x.severity === 'critical');
-    expect(critical).toBeDefined();
-    expect(critical!.title).toContain('管理幅度过宽');
+    expect(critical).toBeUndefined(); // 样本不足不生成组织级调整建议
   });
 
   it('不可算分支：无任何有负责人部门 → median/min/max null、status nodata、verdict 含「未设置部门负责人」', () => {
@@ -1260,7 +1256,7 @@ describe('v2.0.9 C 管理者比口径修正', () => {
     expect(bd.externalManagers).toBe(0);
   });
 
-  it('双口径：nonManagerEmployees = 总数 − 内部管理者；辅助口径「每 9 名非管理员工配 1 名管理者」', () => {
+  it('小样本保留数值、暂停评价：双口径：nonManagerEmployees = 总数 − 内部管理者；辅助口径「每 9 名非管理员工配 1 名管理者」', () => {
     const a = dept('a', 'A', 1, {
       leaderId: 'L01',
       leaderName: '领导A',
@@ -1283,7 +1279,7 @@ describe('v2.0.9 C 管理者比口径修正', () => {
     expect(bd.nonManagerEmployees).toBe(18);
     const ratio = computeL2([a, bDept]).find((x) => x.key === 'managerRatio')!;
     expect(ratio.value).toBe(10); // 主口径 2/20
-    expect(ratio.status).toBe('healthy');
+    expect(ratio.status).toBe('nodata');
     expect(ratio.verdict).toContain('约 9 名非管理员工配 1 名管理者');
   });
 

@@ -90,7 +90,8 @@ export function deriveManagementLoads(roots: Department[]) {
   const registerOwners = (list: Department[]) => {
     for (const d of list) {
       const leader = roles.resolveLeader(d);
-      if ((d.leaderType ?? 'owner') === 'owner' && (d.leaderId || d.leaderName)) {
+      const ambiguous = !leader && !d.leaderId && employees.some((e) => !e.isVirtual && e.name === d.leaderName);
+      if (!ambiguous && (d.leaderType ?? 'owner') === 'owner' && (d.leaderId || d.leaderName)) {
         const key = leader ? roles.personKey(leader) : `external:${d.leaderId || d.leaderName}`;
         ensure(key, leader?.name ?? d.leaderName ?? d.leaderId!, d, true);
       }
@@ -101,7 +102,8 @@ export function deriveManagementLoads(roots: Department[]) {
   const walk = (list: Department[], ancestors: string[]) => {
     for (const d of list) {
       const leader = roles.resolveLeader(d);
-      const owner = (d.leaderType ?? 'owner') === 'owner' && (d.leaderId || d.leaderName)
+      const ambiguous = !leader && !d.leaderId && employees.some((e) => !e.isVirtual && e.name === d.leaderName);
+      const owner = !ambiguous && (d.leaderType ?? 'owner') === 'owner' && (d.leaderId || d.leaderName)
         ? leader ? roles.personKey(leader) : `external:${d.leaderId || d.leaderName}` : undefined;
       if (owner) {
         ensure(owner, leader?.name ?? d.leaderName ?? d.leaderId!, d, true);

@@ -114,7 +114,7 @@ describe('v2.3.1 F-02：管理幅度不得把负责人本人算作直管下属',
     expect(directReports(d)).toBe(1);
   });
 
-  it('L2 管理幅度不再因「负责人即唯一成员」而把 critical 降级', () => {
+  it('L2 保留无人直管的 0 值，小样本不作裁撤评价', () => {
     // 5 个部门，负责人都是本部门唯一成员 → span 中位数应为 0（旧实现为 1）
     const depts = ['a', 'b', 'c', 'd', 'e'].map((k) =>
       dept(k, `部门${k}`, { employees: [emp(`l-${k}`)], leaderId: `E-l-${k}` }),
@@ -122,7 +122,7 @@ describe('v2.3.1 F-02：管理幅度不得把负责人本人算作直管下属',
     const span = computeL2(depts).find((m) => m.key === 'span')!;
     expect(span.spanBreakdown?.median).toBe(0);
     // 旧实现把负责人本人算作下属 → 中位数 1 → warn，把「负责人无人直管」这一 critical 事实降级。
-    expect(span.status).toBe('danger');
+    expect(span.status).toBe('nodata');
   });
 });
 

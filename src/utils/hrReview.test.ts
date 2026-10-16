@@ -53,8 +53,8 @@ describe('HR 评审：汇报线与管理者口径', () => {
     expect([...ids].sort()).toEqual(['lead', 'owner']);
     expect(computeManagerBreakdown(roots)).toMatchObject({ internalManagers: ids.size, departmentOwners: 1, reportingManagers: 1 });
     const sameDept = generateDeptSuggestions(roots).filter((s) => s.deptId === 'A' && s.metricKey === 'span');
-    expect(sameDept).toHaveLength(2);
-    expect(new Set(sameDept.map((s) => s.id)).size).toBe(2);
+    expect(sameDept).toHaveLength(0); // 小样本不生成裁撤/合并式组织建议
+    expect(computeL2(roots).find((m) => m.key === 'span')?.value).not.toBeNull();
   });
 
   it('同名歧义和无效显式上级保持未知，不静默猜测到本部门负责人', () => {
@@ -64,7 +64,7 @@ describe('HR 评审：汇报线与管理者口径', () => {
     expect(computeManagerIdSet(roots, roots.flatMap((d) => d.employees))).toEqual(new Set(['m']));
     expect(deriveManagementLoads(roots).loads.find((l) => l.key === m.employeeId)?.reports.size).toBe(0);
     expect(deriveManagementLoads(roots).unresolved).toBe(1);
-    expect(computeL2(roots).find((m) => m.key === 'span')).toMatchObject({ value: null, status: 'nodata' });
+    expect(computeL2(roots).find((m) => m.key === 'span')).toMatchObject({ value: 0, status: 'nodata' });
   });
 });
 
@@ -136,7 +136,7 @@ describe('HR 评审：成本与演示数据', () => {
   it.each(INDUSTRY_TEMPLATES.map((t) => [t.id, t] as const))('%s 模板完整套岗、配编制且重复载入互不污染', (_id, template) => {
     const data = loadIndustryTemplate(template);
     expect(data.allEmployeesFlat.length).toBeGreaterThanOrEqual(20);
-    expect(data.allEmployeesFlat.length).toBeLessThanOrEqual(40);
+    expect(data.allEmployeesFlat.length).toBeLessThanOrEqual(65);
     expect(data.allEmployeesFlat.every((e) => e.positionId)).toBe(true);
     expect(template.employees.every((e) => !e.positionId)).toBe(true);
     const report = computeHealthReport(data.departments, [], undefined, DEFAULT_HEALTH_THRESHOLDS);

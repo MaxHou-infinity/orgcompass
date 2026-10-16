@@ -4,7 +4,7 @@
   "version": "2.4.0",
   "type": "module",
   "engines": {
-    "node": "^20.19.0 || >=22.12.0"
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
   "scripts": {
     "dev": "vite",
@@ -19,7 +19,10 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "pretest": "node scripts/check-test-runtime.mjs",
+    "pretest:watch": "node scripts/check-test-runtime.mjs",
+    "pretest:coverage": "node scripts/check-test-runtime.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.1.0",

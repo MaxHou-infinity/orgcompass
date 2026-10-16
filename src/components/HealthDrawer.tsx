@@ -486,7 +486,7 @@ export function HealthPage({
 
           <section aria-label="数据完整度" className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
             <h3 className="font-semibold mb-1">数据完整度</h3>
-            <p>可计算指标 {report.dataCompleteness.availableMetrics}/{report.dataCompleteness.totalMetrics} · 无数据 {report.summary.unavailable} 项（不计入红黄绿）</p>
+            <p>可计算指标 {report.dataCompleteness.availableMetrics}/{report.dataCompleteness.totalMetrics} · 未判定 {report.summary.unavailable} 项（不计入红黄绿）</p>
             <p>已设负责人 {report.dataCompleteness.departmentsWithLeader}/{report.dataCompleteness.totalDepartments} 个部门 · 已配置直属编制 {report.dataCompleteness.departmentsWithHeadcount}/{report.dataCompleteness.totalDepartments} 个部门</p>
             <p className="mt-1 text-slate-500">完整度表示录入覆盖情况，不代表数据已核实；部门层级不等于人员到 CEO 的汇报链。</p>
           </section>
@@ -637,7 +637,7 @@ export function HealthPage({
                   <StatusDot status="danger" label={`红 ${report.summary.red}`} />
                   <StatusDot status="warn" label={`黄 ${report.summary.yellow}`} />
                   <StatusDot status="healthy" label={`绿 ${report.summary.green}`} />
-                  <StatusDot status="nodata" label={`无数据 ${report.summary.unavailable}`} />
+                  <StatusDot status="nodata" label={`未判定 ${report.summary.unavailable}`} />
                 </div>
                 <span className={`text-xs font-medium ${STATUS_STYLE[report.summary.overall].text}`}>
                   {report.summary.overall === 'nodata' ? '整体暂不判定' : `已评估项${HEALTH_STATUS_LABEL[report.summary.overall]}`}

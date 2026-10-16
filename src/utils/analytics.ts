@@ -31,7 +31,7 @@ export const HEALTH_STATUS_LABEL: Record<HealthStatus, string> = {
   healthy: '健康',
   warn: '关注',
   danger: '预警',
-  nodata: '无数据',
+  nodata: '暂不判定',
 };
 
 /** L1 部门概览卡 */
@@ -245,6 +245,17 @@ export const DEFAULT_HEALTH_THRESHOLDS: HealthThresholds = {
   vacancyWarnMax: 20,
   overWarnRatio: 0.2,
 };
+
+/** 产品诊断的保守门槛，不是统计显著性或行业标准。按真人/管理者去重；不改变原始数值。
+ * 仅约束管理幅度与管理者比的组织级评价，结构深度和编制事实不受影响。
+ */
+export const MANAGEMENT_SAMPLE_MIN = { employees: 30, managers: 5 } as const;
+
+function managementSampleSufficient(roots: Department[]): boolean {
+  const managers = computeManagerBreakdown(roots);
+  return managers.totalEmployees >= MANAGEMENT_SAMPLE_MIN.employees &&
+    managers.internalManagers >= MANAGEMENT_SAMPLE_MIN.managers;
+}
 
 const HEALTH_THRESHOLDS_KEY = 'org-designer.health-thresholds';
 
@@ -792,7 +803,7 @@ export function computeManagerBreakdown(roots: Department[]): ManagerBreakdown {
  *   使「一个 40 人直管部门不再被窄部门抹平」——L2 聚合看中位数，极值单独兜底。
  */
 export function spanStatusWithBreakdown(b: SpanBreakdown, t: HealthThresholds): HealthStatus {
-  if (b.count === 0 || b.median === null || b.unresolvedReports) return 'nodata';
+  if (b.count === 0 || b.median === null) return 'nodata';
   let status = spanStatus(b.median, t);
   if (b.max !== null && b.max > t.spanWarnMax) {
     status = b.max >= t.spanWarnMax * 1.5 ? 'danger' : worseStatus(status, 'warn');
@@ -846,9 +857,7 @@ export function computeL2(roots: Department[], thresholds: HealthThresholds = ge
   let span: number | null = null;
   let spanStatusVal: HealthStatus = 'nodata';
   let spanVerdict = '无法计算管理幅度（未设置部门负责人）；请配置负责人或补充明确汇报线';
-  if (spanBreakdown.unresolvedReports) {
-    spanVerdict = `${spanBreakdown.unresolvedReports} 条人员汇报关系无法核对，暂不判断管理幅度；请核对直接上级引用及所选统计范围`;
-  } else if (spanBreakdown.count > 0 && spanBreakdown.median !== null) {
+  if (spanBreakdown.count > 0 && spanBreakdown.median !== null) {
     const median = spanBreakdown.median;
     const max = spanBreakdown.max ?? median;
     span = median;
@@ -863,6 +872,10 @@ export function computeL2(roots: Department[], thresholds: HealthThresholds = ge
     } else {
       spanVerdict = `典型直管 ${median} 人，管理幅度失衡；最宽 ${max} 人存在失控/冗余风险`;
     }
+  }
+
+  if (spanBreakdown.unresolvedReports) {
+    spanVerdict += `；已排除 ${spanBreakdown.unresolvedReports} 名汇报关系无法核对的人员，结果仅覆盖有效关系，可能低估实际负荷`;
   }
 
   // —— 层级深度（v2.0.9：P90 主判 + 孤立深链升级 + max 硬上限；value 展示 P90）——
@@ -931,6 +944,17 @@ export function computeL2(roots: Department[], thresholds: HealthThresholds = ge
     if (frozenDepts > 0) {
       vacancyVerdict = `编制全部处于冻结状态（${frozenDepts} 个部门），本期不计缺口；如需评估请先解除冻结或补充有效编制`;
     }
+  }
+
+  const sampleSufficient = managementSampleSufficient(roots);
+  if (!sampleSufficient) {
+    const reason = `样本 ${totalEmployees} 人、${spanBreakdown.count} 名管理者；少于 ${MANAGEMENT_SAMPLE_MIN.employees} 人或 ${MANAGEMENT_SAMPLE_MIN.managers} 名管理者时仅展示数值，暂不作组织级评价（产品保守门槛，非行业标准）`;
+    if (span !== null) {
+      spanStatusVal = 'nodata';
+      spanVerdict = `${reason}；直管中位数 ${span} 人，最宽 ${spanBreakdown.max} 人`;
+      if (spanBreakdown.unresolvedReports) spanVerdict += `；已排除 ${spanBreakdown.unresolvedReports} 名关系异常人员，可能低估负荷`;
+    }
+    if (managerRatio !== null) { managerRatioStatusVal = 'nodata'; managerRatioVerdict = `${reason}；${managerRatioVerdictText('healthy', managerBreakdown).replace('管理者占比合理', '管理者口径')}`; }
   }
 
   return [
@@ -1018,11 +1042,11 @@ function summarizeDiagnosis(metrics: L2Metric[]): HealthSummary {
   } else if (yellow > 0) {
     diagnosis = '整体健康，部分指标需持续关注。';
   } else if (unavailable > 0) {
-    diagnosis = '已有数据的指标未见异常，仍有指标缺少数据，暂不判断整体健康。';
+    diagnosis = '已评估指标未见异常，仍有指标因数据缺失或样本不足暂不判定，暂不判断整体健康。';
   } else {
     diagnosis = '整体健康度良好，组织结构稳健。';
   }
-  if (unavailable > 0) diagnosis += ` ${unavailable} 项无数据，未计入红黄绿判读。`;
+  if (unavailable > 0) diagnosis += ` ${unavailable} 项暂不判定，未计入红黄绿判读。`;
   return { red, yellow, green, unavailable, overall, diagnosis };
 }
 
@@ -1314,7 +1338,7 @@ export function generateSuggestions(metrics: L2Metric[], thresholds: HealthThres
   for (const m of metrics) {
     if (m.status === 'healthy') continue;
     if (m.status === 'nodata') {
-      push(m, `补充${m.label}数据`, m.verdict, 'info');
+      push(m, m.value === null ? `补充${m.label}数据` : `${m.label}暂不判定`, m.verdict, 'info');
       continue;
     }
     const sev: SuggestionSeverity = m.status === 'danger' ? 'critical' : 'major';
@@ -1390,7 +1414,7 @@ export function generateDeptSuggestions(
   const deptMap = new Map(flattenDepartments(departments).map((d) => [d.id, d]));
   const management = deriveManagementLoads(departments);
   const loads = new Map<string, typeof management.loads>();
-  for (const load of management.unresolved > 0 ? [] : management.loads) {
+  for (const load of managementSampleSufficient(departments) ? management.loads : []) {
     const id = load.deptIds[0];
     loads.set(id, [...(loads.get(id) ?? []), load]);
   }

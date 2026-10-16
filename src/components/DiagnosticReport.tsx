@@ -217,7 +217,7 @@ export function DiagnosticReport({
               <div className={`text-2xl font-bold ${STATUS_STYLE[summary.overall].text}`}>
                 {summary.overall === 'nodata' ? '暂不判定' : HEALTH_STATUS_LABEL[summary.overall]}
               </div>
-              <div className="text-xs text-slate-500 mt-1">红{summary.red} 黄{summary.yellow} 绿{summary.green} · 无数据{summary.unavailable}</div>
+              <div className="text-xs text-slate-500 mt-1">红{summary.red} 黄{summary.yellow} 绿{summary.green} · 未判定{summary.unavailable}</div>
             </div>
             <div className="rounded-2xl bg-white border border-slate-100 shadow-soft p-4">
               <div className="text-xs text-slate-500">总人数</div>
@@ -248,7 +248,7 @@ export function DiagnosticReport({
           <b>数据完整度：</b>可计算指标 {report.dataCompleteness.availableMetrics}/{report.dataCompleteness.totalMetrics}；
           已设负责人 {report.dataCompleteness.departmentsWithLeader}/{report.dataCompleteness.totalDepartments} 个部门；
           已配置直属编制 {report.dataCompleteness.departmentsWithHeadcount}/{report.dataCompleteness.totalDepartments} 个部门。
-          无数据项不计入红黄绿，已有数据的判读不能替代整体判断。
+          数据缺失或样本不足的指标不计入红黄绿，已有数据的判读不能替代整体判断。
         </section>
 
         {/* 健康度指标 */}
