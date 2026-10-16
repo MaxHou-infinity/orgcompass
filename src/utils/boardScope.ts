@@ -1,3 +1,5 @@
+import { positionUnitCost } from './cost';
+export { positionUnitCost } from './cost';
 import type {
   Assessment,
   CompetencyModel,
@@ -8,7 +10,7 @@ import type {
   Position,
   PositionAssignment,
 } from '../types';
-import { computeHealthReport, costForLevel, employeeCost, round1, type HealthReport, type ReportTotals } from './analytics';
+import { computeHealthReport, round1, type HealthReport, type ReportTotals } from './analytics';
 import {
   emptyCompetencySummary,
   expectedDimensions,
@@ -565,35 +567,6 @@ function findScopeDept(depts: Department[], id: string): Department | undefined 
 }
 
 /** 岗位目标职级单位成本（契约 §7.2 依据顺序：岗位带宽 → 在岗目标职级 → 在岗实际均值）。 */
-export function positionUnitCost(
-  pos: Position,
-  assigned: Employee[],
-  configs: LevelConfig[],
-): { cost: number; basis: string } {
-  for (const code of [pos.levelBandMin, pos.levelBandMax]) {
-    if (!code) continue;
-    const c = costForLevel(configs, code);
-    if (c > 0) return { cost: c, basis: `岗位职级带宽 ${code} 的单位成本` };
-  }
-  const targetCosts = assigned
-    .map((e) => (e.targetLevel ? costForLevel(configs, e.targetLevel) : 0))
-    .filter((c) => c > 0);
-  if (targetCosts.length > 0) {
-    return {
-      cost: round1(targetCosts.reduce((s, c) => s + c, 0) / targetCosts.length),
-      basis: `在岗 ${targetCosts.length} 人目标职级成本均值（降级）`,
-    };
-  }
-  const actualCosts = assigned.map((e) => employeeCost(e, configs)).filter((c) => c > 0);
-  if (actualCosts.length > 0) {
-    return {
-      cost: round1(actualCosts.reduce((s, c) => s + c, 0) / actualCosts.length),
-      basis: `在岗 ${actualCosts.length} 人实际成本均值（降级）`,
-    };
-  }
-  return { cost: 0, basis: '无岗位带宽 / 目标职级 / 在岗成本依据' };
-}
-
 /** 便捷：从既有汇总构造单员工完整度占位（供看板在缺少 App 级派生时降级）。 */
 export function fallbackCompleteness(model: CompetencyModel, group: CompetencyScopeContext['expectedGroup']): CompetencyCompleteness {
   const expected = expectedDimensions(model, group).length;

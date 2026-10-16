@@ -16,6 +16,8 @@ import {
   L2Metric,
   METRIC_CALIBER_NOTES,
   SpanBreakdown,
+  getHealthThresholds,
+  DEFAULT_HEALTH_THRESHOLDS,
 } from '../utils/analytics';
 import { STATUS_STYLE, fmt, fmtCost } from '../utils/statusUI';
 
@@ -207,7 +209,7 @@ function MetricDetail({
               <tbody>
                 {br.distribution.map((row) => (
                   <tr
-                    key={row.deptId}
+                    key={row.managerKey ?? row.deptId}
                     onClick={() => onLocateDept(row.deptId)}
                     className="border-b border-slate-50 last:border-0 cursor-pointer hover:bg-indigo-50/60"
                     title="点击定位到画布"
@@ -301,7 +303,7 @@ function MetricDetail({
   return <div className="text-[10px] text-slate-400 leading-snug">无额外明细数据。</div>;
 }
 
-const STATUS_RANK: Record<HealthStatus, number> = { healthy: 0, warn: 1, danger: 2 };
+const STATUS_RANK: Record<HealthStatus, number> = { nodata: -1, healthy: 0, warn: 1, danger: 2 };
 
 export function ScenarioDiffView({
   open,
@@ -316,17 +318,18 @@ export function ScenarioDiffView({
   onExportReport,
 }: ScenarioDiffViewProps) {
   const [showAll, setShowAll] = useState(false);
+  const thresholds = useMemo(() => open ? getHealthThresholds() : DEFAULT_HEALTH_THRESHOLDS, [open]);
   const [openMetric, setOpenMetric] = useState<L2Metric['key'] | null>(null);
 
   const diff: ScenarioDiffResult = useMemo(
-    () => computeScenarioDiff(baseline, target),
-    [baseline, target],
+    () => computeScenarioDiff(baseline, target, thresholds),
+    [baseline, target, thresholds],
   );
   const bTotals = useMemo(() => computeScenarioTotals(baseline), [baseline]);
   const tTotals = useMemo(() => computeScenarioTotals(target), [target]);
   // 明细侧 breakdown（差异计算已用同一口径；此处仅用于「口径与明细」展开）
-  const bL2 = useMemo(() => computeL2(baseline.departments), [baseline]);
-  const tL2 = useMemo(() => computeL2(target.departments), [target]);
+  const bL2 = useMemo(() => computeL2(baseline.departments, thresholds), [baseline, thresholds]);
+  const tL2 = useMemo(() => computeL2(target.departments, thresholds), [target, thresholds]);
 
   const dialogRef = useDialogFocus(open, onClose);
 

@@ -139,11 +139,11 @@ describe('computeL1（一级部门概览）', () => {
     expect(rows[0].levelDistribution['L1.1']).toBe(2);
   });
 
-  it('未配置编制 → headcount null 且状态为关注', () => {
+  it('未配置编制 → headcount null 且状态为无数据', () => {
     const root = dept('tech', '技术部', 1, { employees: [emp('e1', 'L1.1')] });
     const rows = computeL1([root]);
     expect(rows[0].headcount).toBeNull();
-    expect(rows[0].status).toBe('warn');
+    expect(rows[0].status).toBe('nodata');
   });
 });
 
@@ -159,15 +159,15 @@ describe('computeL2（红黄绿阈值 + 判读）', () => {
     expect(span.verdict).toContain('管理幅度适中');
   });
 
-  it('管理幅度只计直属下属（非整棵子树）', () => {
+  it('无负责人子部门人员穿透计入最近负责人的直管负荷', () => {
     // 部门 A 有负责人，直属 2 人，但带一个 20 人、未设负责人的子部门：
-    // 直管 = 2 + 下一层有负责人子部门数(0) = 2 → 中位数 2 → 关注
+    // 子部门没有独立负责人，20 人向上归属，加直属 2 人 = 22 → 预警
     const child = dept('a1', 'A1', 2, { employees: Array.from({ length: 20 }, (_, i) => emp(`c${i}`, 'L1.1')) });
     const a = dept('a', 'A', 1, { leaderId: 'L01', leaderName: '领导A', employees: [emp('x', 'L2.1'), emp('y', 'L2.1')], children: [child] });
     const l2 = computeL2([a]);
     const span = l2.find((x) => x.key === 'span')!;
-    expect(span.value).toBeCloseTo(2, 0);
-    expect(span.status).toBe('warn');
+    expect(span.value).toBeCloseTo(22, 0);
+    expect(span.status).toBe('danger');
   });
 
   it('管理者比健康阈值 ≤15%（负责人须在名册内才计内部）', () => {
@@ -194,6 +194,8 @@ describe('computeL2（红黄绿阈值 + 判读）', () => {
       totalEmployees: 7,
       nonManagerEmployees: 5,
       vacantLeaderDepts: 0,
+      departmentOwners: 2,
+      reportingManagers: 0,
     });
   });
 
@@ -208,21 +210,21 @@ describe('computeL2（红黄绿阈值 + 判读）', () => {
     expect(vac.status).toBe('healthy');
   });
 
-  it('未配置编制 → 空岗率 null + 关注', () => {
+  it('未配置编制 → 空岗率 null + 无数据', () => {
     const root = dept('tech', '技术部', 1, { employees: [emp('e1', 'L1.1')] });
     const l2 = computeL2([root]);
     const vac = l2.find((x) => x.key === 'vacancy')!;
     expect(vac.value).toBeNull();
-    expect(vac.status).toBe('warn');
+    expect(vac.status).toBe('nodata');
     expect(vac.verdict).toContain('未配置编制');
   });
 
-  it('无负责人 → 管理幅度 null + 关注', () => {
+  it('无负责人 → 管理幅度 null + 无数据', () => {
     const root = dept('tech', '技术部', 1, { employees: [emp('e1', 'L1.1')] });
     const l2 = computeL2([root]);
     const span = l2.find((x) => x.key === 'span')!;
     expect(span.value).toBeNull();
-    expect(span.status).toBe('warn');
+    expect(span.status).toBe('nodata');
   });
 });
 
@@ -251,12 +253,12 @@ describe('computeL3（编制 vs 实际 vs 缺口 + 成本）', () => {
     expect(rows[0].status).toBe('danger');
   });
 
-  it('未配置编制 → headcount null、gap null、状态关注', () => {
+  it('未配置编制 → headcount null、gap null、状态无数据', () => {
     const root = dept('tech', '技术部', 1, { employees: [emp('e1', 'L1.1')] });
     const rows = computeL3([root], COSTS);
     expect(rows[0].headcount).toBeNull();
     expect(rows[0].gap).toBeNull();
-    expect(rows[0].status).toBe('warn');
+    expect(rows[0].status).toBe('nodata');
   });
 
   it('员工个人成本覆盖职级成本映射', () => {
@@ -335,30 +337,30 @@ describe('computeL1 边界', () => {
     expect(rows[0].levelDistribution).toEqual({ 'L1.1': 1, 'L2.1': 1 });
   });
 
-  it('编制为 0（=未配置）→ headcount null，状态为关注', () => {
+  it('编制为 0（=未配置）→ headcount null，状态为无数据', () => {
     const root = dept('tech', '技术部', 1, { employees: [emp('e1', 'L1.1')], headcount: 0 });
     const rows = computeL1([root]);
     // sumHeadcountSubtree 只累加 headcount>0；编制为 0 视为无有效编制 → 返回 null
     expect(rows[0].headcount).toBeNull();
     // 未配置编制 → 无法判空岗 → 关注
-    expect(rows[0].status).toBe('warn');
+    expect(rows[0].status).toBe('nodata');
   });
 
   it('number 型 headcount 非法（NaN/Infinity）不累加，子树未配置则返回 null', () => {
     const root = dept('tech', '技术部', 1, { headcount: Number.NaN });
     const rows = computeL1([root]);
     expect(rows[0].headcount).toBeNull();
-    expect(rows[0].status).toBe('warn');
+    expect(rows[0].status).toBe('nodata');
   });
 });
 
 describe('computeL2 边界', () => {
-  it('空树：depth=0 判中性/关注（不作层级健康），span/vacancy/managerRatio 均为 null', () => {
+  it('空树：depth=null 且灰色（不作层级健康），span/vacancy/managerRatio 均为 null', () => {
     const l2 = computeL2([]);
     expect(l2).toHaveLength(4);
     const depth = l2.find((x) => x.key === 'depth')!;
-    expect(depth.value).toBe(0);
-    expect(depth.status).toBe('warn');
+    expect(depth.value).toBeNull();
+    expect(depth.status).toBe('nodata');
     expect(depth.verdict).toContain('无法评估层级');
     for (const key of ['span', 'vacancy', 'managerRatio'] as const) {
       expect(l2.find((x) => x.key === key)!.value).toBeNull();
@@ -455,13 +457,13 @@ describe('computeL3 边界', () => {
     expect(row.actualCost).toBe(0);
   });
 
-  it('编制为 0（=未配置）→ headcount null、缺口 null、状态关注', () => {
+  it('编制为 0（=未配置）→ headcount null、缺口 null、状态无数据', () => {
     const root = dept('t', 'T', 1, { headcount: 0, employees: [emp('e1', 'L1.1'), emp('e2', 'L1.1')] });
     const row = computeL3([root], COSTS)[0];
     // sumHeadcountSubtree 只累加 headcount>0；编制为 0 → 无有效编制 → headcount=null
     expect(row.headcount).toBeNull();
     expect(row.gap).toBeNull();
-    expect(row.status).toBe('warn');
+    expect(row.status).toBe('nodata');
   });
 
   it('超编梯度：轻微超编关注、严重超编预警', () => {
@@ -475,15 +477,15 @@ describe('computeL3 边界', () => {
 });
 
 describe('口径一致性（L1 与 L3 对同一部门状态一致，回归 t4）', () => {
-  it('未配置编制（0 与 undefined）→ L1 与 L3 均判关注（消除 L1 关注/L3 超编矛盾）', () => {
+  it('未配置编制（0 与 undefined）→ L1 与 L3 均判无数据（消除 L1 关注/L3 超编矛盾）', () => {
     // headcount=0 → 视为无有效编制 → 两者都 warn
     const zero = dept('zero', 'Z', 1, { headcount: 0, employees: [emp('a', 'L1.1'), emp('b', 'L1.1')] });
-    expect(computeL1([zero])[0].status).toBe('warn');
-    expect(computeL3([zero], COSTS)[0].status).toBe('warn');
+    expect(computeL1([zero])[0].status).toBe('nodata');
+    expect(computeL3([zero], COSTS)[0].status).toBe('nodata');
     // 完全未配置 headcount → 两者都 warn
     const none = dept('none', 'N', 1, { employees: [emp('c', 'L1.1')] });
-    expect(computeL1([none])[0].status).toBe('warn');
-    expect(computeL3([none], COSTS)[0].status).toBe('warn');
+    expect(computeL1([none])[0].status).toBe('nodata');
+    expect(computeL3([none], COSTS)[0].status).toBe('nodata');
   });
 
   it('满编 → L1 与 L3 均判健康', () => {
@@ -563,8 +565,8 @@ describe('generateSuggestions（指标级建议，P1-3）', () => {
   it('健康指标不产生建议', () => {
     // 8 人 + 编制 8（满编）+ 1 管理者（12.5%）→ 四项均为健康
     const root = dept('tech', '技术部', 1, {
-      leaderId: 'L1',
-      leaderName: '领导',
+      leaderId: 'e0',
+      leaderName: '员工e0',
       headcount: 8,
       employees: Array.from({ length: 8 }, (_, i) => emp(`e${i}`, 'L1.1')),
     });
@@ -685,9 +687,9 @@ describe('generateSuggestions（指标级建议）边界补充', () => {
     const s = generateSuggestions(computeL2([noLeader]));
     const span = s.find((x) => x.metricKey === 'span')!;
     expect(span).toBeDefined();
-    expect(span.title).toBe('优化管理幅度');
+    expect(span.title).toBe('补充管理幅度数据');
     expect(span.detail).toContain('配置负责人');
-    expect(span.severity).toBe('major');
+    expect(span.severity).toBe('info');
   });
 
   it('建议 id 格式为 m-<key>', () => {
@@ -892,12 +894,12 @@ describe('v2.0.8 空岗率口径对齐', () => {
     expect(vac.status).toBe('danger');
   });
 
-  it('全部未配置编制 → 空岗率 null + 关注', () => {
+  it('全部未配置编制 → 空岗率 null + 无数据', () => {
     const root = dept('t', 'T', 1, { employees: [emp('a', 'L1.1'), emp('b', 'L1.1')] });
     const l2 = computeL2([root]);
     const vac = l2.find((x) => x.key === 'vacancy')!;
     expect(vac.value).toBeNull();
-    expect(vac.status).toBe('warn');
+    expect(vac.status).toBe('nodata');
     expect(vac.verdict).toContain('未配置编制');
   });
 });
@@ -992,7 +994,7 @@ describe('v2.0.8 诊断口径说明 METRIC_CALIBER_NOTES', () => {
 
   it('口径说明包含关键限定语义（v2.0.9 同步改写）', () => {
     expect(METRIC_CALIBER_NOTES.span).toContain('中位数');
-    expect(METRIC_CALIBER_NOTES.span).toContain('有负责人');
+    expect(METRIC_CALIBER_NOTES.span).toContain('reportsToEmployeeId');
     expect(METRIC_CALIBER_NOTES.depth).toContain('P90');
     expect(METRIC_CALIBER_NOTES.depth).toContain('最大层数');
     expect(METRIC_CALIBER_NOTES.managerRatio).toContain('员工总数');
@@ -1071,7 +1073,7 @@ describe('v2.0.9 A 管理幅度口径修正', () => {
     expect(critical!.title).toContain('管理幅度过宽');
   });
 
-  it('不可算分支：无任何有负责人部门 → median/min/max null、status warn、verdict 含「未设置部门负责人」', () => {
+  it('不可算分支：无任何有负责人部门 → median/min/max null、status nodata、verdict 含「未设置部门负责人」', () => {
     const root = dept('t', 'T', 1, { employees: [emp('a', 'L1.1')] });
     expect(computeSpanBreakdown([root])).toEqual({
       count: 0,
@@ -1083,7 +1085,7 @@ describe('v2.0.9 A 管理幅度口径修正', () => {
     });
     const span = computeL2([root]).find((x) => x.key === 'span')!;
     expect(span.value).toBeNull();
-    expect(span.status).toBe('warn');
+    expect(span.status).toBe('nodata');
     expect(span.verdict).toContain('未设置部门负责人');
   });
 
@@ -1098,7 +1100,7 @@ describe('v2.0.9 A 管理幅度口径修正', () => {
     ).toBe('danger'); // 18 ≥ 12×1.5 → 预警
     expect(
       spanStatusWithBreakdown({ count: 0, median: null, mean: null, min: null, max: null, distribution: [] }, DEFAULT_HEALTH_THRESHOLDS),
-    ).toBe('warn'); // 不可算
+    ).toBe('nodata'); // 不可算
   });
 });
 
@@ -1195,7 +1197,7 @@ describe('v2.0.9 B 层级深度口径修正', () => {
     expect(depthStatusWithBreakdown(mk(8, 8), t)).toBe('danger'); // P90 预警
     expect(
       depthStatusWithBreakdown({ max: 0, p50: 0, p90: 0, deepestDeptId: '', deepestPath: [], deptCount: 0 }, t),
-    ).toBe('warn'); // 空树
+    ).toBe('nodata'); // 空树
   });
 });
 
@@ -1213,7 +1215,7 @@ describe('v2.0.9 C 管理者比口径修正', () => {
     expect(bd.totalEmployees).toBe(3);
     expect(bd.nonManagerEmployees).toBe(3);
     const ratio = computeL2([d]).find((x) => x.key === 'managerRatio')!;
-    expect(ratio.value).toBe(0);
+    expect(ratio.value).toBeNull();
     expect(ratio.managerBreakdown!.externalManagers).toBe(1);
   });
 
@@ -1289,7 +1291,7 @@ describe('v2.0.9 C 管理者比口径修正', () => {
     const l2 = computeL2([dept('empty', '空部门', 1, {})]);
     const ratio = l2.find((x) => x.key === 'managerRatio')!;
     expect(ratio.value).toBeNull();
-    expect(ratio.status).toBe('warn');
+    expect(ratio.status).toBe('nodata');
     expect(ratio.verdict).toContain('无员工数据');
   });
 });
@@ -1368,13 +1370,13 @@ describe('v2.1.1 computePositionSummary（岗位级编制/缺口/成本）', () 
     expect(row.status).toBe('danger'); // 超编 1/2=50% > 20%
   });
 
-  it('frozen 岗位不计缺口：gap null、gapCost 0、status 关注（未配置/冻结）', () => {
+  it('frozen 岗位不计缺口：gap null、gapCost 0、status 无数据（未配置/冻结）', () => {
     const positions = [pos('p1', 'd1', '冻结岗位', { headcount: 4, status: 'frozen' })];
     const employees = [empAssigned('e1', 'L1.1', 'p1')];
     const row = computePositionSummary(positions, employees, COSTS)[0];
     expect(row.gap).toBeNull();
     expect(row.gapCost).toBe(0);
-    expect(row.status).toBe('warn');
+    expect(row.status).toBe('nodata');
   });
 
   it('archived 岗位被过滤', () => {
@@ -1396,10 +1398,10 @@ describe('v2.1.1 computePositionSummary（岗位级编制/缺口/成本）', () 
     expect(row.gap).toBe(1);
   });
 
-  it('编制 0（非 frozen）→ gap null 不计缺口：status 关注', () => {
+  it('编制 0（非 frozen）→ gap null 不计缺口：status 无数据', () => {
     const row = computePositionSummary([pos('p1', 'd1', '待定', { headcount: 0 })], [], COSTS)[0];
     expect(row.gap).toBeNull();
-    expect(row.status).toBe('warn');
+    expect(row.status).toBe('nodata');
   });
 
   it('无 levelBand → gapCost 用套岗员工 targetLevel 成本（L3.2→5）', () => {
@@ -1428,7 +1430,7 @@ describe('v2.1.1 computePositionSummary（岗位级编制/缺口/成本）', () 
     expect(row.assignedCount).toBe(2); // 在岗人数仍如实反映
     expect(row.headcount).toBe(0);
     expect(row.gap).toBeNull(); // 未配置，不计缺口（不伪装满编）
-    expect(row.status).toBe('warn'); // 未配置 → 关注
+    expect(row.status).toBe('nodata'); // 未配置 → 关注
     expect(row.gapCost).toBe(0); // 不计缺口成本
   });
 });

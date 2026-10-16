@@ -1,9 +1,11 @@
-import { Employee, Department, OrgTemplate } from '../types';
+import { Employee, Department, OrgTemplate, Position } from '../types';
 import { buildDepartmentTree } from './excel';
+import { deriveManagementLoads } from './management';
+import { uid } from './project';
 
 /**
  * 内置行业模板（v2.0.3 P1-4）。
- * 预置 3-4 套典型组织，顶部下拉一键载入示例组织（覆盖互联网/制造/零售/医院科层）。
+ * 预置 5 套、各 30 人的合成组织，经左侧示例入口载入（互联网/制造/零售/医院/教育）。
  * 数据以员工路径 + 组织模板表示，经 buildDepartmentTree 复用同一套建树逻辑，保证口径一致。
  */
 
@@ -193,7 +195,7 @@ const EDUCATION = {
 };
 
 /** 全部内置模板（顺序即下拉展示顺序） */
-export const INDUSTRY_TEMPLATES: IndustryTemplate[] = [
+const TEMPLATE_SEEDS: IndustryTemplate[] = [
   INTERNET,
   MANUFACTURING,
   RETAIL,
@@ -201,12 +203,68 @@ export const INDUSTRY_TEMPLATES: IndustryTemplate[] = [
   EDUCATION,
 ];
 
+/** 仅扩充合成演示样本，不用于推断真实组织的负责人、编制或成本。 */
+function completeDemoTemplate(source: IndustryTemplate): IndustryTemplate {
+  const employees = structuredClone(source.employees);
+  const path = (e: Employee | OrgTemplate) => [e.dept1, e.dept2, e.dept3, e.dept4, e.dept5, e.dept6].filter(Boolean) as string[];
+  const paths = [...new Map(employees.map((e) => [JSON.stringify(path(e)), path(e)])).values()];
+  const leaves = paths.filter((p) => !paths.some((other) => other.length > p.length && p.every((name, i) => name === other[i])));
+  for (let i = employees.length; i < 30; i++) {
+    const index = String(i + 1).padStart(2, '0');
+    employees.push(emp(`demo-${source.id}-${index}`, `演示成员${index}`, `DEMO-${source.id}-${index}`, 'L2.2', leaves[i % leaves.length]));
+  }
+  const orgTemplates = structuredClone(source.orgTemplates);
+  for (const p of paths) {
+    if (!orgTemplates.some((o) => JSON.stringify(path(o)) === JSON.stringify(p))) orgTemplates.push(org({ depts: p, deptLevel: String(p.length) }));
+  }
+  for (const o of orgTemplates) {
+    if (o.leaderId || o.leaderName) continue;
+    const leader = employees.find((e) => JSON.stringify(path(e)) === JSON.stringify(path(o)));
+    if (leader) { o.leaderId = leader.employeeId; o.leaderName = leader.name; }
+  }
+  return { ...source, description: `${source.description}；合成演示数据，编制与成本不是行业基准`, employees, orgTemplates };
+}
+
+export const INDUSTRY_TEMPLATES: IndustryTemplate[] = TEMPLATE_SEEDS.map(completeDemoTemplate);
+
 /** 载入内置模板，复用 buildDepartmentTree 生成组织树与员工扁平列表。 */
 export function loadIndustryTemplate(
   template: IndustryTemplate,
 ): { departments: Department[]; allEmployeesFlat: Employee[] } {
-  const departments = buildDepartmentTree(template.employees, template.orgTemplates);
-  return { departments, allEmployeesFlat: [...template.employees] };
+  const allEmployeesFlat = structuredClone(template.employees);
+  const departments = buildDepartmentTree(allEmployeesFlat, template.orgTemplates);
+  const configure = (list: Department[]) => {
+    for (const d of list) {
+      const groups = new Map<string, Employee[]>();
+      for (const e of d.employees) {
+        const name = e.employeeId === d.leaderId ? '部门负责人' : e.title || '业务专员';
+        groups.set(name, [...(groups.get(name) ?? []), e]);
+      }
+      d.positions = [...groups].map(([name, assigned]): Position => {
+        const id = uid('pos');
+        const now = new Date().toISOString();
+        for (const e of assigned) { e.positionId = id; e.assignmentType = 'primary'; }
+        return { id, departmentId: d.id, name, headcount: assigned.length,
+          levelBandMin: assigned[0].level, levelBandMax: assigned[0].level,
+          status: 'active', createdAt: now, updatedAt: now };
+      });
+      // 保留空部门作为演示场景，显式给一个空岗与编制，不靠缺失数据制造告警。
+      if (d.employees.length === 0 && d.children.length === 0) {
+        const now = new Date().toISOString();
+        d.positions = [{ id: uid('pos'), departmentId: d.id, name: '待补业务岗', headcount: 1,
+          levelBandMin: 'L2.2', levelBandMax: 'L2.2', status: 'active', createdAt: now, updatedAt: now }];
+      }
+      configure(d.children);
+    }
+  };
+  configure(departments);
+  // 把演示组织的结构性推断显式写成示例汇报线，真实导入路径不执行此逻辑。
+  for (const manager of deriveManagementLoads(departments).loads) {
+    const leader = allEmployeesFlat.find((e) => e.employeeId === manager.key || e.id === manager.key);
+    if (!leader) continue;
+    for (const e of allEmployeesFlat) if (manager.reports.has(e.employeeId || e.id)) e.reportsToEmployeeId = leader.id;
+  }
+  return { departments, allEmployeesFlat };
 }
 
 /** 按 id 查找模板；未找到返回 null。 */

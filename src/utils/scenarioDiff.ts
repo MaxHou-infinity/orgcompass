@@ -519,6 +519,7 @@ export function computeDiffTotals(baseline: Scenario, target: Scenario, threshol
 function worstStatus(statuses: (HealthStatus | null)[]): HealthStatus | null {
   if (statuses.includes('danger')) return 'danger';
   if (statuses.includes('warn')) return 'warn';
+  if (statuses.some((s) => s === null || s === 'nodata')) return null;
   if (statuses.includes('healthy')) return 'healthy';
   return null;
 }

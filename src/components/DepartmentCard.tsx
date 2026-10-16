@@ -723,7 +723,7 @@ export function DepartmentCard({
               「副职/挂名精确剔除」与「负责人空缺」对真实数据不可达。 */}
           <select
             aria-label="负责人类型"
-            title="负责人类型：正职计入管理者比分子；副职/代理/外部仅展示；空缺用于标记岗位在编但暂无在任负责人"
+            title="负责人类型：内部正职计入管理者；副职/代理头衔本身不计入，有明确下属时按带人事实计入；外部人员不计内部管理者；空缺表示暂无在任负责人"
             value={department.leaderType ?? (department.leaderId || department.leaderName ? 'owner' : '')}
             onPointerDown={(e) => e.stopPropagation()}
             onChange={(e) => {

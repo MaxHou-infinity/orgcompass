@@ -12,8 +12,11 @@ import {
   SuggestionSeverity,
   METRIC_CALIBER_NOTES,
   PositionSummary,
+  getHealthThresholds,
+  DEFAULT_HEALTH_THRESHOLDS,
 } from '../utils/analytics';
 import { STATUS_STYLE, fmt, fmtCost } from '../utils/statusUI';
+import { OrganizationCostSummary } from './OrganizationCostSummary';
 
 interface DiagnosticReportProps {
   open: boolean;
@@ -108,9 +111,10 @@ export function DiagnosticReport({
   onToast,
 }: DiagnosticReportProps) {
   const reportRef = useRef<HTMLDivElement>(null);
+  const thresholds = useMemo(() => open ? getHealthThresholds() : DEFAULT_HEALTH_THRESHOLDS, [open]);
   const report = useMemo(
-    () => computeHealthReport(departments, levelConfigs),
-    [departments, levelConfigs],
+    () => computeHealthReport(open ? departments : [], levelConfigs, undefined, thresholds),
+    [open, departments, levelConfigs, thresholds],
   );
 
   const deptNameById = useMemo(() => {
@@ -120,9 +124,9 @@ export function DiagnosticReport({
   }, [departments]);
 
   const suggestions = useMemo(
-    () => collectAllSuggestions(report, departments, undefined, levelConfigs),
+    () => open ? collectAllSuggestions(report, departments, thresholds, levelConfigs) : [],
     // levelConfigs 必须进依赖：它决定「哪些职级算未配置」，改了职级管理要立刻反映到建议里
-    [report, departments, levelConfigs],
+    [open, report, departments, levelConfigs, thresholds],
   );
 
   const generatedAt = useMemo(
@@ -211,9 +215,9 @@ export function DiagnosticReport({
             <div className={`rounded-2xl border ${STATUS_STYLE[summary.overall].border} ${STATUS_STYLE[summary.overall].bg} shadow-soft p-4`}>
               <div className="text-xs text-slate-500">整体健康度</div>
               <div className={`text-2xl font-bold ${STATUS_STYLE[summary.overall].text}`}>
-                {HEALTH_STATUS_LABEL[summary.overall]}
+                {summary.overall === 'nodata' ? '暂不判定' : HEALTH_STATUS_LABEL[summary.overall]}
               </div>
-              <div className="text-xs text-slate-400 mt-1">红{summary.red} 黄{summary.yellow} 绿{summary.green}</div>
+              <div className="text-xs text-slate-400 mt-1">红{summary.red} 黄{summary.yellow} 绿{summary.green} · 无数据{summary.unavailable}</div>
             </div>
             <div className="rounded-2xl bg-white border border-slate-100 shadow-soft p-4">
               <div className="text-xs text-slate-500">总人数</div>
@@ -240,6 +244,13 @@ export function DiagnosticReport({
           </div>
         </section>
 
+        <section aria-label="数据完整度" className="text-xs text-slate-600 border border-slate-200 rounded-xl p-3">
+          <b>数据完整度：</b>可计算指标 {report.dataCompleteness.availableMetrics}/{report.dataCompleteness.totalMetrics}；
+          已设负责人 {report.dataCompleteness.departmentsWithLeader}/{report.dataCompleteness.totalDepartments} 个部门；
+          已配置直属编制 {report.dataCompleteness.departmentsWithHeadcount}/{report.dataCompleteness.totalDepartments} 个部门。
+          无数据项不计入红黄绿，已有数据的判读不能替代整体判断。
+        </section>
+
         {/* 健康度指标 */}
         <section>
           <h2 className="text-base font-bold text-slate-900 mb-3">健康度指标</h2>
@@ -251,7 +262,7 @@ export function DiagnosticReport({
                 {/* v2.0.9 口径小字：中位数/极值、P50/P90、内部/外部/兼岗 */}
                 {m.key === 'span' && m.spanBreakdown && (
                   <div className="text-[11px] text-slate-400 mt-0.5 leading-snug">
-                    极值 {fmt(m.spanBreakdown.min)}–{fmt(m.spanBreakdown.max)} 人 · {m.spanBreakdown.count} 个有负责人部门
+                    极值 {fmt(m.spanBreakdown.min)}–{fmt(m.spanBreakdown.max)} 人 · {m.spanBreakdown.count} 名管理者（兼任已合并）
                   </div>
                 )}
                 {m.key === 'depth' && m.depthBreakdown && m.depthBreakdown.deptCount > 0 && (
@@ -286,6 +297,8 @@ export function DiagnosticReport({
             指标用于发现值得讨论的结构性信号，不替代业务背景、人才判断与管理责任。阈值可在健康度面板中按企业阶段与口径调整。
           </p>
         </section>
+
+        <OrganizationCostSummary data={report.costBreakdown} />
 
         {/* 组织架构图（只读） */}
         <section className="report-section">
@@ -330,7 +343,7 @@ export function DiagnosticReport({
                     <td className="py-2 text-slate-500">L{d.level}</td>
                     <td className="py-2 text-slate-600">{d.leaderName || '—'}</td>
                     <td className="py-2 text-right text-slate-700">{metric?.actual ?? 0}</td>
-                    <td className="py-2 text-right text-slate-600">{metric?.headcount ?? '—'}</td>
+                    <td title={metric?.headcountSource} className="py-2 text-right text-slate-600">{metric?.headcount ?? '—'}</td>
                     <td className="py-2 text-right text-slate-600">
                       {metric?.gap ?? '—'}
                     </td>

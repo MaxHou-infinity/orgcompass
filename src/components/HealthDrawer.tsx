@@ -27,6 +27,7 @@ import {
 import { STATUS_STYLE, fmt, fmtCost } from '../utils/statusUI';
 import { useLevelConfigs, getLevelColor } from '../utils/levels';
 import { SubPageShell } from './SubPageShell';
+import { OrganizationCostSummary } from './OrganizationCostSummary';
 
 interface HealthPageProps {
   /** V2.4.0：人岗核对问题（页面内呈现，不再占用主页面顶部） */
@@ -129,12 +130,13 @@ function SpanCardExtra({
   const [open, setOpen] = useState(false);
   const b = m.spanBreakdown;
   if (!b || b.count === 0) return null;
+  if (b.unresolvedReports) return <p className="mt-2 text-[11px] text-slate-500">汇报关系待核对 {b.unresolvedReports} 条，暂不展示直管判读。</p>;
   const widest = b.distribution[0];
   const exceeded = b.max !== null && b.max > thresholds.spanWarnMax;
   return (
     <div className="mt-2">
       <div className="text-[11px] text-slate-500 leading-snug">
-        极值 {fmt(b.min)}–{fmt(b.max)} 人 · {b.count} 个有负责人部门
+        极值 {fmt(b.min)}–{fmt(b.max)} 人 · {b.count} 名管理者（兼任已合并）
         {widest && (
           <span className={exceeded ? 'text-red-500 font-medium' : 'text-slate-500'}>
             {' '}
@@ -175,12 +177,12 @@ function SpanCardExtra({
                           : '适中';
                 return (
                   <tr
-                    key={row.deptId}
+                    key={row.managerKey ?? row.deptId}
                     onClick={() => onFocusDept(row.deptId)}
                     className="border-b border-slate-50 last:border-0 cursor-pointer hover:bg-indigo-50/60"
                     title="点击定位到画布"
                   >
-                    <td className="px-2.5 py-1.5 text-slate-600">{row.deptName}</td>
+                    <td className="px-2.5 py-1.5 text-slate-600">{row.managerName && <span className="font-medium">{row.managerName} · </span>}{row.deptName}</td>
                     <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{row.directReports}</td>
                     <td
                       className={`px-2.5 py-1.5 text-right font-medium ${
@@ -232,8 +234,8 @@ function ManagerCardExtra({ m }: { m: L2Metric }) {
   const b = m.managerBreakdown;
   if (!b) return null;
   const per =
-    b.nonManagerEmployees > 0 && b.internalManagers > 0
-      ? Math.round(b.nonManagerEmployees / b.internalManagers)
+    b.internalManagers > 0
+      ? Math.round((b.nonManagerEmployees / b.internalManagers) * 10) / 10
       : null;
   const perRatio =
     b.nonManagerEmployees > 0 && b.internalManagers > 0
@@ -244,6 +246,8 @@ function ManagerCardExtra({ m }: { m: L2Metric }) {
       <div>
         内部 {b.internalManagers} ÷ {b.totalEmployees} 人（含管理者）= {fmt(m.value, '%')}
       </div>
+      <div>正职负责人 {b.departmentOwners} 人 · 明确汇报关系中的带人者 {b.reportingManagers} 人（两类可重叠）</div>
+      {per !== null && <div>IC:Mgr = {per}:1 · 样本 {b.totalEmployees} 人，阈值为当前配置，非行业标准</div>}
       {per !== null && perRatio !== null && (
         <div>
           ≈ 每 {per} 名非管理员工配 1 名管理者（非管理者口径 {perRatio}%）
@@ -352,7 +356,9 @@ export function HealthPage({
   const configs = useLevelConfigs();
   const [thresholds, setThresholds] = useState<HealthThresholds>(() => getHealthThresholds());
   const [thresholdsOpen, setThresholdsOpen] = useState(false);
-  const [stage, setStage] = useState<OrganizationStage>(DEFAULT_STAGE);
+  const stage = (Object.keys(STAGE_PRESETS) as OrganizationStage[]).find((s) =>
+    (Object.keys(thresholds) as (keyof HealthThresholds)[]).every((key) => thresholds[key] === STAGE_PRESETS[s].thresholds[key]),
+  );
   // v2.1.1：L3 部门→岗位展开（已展开的部门 id 集合）
   const [expandedPosDepts, setExpandedPosDepts] = useState<Set<string>>(() => new Set());
   // v2.3.1（Q-23）：抽屉常驻挂载，关闭态也会重渲染；
@@ -391,13 +397,11 @@ export function HealthPage({
     const defs = { ...DEFAULT_HEALTH_THRESHOLDS };
     setThresholds(defs);
     resetHealthThresholds();
-    setStage(DEFAULT_STAGE);
     setStagePreset(DEFAULT_STAGE);
   };
 
   /** 切换企业阶段：应用该阶段阈值预设并持久化；仍可在下方阈值面板二次微调。 */
   const handleSetStage = (s: OrganizationStage) => {
-    setStage(s);
     setStagePreset(s);
     const preset = getStagePresetThresholds(s);
     setThresholds({ ...preset });
@@ -480,6 +484,13 @@ export function HealthPage({
             )}
           </div>
 
+          <section aria-label="数据完整度" className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
+            <h3 className="font-semibold mb-1">数据完整度</h3>
+            <p>可计算指标 {report.dataCompleteness.availableMetrics}/{report.dataCompleteness.totalMetrics} · 无数据 {report.summary.unavailable} 项（不计入红黄绿）</p>
+            <p>已设负责人 {report.dataCompleteness.departmentsWithLeader}/{report.dataCompleteness.totalDepartments} 个部门 · 已配置直属编制 {report.dataCompleteness.departmentsWithHeadcount}/{report.dataCompleteness.totalDepartments} 个部门</p>
+            <p className="mt-1 text-slate-500">完整度表示录入覆盖情况，不代表数据已核实；部门层级不等于人员到 CEO 的汇报链。</p>
+          </section>
+
           {/* 企业阶段基准预设 */}
           <section>
             <div className="rounded-2xl bg-white/70 backdrop-blur-xl border border-white/50 shadow-card p-4">
@@ -508,7 +519,7 @@ export function HealthPage({
                 })}
               </div>
               <p className="text-[11px] text-slate-500 mt-2 leading-snug">
-                {STAGE_PRESETS[stage].description} · 基准仅供参考，需结合本企业业务阶段校准。
+                {stage ? STAGE_PRESETS[stage].description : '当前使用自定义阈值。基准仅供参考，需结合本企业业务阶段校准。'}
               </p>
             </div>
           </section>
@@ -626,9 +637,10 @@ export function HealthPage({
                   <StatusDot status="danger" label={`红 ${report.summary.red}`} />
                   <StatusDot status="warn" label={`黄 ${report.summary.yellow}`} />
                   <StatusDot status="healthy" label={`绿 ${report.summary.green}`} />
+                  <StatusDot status="nodata" label={`无数据 ${report.summary.unavailable}`} />
                 </div>
                 <span className={`text-xs font-medium ${STATUS_STYLE[report.summary.overall].text}`}>
-                  整体{HEALTH_STATUS_LABEL[report.summary.overall]}
+                  {report.summary.overall === 'nodata' ? '整体暂不判定' : `已评估项${HEALTH_STATUS_LABEL[report.summary.overall]}`}
                 </span>
               </div>
               <p className="text-sm text-slate-700 mt-2">{report.summary.diagnosis}</p>
@@ -657,6 +669,8 @@ export function HealthPage({
             )}
           </section>
 
+          <OrganizationCostSummary data={report.costBreakdown} />
+
           {/* L3 编制 vs 实际 vs 缺口 */}
           <section>
             <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
@@ -665,7 +679,7 @@ export function HealthPage({
 
             <div className="flex items-center gap-2 mb-2">
               <span className="text-[10px] text-slate-500">
-                人数和成本包含下级部门；缺口仅统计已配置编制范围，岗位缺口请展开查看（成本单位：万元/月）
+                人数和成本包含下级部门；编制来源与缺口成本依据可悬停查看（成本单位：万元/月）。在途 offer、待入职和待离职尚未计入。
               </span>
             </div>
 
@@ -720,7 +734,7 @@ export function HealthPage({
                           </td>
                           <td className="px-2 py-2.5 text-right">
                             {hasPositions ? (
-                              <span className="text-slate-600 tabular-nums" title="编制 = 岗位编制之和，可在岗位行编辑">
+                              <span className="text-slate-600 tabular-nums" title={r.headcountSource}>
                                 {r.headcount ?? '—'}
                               </span>
                             ) : (
@@ -728,6 +742,7 @@ export function HealthPage({
                                 type="number"
                                 min="0"
                                 value={r.headcount ?? ''}
+                                title={r.headcountSource}
                                 placeholder="—"
                                 onChange={(e) => {
                                   const val = e.target.value === '' ? 0 : Number(e.target.value);
@@ -756,11 +771,11 @@ export function HealthPage({
                           <td className="px-2 py-2.5 text-right">
                             {/* v2.3.1 F-11：找不到成本依据 → 「无法估算」，不写成 0w */}
                             {r.gapCost === null ? (
-                              <span className="text-slate-500" title="找不到成本依据（无在岗人员且无职级成本映射），缺口成本无法估算">
+                              <span className="text-slate-500" title={r.gapCostBasis}>
                                 无法估算
                               </span>
                             ) : (
-                              <span className={r.gapCost > 0 ? 'text-amber-600' : r.gapCost < 0 ? 'text-red-600' : 'text-slate-500'}>
+                              <span title={r.gapCostBasis} className={r.gapCost > 0 ? 'text-amber-600' : r.gapCost < 0 ? 'text-red-600' : 'text-slate-500'}>
                                 {fmtCost(r.gapCost)}
                               </span>
                             )}

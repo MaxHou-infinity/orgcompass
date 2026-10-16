@@ -10,7 +10,7 @@ import {
   PersonnelChange,
   ScenarioDiffResult,
 } from '../utils/scenarioDiff';
-import { HEALTH_STATUS_LABEL, HealthStatus, METRIC_CALIBER_NOTES } from '../utils/analytics';
+import { HEALTH_STATUS_LABEL, HealthStatus, METRIC_CALIBER_NOTES, getHealthThresholds, DEFAULT_HEALTH_THRESHOLDS } from '../utils/analytics';
 import {
   buildGapListRows,
   summarizeGapList,
@@ -61,7 +61,7 @@ const PERSON_LABEL: Record<PersonnelChange['type'], string> = {
   removed: '移除',
 };
 
-const STATUS_RANK: Record<HealthStatus, number> = { healthy: 0, warn: 1, danger: 2 };
+const STATUS_RANK: Record<HealthStatus, number> = { nodata: -1, healthy: 0, warn: 1, danger: 2 };
 
 /** 3~5 条「关键变化」自动摘录（按差异幅度/结构变化/灯号变化排序；只陈述事实，不评判优劣） */
 function buildHighlights(diff: ScenarioDiffResult): string[] {
@@ -218,7 +218,8 @@ export function ManagementReport({
   const [notes, setNotes] = useState('');
   const [calibersOpen, setCalibersOpen] = useState(false);
 
-  const diff: ScenarioDiffResult = useMemo(() => computeScenarioDiff(baseline, target), [baseline, target]);
+  const thresholds = useMemo(() => open ? getHealthThresholds() : DEFAULT_HEALTH_THRESHOLDS, [open]);
+  const diff: ScenarioDiffResult = useMemo(() => computeScenarioDiff(baseline, target, thresholds), [baseline, target, thresholds]);
 
   // —— v2.3 M4：岗位缺口清单（与界面岗位明细表使用同一份 deriveBoard 派生，Excel 同源）——
   // v2.3.1：去掉 `as never`，用带类型的空 Map（类型本就匹配 BoardInput.competencySummaries）。
@@ -728,7 +729,7 @@ export function ManagementReport({
               本报告为多场景推演决策底稿：差异 = <b>目标场景 − 基线场景</b>，只陈述发生了什么变化，<b>不评判方案优劣、不自动推荐方案</b>；建议动作由 HRBP / 业务负责人结合业务背景填写。
             </p>
             <p className="text-sm text-slate-700 leading-relaxed">
-              指标口径自本版本起：管理幅度 = 有负责人部门「直管人数」的<b>中位数</b>（+ 极值兜底）；层级深度 = 部门深度分布的 <b>P90</b>（+ max 硬上限与最深链定位）；管理者比 = <b>内部</b>负责人 ÷ 含管理者全员（外部负责人已剔除、兼岗已去重）。
+              指标口径自本版本起：管理幅度 = 每名管理者直管人数的<b>中位数</b>（明确汇报优先、无负责人子组向上归属、兼任合并）（+ 极值兜底）；层级深度 = 部门深度分布的 <b>P90</b>（+ max 硬上限与最深链定位）；管理者比 = <b>内部正职负责人和有明确下属者的并集</b> ÷ 含管理者全员；与胜任度同源去重，缺失数据不计入红黄绿。
             </p>
             <p className="text-sm text-slate-700 leading-relaxed">
               场景数据不一致（如一侧未配置编制）时，差异按 <b>无数据/不可比</b> 呈现，不把缺失当 0 计算。

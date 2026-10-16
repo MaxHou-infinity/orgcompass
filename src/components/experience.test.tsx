@@ -38,9 +38,9 @@ describe('体验断点回归', () => {
     expect(isManager(manager.id, [], [manager, { ...worker, reportsToEmployeeId: 'M001' }])).toBe(true);
     expect(isManager(manager.id, [], [manager, { ...worker, isVirtual: true, reportsToEmployeeId: 'M001' }])).toBe(false);
   });
-  it('真实行业示例有 5 名干部', () => {
+  it('完整行业演示样本包含组长，共 10 名管理者', () => {
     const data = loadIndustryTemplate(findIndustryTemplate('internet')!);
-    expect(data.allEmployeesFlat.filter((e) => isManager(e.id, data.departments, data.allEmployeesFlat))).toHaveLength(5);
+    expect(data.allEmployeesFlat.filter((e) => isManager(e.id, data.departments, data.allEmployeesFlat))).toHaveLength(10);
   });
   it('子部门筛选不会泄漏其他部门人员', () => {
     batch();

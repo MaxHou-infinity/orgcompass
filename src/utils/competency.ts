@@ -8,7 +8,8 @@ import type {
   Position,
   PositionAssignment,
 } from '../types';
-import { HealthStatus, parseLevelNumber } from './analytics';
+import { type RatedHealthStatus as HealthStatus, parseLevelNumber } from './analytics';
+import { deriveManagerRoles } from './management';
 
 /**
  * —— v2.2.0 胜任度引擎：派生纯函数（design doc §5）——
@@ -801,33 +802,10 @@ export function isManager(
  * 且 App 与批量评估此前各自实现过一份等价规则（双实现一旦漂移，就会出现
  * 「按干部评分、按员工模型算完整度」的静默错配）。
  *
- * 本函数一次遍历得到全量结果，判定规则与 `isManager` 完全一致：
- * - 是本部门（含任意层级）的负责人（leaderId 命中内部 id 或工号）；或
+ * 本函数复用健康度的 deriveManagerRoles，判定规则与 `isManager` 完全一致：
+ * - 是可核对的内部正职负责人（ID/工号或唯一姓名）；或
  * - 是某个非虚拟员工的直接上级（reportsToEmployeeId 命中），且不是自己汇报给自己。
  */
 export function computeManagerIdSet(departments: Department[], allEmployees: Employee[]): Set<string> {
-  const idsByEmployeeNumber = new Map<string, string[]>();
-  for (const e of allEmployees) {
-    if (e.isVirtual || !e.employeeId) continue;
-    idsByEmployeeNumber.set(e.employeeId, [...(idsByEmployeeNumber.get(e.employeeId) ?? []), e.id]);
-  }
-  /** 一个 leaderId / reportsToEmployeeId 字面值 → 它指向的内部 id 列表（工号优先，其次按内部 id） */
-  const resolve = (value: string): string[] => idsByEmployeeNumber.get(value) ?? [value];
-
-  const out = new Set<string>();
-  const walk = (list: Department[]) => {
-    for (const d of list) {
-      if (d.leaderId) for (const id of resolve(d.leaderId)) out.add(id);
-      walk(d.children ?? []);
-    }
-  };
-  walk(departments);
-
-  for (const e of allEmployees) {
-    if (e.isVirtual || !e.reportsToEmployeeId) continue;
-    for (const id of resolve(e.reportsToEmployeeId)) {
-      if (id !== e.id) out.add(id);
-    }
-  }
-  return out;
+  return deriveManagerRoles(departments, allEmployees).managerIds;
 }

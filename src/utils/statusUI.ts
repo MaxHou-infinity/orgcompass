@@ -13,6 +13,9 @@ export interface StatusStyle {
 }
 
 export const STATUS_STYLE: Record<HealthStatus, StatusStyle> = {
+  nodata: {
+    dot: 'bg-slate-300', text: 'text-slate-500', bg: 'bg-slate-50/70', border: 'border-slate-200',
+  },
   healthy: {
     dot: 'bg-emerald-500',
     text: 'text-emerald-600',
