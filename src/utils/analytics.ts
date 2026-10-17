@@ -1,10 +1,17 @@
+import { BUSINESS_CONTEXTS, effectiveBusinessThresholds, type BusinessContext } from './businessContext';
+import { contextualSuggestions } from './businessSuggestions';
+import { computeSuccession } from './succession';
+import { computeReportingChains } from './reportingChains';
+import { computeFunctionalSpans, MANAGEMENT_TYPE_LABELS, DEFAULT_MANAGEMENT_RANGES, DEFAULT_JOB_FAMILY_TYPES } from './managementBenchmarks';
+import { DEFAULT_HEALTH_THRESHOLDS, normalizeHealthThresholds, REPORTING_COVERAGE_MIN, REPORTING_COVERAGE_WARN } from './healthThresholds';
+import type { HealthThresholds } from './healthThresholds';
 import { Department, Employee, LevelConfig, Position, LeaderType } from '../types';
 import { employeeCost, hasEmployeeCost, positionUnitCost } from './cost';
 export { costForLevel, employeeCost } from './cost';
 import { computeMatchStates, MatchResult } from './match';
 import { computeLevelGaps } from './deptLevel';
 import { findUnconfiguredLevels } from './levels';
-import { deriveManagementLoads, deriveManagerRoles } from './management';
+import { deriveManagementLoads, deriveManagerRoles, reportingCoverage, type ReportingCoverage } from './management';
 
 // —— v2.1.1 状态机接入：data-eng 于 src/utils/match.ts 提供，此处复用/再导出 ——
 export { computeMatchStates };
@@ -63,6 +70,7 @@ export interface SpanRow {
 
 /** 管理幅度分布（v2.0.9）：中位数主判 + 极值兜底 + 部门级裸奔明细 */
 export interface SpanBreakdown {
+  reporting?: ReportingCoverage;
   /** 无效或冲突汇报引用不参与确定性判读，需先核对。 */
   unresolvedReports?: number;
   /** 管理者样本数（同一人兼任多个部门只计一次） */
@@ -116,7 +124,11 @@ export interface ManagerBreakdown {
 
 /** L2 单项指标 */
 export interface L2Metric {
-  key: 'span' | 'depth' | 'managerRatio' | 'vacancy';
+  includedInOverall?: boolean;
+  referenceOnly?: boolean;
+  functionalSpans?: ReturnType<typeof computeFunctionalSpans>;
+  dataWarning?: string;
+  key: 'span' | 'depth' | 'managerRatio' | 'vacancy' | 'succession' | 'gradeInversion' | 'managerCost' | 'duplicatePositions' | 'reportingConflicts';
   label: string;
   /** 指标值；不可计算时为 null（如无负责人、无编制、无员工）。
    *  v2.0.9 语义：span = 直管数中位数；depth = 深度 P90（主）；managerRatio = 内部负责人 ÷ 含管理者全员。 */
@@ -185,6 +197,11 @@ export interface ReportTotals {
 
 /** 完整健康报告 */
 export interface HealthReport {
+  businessContext: BusinessContext;
+  effectiveThresholds: HealthThresholds;
+  succession: ReturnType<typeof computeSuccession>;
+  reportingChains: ReturnType<typeof computeReportingChains>;
+  reporting: ReportingCoverage;
   scopeDeptId?: string;
   l1: L1DeptSummary[];
   l2: L2Metric[];
@@ -197,6 +214,7 @@ export interface HealthReport {
     departmentsWithLeader: number;
     totalDepartments: number;
     departmentsWithHeadcount: number;
+    managementTypeDefaults: number;
   };
   costBreakdown: {
     knownCost: number;
@@ -212,40 +230,8 @@ export interface HealthReport {
  * 各指标阈值从硬编码抽离，可经设置面板调整并持久化到 localStorage。
  * 所有 compute* 函数接受可选阈值参数，缺省读取当前配置（默认值即 v2.0.2 历史口径）。
  */
-export interface HealthThresholds {
-  /** 管理幅度：健康区间 [spanHealthyMin, spanHealthyMax]；[spanWarnLow, spanHealthyMin) 与 (spanHealthyMax, spanWarnMax] 为关注；其余预警 */
-  spanHealthyMin: number;
-  spanHealthyMax: number;
-  spanWarnLow: number;
-  spanWarnMax: number;
-  /** 层级深度：<= depthHealthyMax 健康；<= depthWarnMax 关注；其余预警 */
-  depthHealthyMax: number;
-  depthWarnMax: number;
-  /** 管理者比（%）：<= managerHealthyMax 健康；<= managerWarnMax 关注；其余预警 */
-  managerHealthyMax: number;
-  managerWarnMax: number;
-  /** 空岗率（%）：<= vacancyHealthyMax 健康；<= vacancyWarnMax 关注；其余预警 */
-  vacancyHealthyMax: number;
-  vacancyWarnMax: number;
-  /** 超编梯度：超编占比 <= overWarnRatio 关注；其余预警 */
-  overWarnRatio: number;
-}
-
-/** 默认阈值（v2.0.2 历史口径，作为迁移默认值） */
-export const DEFAULT_HEALTH_THRESHOLDS: HealthThresholds = {
-  spanHealthyMin: 3,
-  spanHealthyMax: 8,
-  spanWarnLow: 1,
-  spanWarnMax: 12,
-  depthHealthyMax: 4,
-  depthWarnMax: 6,
-  managerHealthyMax: 15,
-  managerWarnMax: 25,
-  vacancyHealthyMax: 10,
-  vacancyWarnMax: 20,
-  overWarnRatio: 0.2,
-};
-
+export { DEFAULT_HEALTH_THRESHOLDS, REPORTING_COVERAGE_MIN, REPORTING_COVERAGE_WARN, normalizeHealthThresholds } from './healthThresholds';
+export type { HealthThresholds } from './healthThresholds';
 /** 产品诊断的保守门槛，不是统计显著性或行业标准。按真人/管理者去重；不改变原始数值。
  * 仅约束管理幅度与管理者比的组织级评价，结构深度和编制事实不受影响。
  */
@@ -266,7 +252,7 @@ export function getHealthThresholds(): HealthThresholds {
     const raw = localStorage.getItem(HEALTH_THRESHOLDS_KEY);
     if (!raw) return { ...DEFAULT_HEALTH_THRESHOLDS };
     const parsed = JSON.parse(raw) as Partial<HealthThresholds>;
-    return { ...DEFAULT_HEALTH_THRESHOLDS, ...parsed };
+    return normalizeHealthThresholds(parsed);
   } catch {
     return { ...DEFAULT_HEALTH_THRESHOLDS };
   }
@@ -310,6 +296,8 @@ export const STAGE_PRESETS: Record<OrganizationStage, StagePreset> = {
     label: '初创期',
     description: '组织快速搭建、管理上线，基准仅供参考，需结合本企业业务阶段校准。',
     thresholds: {
+      ...DEFAULT_HEALTH_THRESHOLDS,
+      managementStage: 'startup', chainHealthyMax: 3, chainWarnMax: 4,
       spanHealthyMin: 2,
       spanHealthyMax: 7,
       spanWarnLow: 1,
@@ -334,6 +322,8 @@ export const STAGE_PRESETS: Record<OrganizationStage, StagePreset> = {
     label: '成熟期',
     description: '组织稳定、流程固化，基准仅供参考，需结合本企业业务阶段校准。',
     thresholds: {
+      ...DEFAULT_HEALTH_THRESHOLDS,
+      managementStage: 'mature', chainHealthyMax: 5, chainWarnMax: 6,
       spanHealthyMin: 5,
       spanHealthyMax: 9,
       spanWarnLow: 1,
@@ -669,11 +659,11 @@ export function computeSpanBreakdown(roots: Department[]): SpanBreakdown {
     directReports: load.reports.size,
   }));
   if (rows.length === 0) {
-    return { count: 0, median: null, mean: null, min: null, max: null, distribution: [] };
+    return { ...(management.unresolved ? { unresolvedReports: management.unresolved, reporting: management } : {}), count: 0, median: null, mean: null, min: null, max: null, distribution: [] };
   }
   const values = rows.map((r) => r.directReports).sort((a, b) => a - b);
   return {
-    ...(management.unresolved > 0 ? { unresolvedReports: management.unresolved } : {}),
+    ...(management.unresolved > 0 ? { unresolvedReports: management.unresolved, reporting: management } : {}),
     count: rows.length,
     median: medianOf(values),
     mean: round1(values.reduce((s, v) => s + v, 0) / values.length),
@@ -874,22 +864,18 @@ export function computeL2(roots: Department[], thresholds: HealthThresholds = ge
     }
   }
 
-  if (spanBreakdown.unresolvedReports) {
-    spanVerdict += `；已排除 ${spanBreakdown.unresolvedReports} 名汇报关系无法核对的人员，结果仅覆盖有效关系，可能低估实际负荷`;
-  }
 
   // —— 层级深度（v2.0.9：P90 主判 + 孤立深链升级 + max 硬上限；value 展示 P90）——
   const depthBreakdown = computeDepthBreakdown(roots);
   const depth = depthBreakdown.p90;
-  const depthStatusVal = depthStatusWithBreakdown(depthBreakdown, thresholds);
-  const depthVerdict =
-    depthBreakdown.deptCount === 0
-      ? '暂无部门数据，无法评估层级深度'
-      : depthStatusVal === 'healthy'
-        ? `层级精简（最深 ${depthBreakdown.max} 层）；典型 P50=${depthBreakdown.p50} 层，P90=${depthBreakdown.p90} 层`
-        : depthStatusVal === 'warn'
-          ? `最深 ${depthBreakdown.max} 层，典型 P50=${depthBreakdown.p50}/P90=${depthBreakdown.p90} 层；偏深主要来自个别深链，建议定位最深链路部门`
-          : `层级过深（最深 ${depthBreakdown.max} 层）；典型 P50=${depthBreakdown.p50}/P90=${depthBreakdown.p90} 层，最深链路位于 ${depthBreakdown.deepestPath.join(' → ')}，建议压缩`;
+  const chains = computeReportingChains(roots);
+  const chainSufficient = chains.total >= MANAGEMENT_SAMPLE_MIN.employees && chains.p90 !== null;
+  let depthStatusVal: HealthStatus = !chainSufficient ? 'nodata' : chains.p90! <= (thresholds.chainHealthyMax ?? 4) ? 'healthy' : chains.p90! <= (thresholds.chainWarnMax ?? 5) ? 'warn' : 'danger';
+  const chainCoverage = chains.total ? chains.count / chains.total : 0;
+  if (chainCoverage < (thresholds.reportingCoverageMin ?? REPORTING_COVERAGE_MIN)) depthStatusVal = 'nodata';
+  const depthVerdict = !chainSufficient ? `汇报链样本 ${chains.total} 人，不足 ${MANAGEMENT_SAMPLE_MIN.employees} 人或暂无可核对完整链，仅作参考。部门层级 P90=${depth}，不参与总评。`
+    : chainCoverage < (thresholds.reportingCoverageMin ?? REPORTING_COVERAGE_MIN) ? '完整汇报链覆盖不足，暂不判定；请修正异常汇报关系。'
+    : `人员汇报链 P50=${chains.p50}，P90=${chains.p90}，最长 ${chains.max} 位管理者；部门层级 P90=${depth}（仅参考）。`;
 
   // —— 管理者比（v2.0.9：剔除外部 + 统一去重 + 暴露兼岗；分母含管理者，辅助口径展示）——
   const managerBreakdown = computeManagerBreakdown(roots);
@@ -946,15 +932,37 @@ export function computeL2(roots: Department[], thresholds: HealthThresholds = ge
     }
   }
 
+  const functionalSpans = computeFunctionalSpans(roots, thresholds.managementStage ?? 'growth',
+    thresholds.managementRanges ?? DEFAULT_MANAGEMENT_RANGES, thresholds.jobFamilyTypes ?? DEFAULT_JOB_FAMILY_TYPES);
+  if (span !== null) {
+    spanStatusVal = functionalSpans.status;
+    spanVerdict = `按职能分别评估（每类至少 3 名管理者）；总灯号取可评价类型最差值，总体中位数 ${span} 人仅作参考。`;
+    if (functionalSpans.status === 'nodata') spanVerdict += '各类型管理者样本不足，暂不判定。';
+  }
+
   const sampleSufficient = managementSampleSufficient(roots);
+  let reportingWarning: string | undefined;
   if (!sampleSufficient) {
     const reason = `样本 ${totalEmployees} 人、${spanBreakdown.count} 名管理者；少于 ${MANAGEMENT_SAMPLE_MIN.employees} 人或 ${MANAGEMENT_SAMPLE_MIN.managers} 名管理者时仅展示数值，暂不作组织级评价（产品保守门槛，非行业标准）`;
     if (span !== null) {
       spanStatusVal = 'nodata';
       spanVerdict = `${reason}；直管中位数 ${span} 人，最宽 ${spanBreakdown.max} 人`;
-      if (spanBreakdown.unresolvedReports) spanVerdict += `；已排除 ${spanBreakdown.unresolvedReports} 名关系异常人员，可能低估负荷`;
     }
     if (managerRatio !== null) { managerRatioStatusVal = 'nodata'; managerRatioVerdict = `${reason}；${managerRatioVerdictText('healthy', managerBreakdown).replace('管理者占比合理', '管理者口径')}`; }
+  }
+  else if (spanBreakdown.reporting && spanBreakdown.reporting.coverage !== null) {
+    const quality = spanBreakdown.reporting;
+    const coverage = quality.coverage!;
+    const percent = round1((1 - coverage) * 100);
+    const min = thresholds.reportingCoverageMin ?? REPORTING_COVERAGE_MIN;
+    const warn = thresholds.reportingCoverageWarn ?? REPORTING_COVERAGE_WARN;
+    if (coverage < min) {
+      spanStatusVal = 'nodata';
+      spanVerdict = `异常汇报占比 ${percent}%，超过 ${round1((1 - min) * 100)}%，暂不判定。请先修正以下人员的汇报关系`;
+    } else if (coverage < warn) {
+      reportingWarning = '⚠ 数据不完整';
+      spanVerdict += `；已剔除 ${quality.excluded.length} 人（${percent}%）异常汇报，结果可能偏乐观`;
+    }
   }
 
   return [
@@ -966,11 +974,13 @@ export function computeL2(roots: Department[], thresholds: HealthThresholds = ge
       status: spanStatusVal,
       verdict: spanVerdict,
       spanBreakdown,
+      functionalSpans,
+      ...(reportingWarning ? { dataWarning: reportingWarning } : {}),
     },
     {
       key: 'depth',
-      label: '层级深度',
-      value: depthBreakdown.deptCount === 0 ? null : depth,
+      label: '汇报链长度',
+      value: chains.p90,
       unit: '层',
       status: depthStatusVal,
       verdict: depthVerdict,
@@ -1009,8 +1019,13 @@ export type DiagnosticMetricKey = L2Metric['key'];
  * 供 UI 展开「口径说明」使用；文案来自 HR 审计。
  */
 export const METRIC_CALIBER_NOTES: Record<DiagnosticMetricKey, string> = {
-  span: '管理幅度 = 每名管理者直管人数的中位数，按真人去重且不含负责人本人。优先采用可核对的 reportsToEmployeeId；未填写时沿部门树向上归到最近的正职负责人，无负责人子组的成员不会消失。同一人兼任多个正职合并负荷，无效或歧义引用不猜测。中位数主判，最宽直管另作风险信号；结构推断不等于已核实的汇报关系。',
-  depth: '层级深度 = 部门节点深度分布（根 L1=1）的 P90 为主判（代表「大多数部门在第几层」），同时给出 P50 典型深度、最大层数与最深链路的部门定位。最大层数只代表最坏链，不代表大多数部门；孤立深链会触发至少「关注」、超过硬上限触发「预警」。深链（零售/医院/教育）可能正是业务所需，别据此一律压层。',
+  succession: '关键岗位继任覆盖率只计 ready_now 与 ready_1_2y；现任人、虚拟人及无效引用不算继任。关键岗位少于设置的样本门槛不判灯。',
+  gradeInversion: '按配置职级顺序逐对比较；下级更高为倒挂，平级仅提示；未知职级跳过并记录完整度。',
+  managerCost: '已知管理者月成本占已知全员月成本；缺少成本时不可计算占比，无独立健康阈值。',
+  duplicatePositions: '跨部门同名同序列、相同职级带宽的岗位是待核对候选，不等于确定的冗余岗位。',
+  reportingConflicts: '汇报关系中无效引用、循环、自指、歧义及冲突人员清单，按真人去重，覆盖率低于配置门槛时停止幅度结论。',
+  span: '按每名管理者的直属下属岗位序列映射到操作型、知识型或专家型；缺少序列时使用部门默认，否则暂按知识型并记录完整度。直属人数不含负责人本人，优先 reportsToEmployeeId，按类型计算中位数与健康占比，每类至少 3 名管理者参与总灯号，取可评价类型最差状态。先判小样本，再判汇报覆盖率；结构推断不等于已核实的汇报事实。',
+  depth: '汇报链长度 = 从每个人沿显式优先、组织结构兜底的上级关系走到根，数经过的管理者。P90 参与总评，另展示 P50、最长及完整人名路径。途经异常人员的链不伪装成短链；部门层级及最大层数保留参考、不参与总评。职级按职级管理列表顺序比较，未知职级跳过；平级提示不参与总评。',
   managerRatio: '管理者比 = 内部正职负责人（owner）与有明确直接下属者的并集 ÷ 员工总数，分子分母按真人同一键去重，不含虚拟兼岗。正职身份与实际带人身份分别展示；副职/代理头衔本身不足以计入，但有明确下属时按带人事实计入，与胜任度共用同一集合。外部人员不计内部管理者。另展示 IC:Mgr 与样本人数；当前百分比阈值为可配置的产品规则，不是行业或统计显著性标准，无管理关系数据时显示灰色。',
   vacancy: '空岗率 =（有效编制 − 实际）÷ 有效编制。有效编制优先读取直属正常岗位（编制 > 0），无岗位时兼容历史部门编制；向下累加，不从上级继承编制名额。实际人数按同一覆盖范围、按真人内部 ID 去重。未配置或编制冻结均不作红黄绿异常判读，冻结单独说明本期不计缺口。实际人数超出编制时空岗率为负，按当前配置的超编梯度判读。当前不含在途 offer、待入职和待离职；空岗可能是战略储备，缺口不等于已批准招聘需求。',
 };
@@ -1207,6 +1222,7 @@ export function computePositionSummary(
 
 /** computeHealthReport 的范围选项（v2.3.1 F-06 新增）。 */
 export interface HealthScopeOptions {
+  businessContext?: BusinessContext;
   /**
    * 仅统计 focusDeptId 自身，不包含其下级（默认 false = 含下级）。
    * v2.3.1 之前看板的「含下级 / 仅直属」切换只作用于看板汇总与明细，
@@ -1219,9 +1235,11 @@ export function computeHealthReport(
   depts: Department[],
   configs: LevelConfig[],
   focusDeptId?: string,
-  thresholds: HealthThresholds = getHealthThresholds(),
+  baseThresholds: HealthThresholds = getHealthThresholds(),
   options: HealthScopeOptions = {},
 ): HealthReport {
+  const businessContext = options.businessContext ?? 'normal';
+  const thresholds = effectiveBusinessThresholds(baseThresholds, businessContext);
   let scope = depts;
   if (focusDeptId) {
     const target = findDept(depts, focusDeptId);
@@ -1235,8 +1253,10 @@ export function computeHealthReport(
   }
 
   const l1 = computeL1(scope, thresholds);
-  const l2 = computeL2(scope, thresholds);
-  const summaryAgg = summarizeDiagnosis(l2);
+  let l2 = computeL2(scope, thresholds);
+  const chains = computeReportingChains(scope, configs);
+  const succession = computeSuccession(scope, configs, thresholds);
+  const reporting = reportingCoverage(scope);
   const l3 = computeL3(scope, configs, thresholds);
 
   // 汇总从原始人员去重计算，不能相加包含子树的展示行。
@@ -1276,7 +1296,30 @@ export function computeHealthReport(
     }
   }
 
+  const inversionCount = chains.inversions.filter((pair) => pair.kind === 'inversion').length;
+  l2 = [...l2, { key: 'succession', label: '关键岗位继任覆盖率', value: succession.coverage, unit: '%', status: succession.status,
+    verdict: `${succession.coveredCount}/${succession.criticalCount} 个关键岗位有近期可接班人；${succession.unconfigured} 个未配置。关键岗位少于 ${thresholds.successionSampleMin ?? 5} 个仅展示数值。` },
+    { key: 'gradeInversion', label: '职级倒挂', value: chains.checkedRelations ? inversionCount : null, unit: '对',
+      status: chains.checkedRelations < MANAGEMENT_SAMPLE_MIN.employees ? 'nodata' : inversionCount > 0 ? 'danger' : 'healthy',
+      verdict: `已核对 ${chains.checkedRelations} 对上下级，倒挂 ${inversionCount} 对；${chains.missingLevels} 人职级未配置，平级不计总评。至少核对 ${MANAGEMENT_SAMPLE_MIN.employees} 对才作组织级判读。` }];
+  if (businessContext === 'efficiency') l2.push({ key: 'managerCost', label: '管理者成本占比（参考）', value: unknownEmployees === 0 && totalCost > 0 ? round1(managerKnownCost / totalCost * 100) : null,
+    unit: '%', status: 'nodata', referenceOnly: true, verdict: '成本占比用于测算，尚无独立健康阈值，不编造红黄绿。' });
+  if (businessContext === 'integration') {
+    const positionGroups = new Map<string, Set<string>>();
+    for (const dept of flattenDepartments(scope)) for (const position of dept.positions ?? []) if (position.status === 'active') {
+      const key = `${position.name}::${position.jobFamily ?? ''}::${position.levelBandMin ?? ''}::${position.levelBandMax ?? ''}`;
+      const ids = positionGroups.get(key) ?? new Set<string>(); ids.add(dept.id); positionGroups.set(key, ids);
+    }
+    const duplicates = [...positionGroups.values()].filter((ids) => ids.size > 1).length;
+    l2.push({ key: 'duplicatePositions', label: '同名同序列岗位候选', value: duplicates, unit: '类', status: totalEmployees < 30 ? 'nodata' : duplicates ? 'warn' : 'healthy', verdict: '相同名称、序列与职级带宽分布在不同部门，仅为待核对候选，不能直接认定冗余或自动合并。' },
+      { key: 'reportingConflicts', label: '汇报冲突与异常', value: reporting.total ? reporting.excluded.length : null, unit: '人', status: totalEmployees < 30 ? 'nodata' : reporting.coverage! < (thresholds.reportingCoverageMin ?? 0.8) ? 'danger' : reporting.coverage! < (thresholds.reportingCoverageWarn ?? 0.95) ? 'warn' : 'healthy', verdict: `汇报覆盖率 ${reporting.coverage === null ? '未知' : round1(reporting.coverage * 100) + '%'}，具体人员与原因见完整度。` });
+  }
+  const focus = BUSINESS_CONTEXTS[businessContext].focus as readonly string[];
+  l2 = l2.map((metric) => ({ ...metric, includedInOverall: focus.includes(metric.key) && !metric.referenceOnly }));
+  const summaryAgg = summarizeDiagnosis(l2.filter((metric) => metric.includedInOverall));
+
   return {
+    businessContext, effectiveThresholds: thresholds, reporting, reportingChains: chains, succession,
     scopeDeptId: focusDeptId,
     l1,
     l2,
@@ -1286,6 +1329,7 @@ export function computeHealthReport(
     dataCompleteness: {
       availableMetrics: l2.filter((m) => m.value !== null).length,
       totalMetrics: l2.length,
+      managementTypeDefaults: l2.find((m) => m.key === 'span')?.functionalSpans?.defaultedReports ?? 0,
       departmentsWithLeader: flattenDepartments(scope).filter((d) => (d.leaderType ?? 'owner') !== 'vacant' && (d.leaderId || d.leaderName)).length,
       totalDepartments: totals.totalDepartments,
       departmentsWithHeadcount: flattenDepartments(scope).filter((d) => deptHeadcount(d) !== null).length,
@@ -1304,6 +1348,8 @@ export function computeHealthReport(
 export type SuggestionSeverity = 'critical' | 'major' | 'minor' | 'info';
 
 export interface HealthSuggestion {
+  evidence?: string;
+  expectedImpact?: string;
   id: string;
   severity: SuggestionSeverity;
   /** 关联指标 key（dept 级建议可能无） */
@@ -1343,29 +1389,14 @@ export function generateSuggestions(metrics: L2Metric[], thresholds: HealthThres
     }
     const sev: SuggestionSeverity = m.status === 'danger' ? 'critical' : 'major';
     switch (m.key) {
-      case 'span':
-        push(
-          m,
-          '优化管理幅度',
-          m.value === null
-            ? '当前未设置部门负责人，无法评估管理幅度。建议为关键部门配置负责人，明确汇报线。'
-            : m.status === 'danger'
-              ? `当前管理幅度（中位数）${m.value} 人，高于或低于当前配置区间。建议核对汇报线，参考本次设置的 ${thresholds.spanHealthyMin}-${thresholds.spanHealthyMax} 人区间，结合职责确认是否调整。`
-              : `当前管理幅度（中位数）${m.value} 人，偏离最佳区间。建议优化汇报线，适当调整管理层级。`,
-          sev,
-        );
+      case 'span': {
+        const types = m.functionalSpans?.types.filter((row) => row.count >= 3 && row.status !== 'healthy' && row.status !== 'nodata');
+        const evidence = types?.map((row) => `${MANAGEMENT_TYPE_LABELS[row.type]}：${row.count} 名管理者，中位幅度 ${row.median} 人，健康区间 ${row.range.min}–${row.range.max} 人`).join('；');
+        push(m, '优化管理幅度', `${evidence || (m.functionalSpans ? m.verdict : `${m.verdict}；本次设置参考区间 ${thresholds.spanHealthyMin}-${thresholds.spanHealthyMax} 人`)}。请按本次职能基准核对直属汇报与职责，再确定调整方案。`, sev);
         break;
+      }
       case 'depth':
-        push(
-          m,
-          m.value === 0 ? '补充组织数据' : '推进组织扁平化',
-          m.value === 0
-            ? '当前没有部门数据，无法评估层级。请先导入或创建组织架构。'
-            : m.status === 'danger'
-              ? `典型层级深度（P90）${m.value} 层，最深 ${m.depthBreakdown?.max ?? m.value} 层，决策链路过长。建议压缩中间层级，缩短决策半径。`
-              : `典型层级深度（P90）${m.value} 层，偏深。可考虑合并同层级小组或减少冗余汇报层。`,
-          sev,
-        );
+        push(m, '推进组织扁平化', `人员汇报链 P90 ${m.value ?? '未知'} 层，当前健康上限 ${thresholds.chainHealthyMax ?? 4} 层。${m.verdict} 建议核对最长人员链的决策职责与授权；部门层级仅作参考。`, sev);
         break;
       case 'managerRatio':
         push(
@@ -1393,6 +1424,18 @@ export function generateSuggestions(metrics: L2Metric[], thresholds: HealthThres
           sev,
         );
         break;
+      case 'succession':
+        push(m, '补齐关键岗位继任储备', `${m.verdict} 请从单点风险清单逐岗核对候选人及准备度，不自动推断接班人。`, sev);
+        break;
+      case 'gradeInversion':
+        push(m, '核对职级倒挂与汇报职责', `${m.verdict} 请逐条核对上下级职级配置和实际职责；平级关系只提示，不直接调整人员。`, sev);
+        break;
+      case 'duplicatePositions':
+        push(m, '核对跨部门重复岗位候选', `${m.verdict} 请比较岗位职责和交付边界，再决定是否整合。`, sev);
+        break;
+      case 'reportingConflicts':
+        push(m, '先修正冲突汇报关系', `${m.verdict} 按异常清单核对引用和实际汇报责任，修正后重新计算。`, sev);
+        break;
     }
   }
   return out;
@@ -1408,27 +1451,37 @@ export function generateSuggestions(metrics: L2Metric[], thresholds: HealthThres
 export function generateDeptSuggestions(
   departments: Department[],
   thresholds: HealthThresholds = getHealthThresholds(),
+  levelConfigs: LevelConfig[] = [],
 ): HealthSuggestion[] {
   const out: HealthSuggestion[] = [];
-  const rows = computeL3(departments, [], thresholds);
+  const rows = computeL3(departments, levelConfigs, thresholds);
   const deptMap = new Map(flattenDepartments(departments).map((d) => [d.id, d]));
   const management = deriveManagementLoads(departments);
+  const functional = computeFunctionalSpans(departments, thresholds.managementStage ?? 'growth', thresholds.managementRanges ?? DEFAULT_MANAGEMENT_RANGES, thresholds.jobFamilyTypes ?? DEFAULT_JOB_FAMILY_TYPES);
+  const functionalByKey = new Map(functional.managers.map((manager) => [manager.key, manager]));
+  const sampleSufficient = managementSampleSufficient(departments);
   const loads = new Map<string, typeof management.loads>();
-  for (const load of managementSampleSufficient(departments) ? management.loads : []) {
+  for (const load of sampleSufficient ? management.loads : []) {
     const id = load.deptIds[0];
     loads.set(id, [...(loads.get(id) ?? []), load]);
   }
 
   for (const row of rows) {
     const dept = deptMap.get(row.deptId);
+    const coverage = dept ? reportingCoverage(departments, dept) : null;
+    const insufficientCoverage = coverage?.coverage != null && coverage.coverage < (thresholds.reportingCoverageMin ?? REPORTING_COVERAGE_MIN);
+    if (insufficientCoverage && sampleSufficient) out.push({ id: `d-${row.deptId}-reporting-incomplete`, severity: 'info', metricKey: 'span',
+      deptId: row.deptId, deptName: row.name, title: `${row.name} 汇报数据不完整`,
+      detail: `该部门汇报数据不完整：覆盖率 ${round1(coverage!.coverage! * 100)}%，暂停幅度建议，请先修正异常汇报人员。` });
 
     // 与 L2 复用统一经理负荷；跨部门兼任只在首个关联部门给出一条建议。
-    for (const load of dept ? loads.get(dept.id) ?? [] : []) {
+    for (const load of dept && !insufficientCoverage ? loads.get(dept.id) ?? [] : []) {
       const direct = load.reports.size;
+      const range = functionalByKey.get(load.key)?.range ?? DEFAULT_MANAGEMENT_RANGES.growth.knowledge;
       const named = (loads.get(row.deptId)?.length ?? 0) > 1 || !load.isDepartmentOwner;
       const label = named ? `${row.name} · ${load.name}` : row.name;
       const id = named ? `d-${row.deptId}-manager-${load.key}` : `d-${row.deptId}`;
-      if (direct === 0) {
+      if (direct === 0 && range.min > 0) {
         out.push({
           id: `${id}-span0`,
           severity: 'critical',
@@ -1438,7 +1491,7 @@ export function generateDeptSuggestions(
           title: `${label} 负责人无人直管`,
           detail: '该部门设置了负责人但无直属员工，存在虚设管理岗或职责不明风险，建议明确下属或调整编制。',
         });
-      } else if (direct < thresholds.spanHealthyMin) {
+      } else if (direct < range.min) {
         out.push({
           id: `${id}-spannarrow`,
           severity: 'major',
@@ -1446,9 +1499,9 @@ export function generateDeptSuggestions(
           deptId: row.deptId,
           deptName: row.name,
           title: `${label} 管理幅度偏窄（${direct} 人）`,
-          detail: `负责人仅直接管理 ${direct} 名下属（建议 ${thresholds.spanHealthyMin}-${thresholds.spanHealthyMax} 人）。建议合并相邻小团队，使管理幅度回到健康区间。`,
+          detail: `负责人仅直接管理 ${direct} 名下属（建议 ${range.min}-${range.max} 人）。建议合并相邻小团队，使管理幅度回到健康区间。`,
         });
-      } else if (direct > thresholds.spanWarnMax) {
+      } else if (direct > range.warnMax) {
         out.push({
           id: `${id}-spanwide`,
           severity: 'critical',
@@ -1458,7 +1511,7 @@ export function generateDeptSuggestions(
           title: `${label} 管理幅度过宽（${direct} 人）`,
           detail: `负责人直管 ${direct} 名下属，超出有效管理区间。建议增设管理岗并拆分小组，降低单点管理负荷。`,
         });
-      } else if (direct > thresholds.spanHealthyMax) {
+      } else if (direct > range.max) {
         out.push({
           id: `${id}-spanwide`,
           severity: 'major',
@@ -1595,12 +1648,14 @@ export function collectAllSuggestions(
   /** v2.3.2：职级配置，用于检测「名册里有、配置里没有」的职级（可选，缺省跳过该项） */
   levelConfigs?: LevelConfig[],
 ): HealthSuggestion[] {
-  return [
-    ...generateSuggestions(report.l2, thresholds),
-    ...generateDeptSuggestions(departments, thresholds),
+  const effective = report.effectiveThresholds ?? thresholds;
+  const suggestions = [
+    ...generateSuggestions(report.l2.filter((metric) => metric.includedInOverall !== false), effective),
+    ...generateDeptSuggestions(departments, effective, levelConfigs),
     ...generateLevelGapSuggestions(departments),
     ...(levelConfigs ? generateUnconfiguredLevelSuggestions(departments, levelConfigs) : []),
-  ].sort(
+  ];
+  return contextualSuggestions(suggestions, report, departments, levelConfigs ?? []).sort(
     (a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || a.title.localeCompare(b.title, 'zh-CN'),
   );
 }

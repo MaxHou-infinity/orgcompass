@@ -1,8 +1,9 @@
+import type { BusinessContext } from './businessContext';
 import { Department, Employee, LevelConfig, Scenario } from '../types';
 import {
   computeL1,
   headcountCoverage,
-  computeL2,
+  computeHealthReport,
   computeL3,
   flattenDepartments,
   HealthStatus,
@@ -36,6 +37,7 @@ const METRIC_KEYS = ['span', 'depth', 'managerRatio', 'vacancy'] as const;
 /** L1 指标差异（四项指标并排对比的原子数据） */
 export interface MetricDiff {
   key: L2Metric['key'];
+  includedInOverall?: boolean;
   label: string;
   unit: string;
   /** 基线值；不可算为 null */
@@ -182,9 +184,9 @@ function employeeMonthlyCost(emp: Employee, configs: LevelConfig[]): number {
 }
 
 /** 取场景四项指标（computeL2 的 v2.0.9 口径值）。特例：组织树为空时层级深度视为不可算（引擎回 0 会误读为「0 层」）。 */
-function metricValuesFor(s: Scenario, thresholds?: HealthThresholds): L2Metric[] {
+function metricValuesFor(s: Scenario, thresholds?: HealthThresholds, businessContext?: BusinessContext): L2Metric[] {
   const hasDepts = flattenDepartments(s.departments).length > 0;
-  const metrics = computeL2(s.departments, thresholds);
+  const metrics = computeHealthReport(s.departments, s.levelConfigs, undefined, thresholds, { businessContext }).l2;
   if (!hasDepts) return metrics.map((m) => (m.key === 'depth' ? { ...m, value: null } : m));
   return metrics;
 }
@@ -238,7 +240,8 @@ function employeeUniverse(s: Scenario): Map<string, Employee> {
  * 不重复实现指标计算逻辑——只做「对齐 + 求差 + 可比性」。
  */
 export function computeMetricDiffs(baseline: L2Metric[], target: L2Metric[]): MetricDiff[] {
-  return METRIC_KEYS.map((key) => {
+  const keys = [...new Set<L2Metric['key']>([...METRIC_KEYS, ...baseline.map((metric) => metric.key), ...target.map((metric) => metric.key)])];
+  return keys.map((key) => {
     const b = baseline.find((m) => m.key === key);
     const t = target.find((m) => m.key === key);
     const bVal = b?.value ?? null;
@@ -246,6 +249,7 @@ export function computeMetricDiffs(baseline: L2Metric[], target: L2Metric[]): Me
     const comparable = bVal !== null && tVal !== null;
     return {
       key,
+      includedInOverall: b?.includedInOverall !== false && t?.includedInOverall !== false,
       label: t?.label ?? b?.label ?? key,
       unit: t?.unit ?? b?.unit ?? '',
       baseline: bVal,
@@ -530,10 +534,10 @@ function worstStatus(statuses: (HealthStatus | null)[]): HealthStatus | null {
  * @param target 对比目标场景
  * @param thresholds 阈值配置；缺省沿用 getHealthThresholds()（computeL2 的缺省行为）
  */
-export function computeScenarioDiff(baseline: Scenario, target: Scenario, thresholds?: HealthThresholds): ScenarioDiffResult {
-  const metrics = computeMetricDiffs(metricValuesFor(baseline, thresholds), metricValuesFor(target, thresholds));
-  const baselineOverall = worstStatus(metrics.map((m) => m.baselineStatus));
-  const targetOverall = worstStatus(metrics.map((m) => m.targetStatus));
+export function computeScenarioDiff(baseline: Scenario, target: Scenario, thresholds?: HealthThresholds, businessContext?: BusinessContext): ScenarioDiffResult {
+  const metrics = computeMetricDiffs(metricValuesFor(baseline, thresholds, businessContext), metricValuesFor(target, thresholds, businessContext));
+  const baselineOverall = worstStatus(metrics.filter((m) => m.includedInOverall !== false).map((m) => m.baselineStatus));
+  const targetOverall = worstStatus(metrics.filter((m) => m.includedInOverall !== false).map((m) => m.targetStatus));
 
   return {
     baselineScenarioId: baseline.id,

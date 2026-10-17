@@ -49,9 +49,11 @@ afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.resto
 const save = () => act(() => vi.advanceTimersByTime(850));
 
 /** 打开批量评估弹窗并切到员工模型 + 通用评价范围 */
-function openBatch() {
+async function openBatch() {
   fireEvent.click(screen.getByRole('button', { name: '胜任度' }));
+    await act(async () => { await vi.dynamicImportSettled(); });
   fireEvent.click(screen.getByRole('button', { name: '发起批量评估' }));
+    await act(async () => { await vi.dynamicImportSettled(); });
   const dialog = screen.getByRole('dialog', { name: /批量评估/ });
   fireEvent.click(within(dialog).getByRole('button', { name: '员工胜任度' }));
   fireEvent.click(within(dialog).getByRole('button', { name: '通用评价' }));
@@ -60,10 +62,10 @@ function openBatch() {
 }
 
 describe('M2 应用入口：校准 / 修订 / 复核留痕', () => {
-  it('A19/D03：HRBP 校准分录入 → assessorRole=hrbp，评分人与批次经办人分开留痕', () => {
+  it('A19/D03：HRBP 校准分录入 → assessorRole=hrbp，评分人与批次经办人分开留痕', async () => {
     seed();
     render(<App />);
-    const dialog = openBatch();
+    const dialog = await openBatch();
     fireEvent.click(within(dialog).getByRole('button', { name: 'HRBP 校准分' }));
     fireEvent.change(within(dialog).getByRole('textbox', { name: '校准 HRBP' }), { target: { value: '校准人B' } });
     fireEvent.change(within(dialog).getByRole('spinbutton', { name: 'M2员工 · 业务能力' }), { target: { value: '4' } });
@@ -83,10 +85,10 @@ describe('M2 应用入口：校准 / 修订 / 复核留痕', () => {
     });
   });
 
-  it('A19/D03：上级原始分录入 → assessorRole=supervisor，不把 HRBP 经办人冒充评分人', () => {
+  it('A19/D03：上级原始分录入 → assessorRole=supervisor，不把 HRBP 经办人冒充评分人', async () => {
     seed();
     render(<App />);
-    const dialog = openBatch();
+    const dialog = await openBatch();
     fireEvent.change(within(dialog).getByRole('textbox', { name: '上级评分人' }), { target: { value: '上级A' } });
     fireEvent.change(within(dialog).getByRole('spinbutton', { name: 'M2员工 · 业务能力' }), { target: { value: '2' } });
     fireEvent.click(within(dialog).getByRole('button', { name: '保存批次' }));
@@ -96,11 +98,11 @@ describe('M2 应用入口：校准 / 修订 / 复核留痕', () => {
     expect(list[0].assessorId).not.toBe('牵头HRBP');
   });
 
-  it('A16/F03：同日再次录入同一维度 → 保留旧分并写入修订链（旧记录不被改写）', () => {
+  it('A16/F03：同日再次录入同一维度 → 保留旧分并写入修订链（旧记录不被改写）', async () => {
     seed();
     render(<App />);
     // 第一次录入
-    let dialog = openBatch();
+    let dialog = await openBatch();
     fireEvent.change(within(dialog).getByRole('textbox', { name: '上级评分人' }), { target: { value: '上级A' } });
     fireEvent.change(within(dialog).getByRole('spinbutton', { name: 'M2员工 · 业务能力' }), { target: { value: '2' } });
     fireEvent.click(within(dialog).getByRole('button', { name: '保存批次' }));
@@ -110,7 +112,7 @@ describe('M2 应用入口：校准 / 修订 / 复核留痕', () => {
     expect(first.revisionOf).toBeUndefined();
 
     // 同日改分
-    dialog = openBatch();
+    dialog = await openBatch();
     fireEvent.change(within(dialog).getByRole('textbox', { name: '上级评分人' }), { target: { value: '上级A' } });
     fireEvent.change(within(dialog).getByRole('spinbutton', { name: 'M2员工 · 业务能力' }), { target: { value: '5' } });
     fireEvent.click(within(dialog).getByRole('button', { name: '保存批次' }));
@@ -124,15 +126,17 @@ describe('M2 应用入口：校准 / 修订 / 复核留痕', () => {
     expect(list.find((a) => a.id === first.id)!.score).toBe(2); // 旧分未被覆盖
   });
 
-  it('A20/D04：确认与撤销分别留痕，原确认在撤销后仍保留', () => {
+  it('A20/D04：确认与撤销分别留痕，原确认在撤销后仍保留', async () => {
     seed();
     render(<App />);
     // 打开胜任度看板 → 展开员工 → 进入详情
     fireEvent.click(screen.getByRole('button', { name: '胜任度' }));
+    await act(async () => { await vi.dynamicImportSettled(); });
     const drawer = competencyPage();
     fireEvent.click(within(drawer).getByRole('button', { name: /研发部\s*1 人/ }));
     fireEvent.click(within(drawer).getByTitle('展开员工'));
     fireEvent.click(within(drawer).getByRole('button', { name: '查看 M2员工 的胜任度详情' }));
+    await act(async () => { await vi.dynamicImportSettled(); });
     const detail = screen.getByRole('dialog', { name: /胜任度详情/ });
 
     // 确认不胜任：复核人必填 + 依据

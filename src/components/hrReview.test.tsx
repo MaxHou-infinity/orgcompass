@@ -1,3 +1,4 @@
+import { DEFAULT_MANAGEMENT_RANGES } from '../utils/managementBenchmarks';
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, within } from '@testing-library/react';
@@ -14,8 +15,8 @@ it('健康度页面将缺失数据呈现为灰色，另列完整度且不报四�
   render(<HealthPage open onClose={vi.fn()} departments={[]} onClearFocus={vi.fn()} onFocusDept={vi.fn()}
     onUpdateHeadcount={vi.fn()} onExportReport={vi.fn()} currentScenarioName="空场景"
     scenarios={createProject('演示').scenarios} onOpenScenarioDiff={vi.fn()} />);
-  expect(screen.getByRole('region', { name: '数据完整度' }).textContent).toContain('可计算指标 0/4');
-  expect(screen.getByText('未判定 4')).toBeTruthy();
+  expect(screen.getByRole('region', { name: '数据完整度' }).textContent).toContain('可计算指标 0/6');
+  expect(screen.getByText('未判定 6')).toBeTruthy();
   expect(screen.getByText('黄 0')).toBeTruthy();
   expect(screen.getByText('整体暂不判定')).toBeTruthy();
 });
@@ -32,16 +33,16 @@ it('小样本保留 50% 数值，但不显示为管理者比预警或健康结�
   expect(screen.getAllByText('50%').length).toBeGreaterThan(0);
   expect(screen.getAllByText(/仅展示数值/).length).toBeGreaterThan(0);
   expect(screen.getByText('红 0')).toBeTruthy();
-  expect(screen.getByText('未判定 2')).toBeTruthy();
+  expect(screen.getByText('未判定 5')).toBeTruthy();
   expect(screen.queryByText(/管理者占比合理/)).toBeNull();
 });
 
 it('诊断报告消费相同的无数据和完整度结果', () => {
   render(<DiagnosticReport open onClose={vi.fn()} departments={[]} levelConfigs={[]}
     projectName="演示" scenarioName="空场景" onToast={vi.fn()} />);
-  expect(screen.getByText('暂不判定')).toBeTruthy();
-  expect(screen.getByRole('region', { name: '数据完整度' }).textContent).toContain('可计算指标 0/4');
-  expect(screen.getByText('红0 黄0 绿0 · 未判定4')).toBeTruthy();
+  expect(screen.getAllByText('暂不判定').length).toBeGreaterThan(0);
+  expect(screen.getByRole('region', { name: '数据完整度' }).textContent).toContain('可计算指标 0/6');
+  expect(screen.getByText('红0 黄0 绿0 · 未判定6')).toBeTruthy();
 });
 
 it('成本缺失在页面和报告共用组件中可见，不能呈现虚假的管理成本占比', () => {
@@ -67,8 +68,10 @@ it('报告在关闭期间修改阈值，再打开时指标与建议使用同一�
   const { departments } = loadIndustryTemplate(INDUSTRY_TEMPLATES[0]);
   const props = { departments, levelConfigs: [], onClose: vi.fn(), projectName: '演示', scenarioName: '场景', onToast: vi.fn() };
   const { rerender } = render(<DiagnosticReport {...props} open={false} />);
-  setHealthThresholds({ ...DEFAULT_HEALTH_THRESHOLDS, spanHealthyMin: 2, spanHealthyMax: 4, spanWarnMax: 6 });
+  const ranges = structuredClone(DEFAULT_MANAGEMENT_RANGES);
+  ranges.growth.knowledge = { min: 2, max: 4, warnMin: 1, warnMax: 6 };
+  setHealthThresholds({ ...DEFAULT_HEALTH_THRESHOLDS, managementRanges: ranges });
   rerender(<DiagnosticReport {...props} open />);
-  expect(screen.getByText('预警')).toBeTruthy();
-  expect(screen.getByText(/参考本次设置的 2-4 人区间/)).toBeTruthy();
+  expect(screen.getAllByText('预警').length).toBeGreaterThan(0);
+  expect(screen.getByLabelText('按管理类型的幅度').textContent).toContain('2–4');
 });

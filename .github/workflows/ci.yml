@@ -76,8 +76,10 @@ jobs:
           path: coverage/
           if-no-files-found: ignore
 
-      - name: 构建（vite build）
-        run: npm run build
+      - name: 构建与拆包校验
+        run: |
+          npm run build
+          npm run verify:chunks
 
   security:
     name: 依赖安全审计（生产依赖高危=0）

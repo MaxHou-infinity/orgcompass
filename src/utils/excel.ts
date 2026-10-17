@@ -1,3 +1,4 @@
+import { mapSuccessorImportRows } from './succession';
 import { Employee, Department, OrgTemplate, Position, CompetencyModel } from '../types';
 import type { WorkBook } from 'xlsx';
 import { uid } from './project';
@@ -442,6 +443,20 @@ export async function parseEmployeeExcel(file: File): Promise<EmployeeImportResu
 export async function parseOrgTemplateExcel(file: File): Promise<OrgTemplate[]> {
   const rows = await readAndValidateFile(file, REQUIRED_ORG_COLUMNS);
   return mapOrgTemplateRows(rows);
+}
+
+/** 继任人独立导入表，不与员工姓名兜底或岗位新建混用。 */
+export async function parseSuccessionExcel(file: File) {
+  return mapSuccessorImportRows(await readAndValidateFile(file, ['岗位 ID', '继任人工号', '准备度']));
+}
+
+export async function buildSuccessionTemplateBytes(positions: { positionId: string; positionName: string }[]): Promise<Uint8Array> {
+  const XLSX = await import('xlsx');
+  const book = XLSX.utils.book_new();
+  const rows = positions.map((position) => ({ '岗位 ID': position.positionId, 岗位名称: position.positionName, 继任人工号: '', 准备度: '' }));
+  const sheet = XLSX.utils.json_to_sheet(rows.length ? rows : [{ '岗位 ID': '', 岗位名称: '', 继任人工号: '', 准备度: '' }]);
+  XLSX.utils.book_append_sheet(book, sheet, '继任人（准备度填英文枚举）');
+  return new Uint8Array(XLSX.write(book, { bookType: 'xlsx', type: 'array' }));
 }
 
 /** 岗位表行 → PositionImportRow（独立导出，测试可复用；含同名岗位去重冲突校验） */

@@ -50,6 +50,40 @@ export interface ManagerLoad {
   isDepartmentOwner: boolean;
 }
 
+export type ReportingExclusionReason = '引用不存在' | '循环汇报' | '自己汇报给自己' | '重名无法匹配' | '冲突汇报';
+export interface ReportingExclusion {
+  employeeKey: string;
+  employeeId: string;
+  name: string;
+  deptId: string;
+  deptName: string;
+  reason: ReportingExclusionReason;
+}
+
+export interface ReportingCoverage {
+  total: number;
+  included: number;
+  coverage: number | null;
+  excluded: ReportingExclusion[];
+}
+
+/** 部门覆盖率使用全局已核对关系的异常清单，避免把合法跨部门上级误判为不存在。 */
+export function reportingCoverage(roots: Department[], department?: Department): ReportingCoverage {
+  const management = deriveManagementLoads(roots);
+  if (!department) return management;
+  const ids = new Set<string>();
+  const members = new Set<string>();
+  const walk = (d: Department) => {
+    ids.add(d.id);
+    d.employees.filter((e) => !e.isVirtual).forEach((e) => members.add(management.roles.personKey(e)));
+    d.children.forEach(walk);
+  };
+  walk(department);
+  const excluded = management.excluded.filter((e) => members.has(e.employeeKey));
+  return { total: members.size, included: members.size - excluded.length,
+    coverage: members.size ? (members.size - excluded.length) / members.size : null, excluded };
+}
+
 /** 明确汇报关系优先；未填时穿透无负责人子组，推断到最近的正职负责人。
  * 同人兼任多个正职合并负荷；无效/冲突引用保持未知，不按姓名猜上级。
  */
@@ -64,6 +98,7 @@ export function deriveManagementLoads(roots: Department[]) {
   const candidates = new Map<string, Set<string>>();
   const explicit = new Map<string, Set<string>>();
   const invalid = new Set<string>();
+  const reasons = new Map<string, ReportingExclusionReason>();
   const employeeDept = new Map<string, Department>();
   const locate = (list: Department[]) => {
     for (const d of list) {
@@ -117,24 +152,59 @@ export function deriveManagementLoads(roots: Department[]) {
         const key = roles.personKey(e);
         if (e.reportsToEmployeeId) {
           const manager = roles.resolve(e.reportsToEmployeeId);
-          if (!manager || roles.personKey(manager) === key) { invalid.add(key); continue; }
+          if (!manager || roles.personKey(manager) === key) {
+            invalid.add(key);
+            const matches = employees.filter((candidate) => !candidate.isVirtual &&
+              (candidate.id === e.reportsToEmployeeId || candidate.employeeId === e.reportsToEmployeeId || candidate.name === e.reportsToEmployeeId));
+            reasons.set(key, manager ? '自己汇报给自己' : new Set(matches.map(roles.personKey)).size > 1 ? '重名无法匹配' : '引用不存在');
+            continue;
+          }
           const managerKey = roles.personKey(manager);
           if (!loads.has(managerKey)) ensure(managerKey, manager.name, employeeDept.get(managerKey) ?? d);
           add(explicit, key, managerKey);
         } else {
           const manager = [...path].reverse().find((id) => id !== key);
           if (manager) add(candidates, key, manager);
+          else if (ambiguous) { invalid.add(key); reasons.set(key, '重名无法匹配'); }
         }
       }
       walk(d.children, path);
     }
   };
   walk(roots, []);
-  let unresolved = 0;
+  const parentByKey = new Map<string, string>();
   for (const key of new Set([...candidates.keys(), ...explicit.keys(), ...invalid])) {
     const targets = explicit.get(key) ?? candidates.get(key);
-    if (invalid.has(key) || !targets || targets.size !== 1) { unresolved++; continue; }
-    loads.get([...targets][0])?.reports.add(key);
+    if (invalid.has(key) || !targets || targets.size !== 1) {
+      reasons.set(key, reasons.get(key) ?? '冲突汇报'); continue;
+    }
+    parentByKey.set(key, [...targets][0]);
   }
-  return { roles, loads: [...loads.values()], unresolved };
+  // 对最终显式优先的图查环，结构兜底也可能与跨部门显式关系形成环。
+  const visited = new Set<string>();
+  for (const start of parentByKey.keys()) {
+    const path: string[] = [];
+    const indexes = new Map<string, number>();
+    let key: string | undefined = start;
+    while (key && !visited.has(key)) {
+      if (indexes.has(key)) {
+        for (const member of path.slice(indexes.get(key)!)) reasons.set(member, '循环汇报');
+        break;
+      }
+      indexes.set(key, path.length); path.push(key); key = parentByKey.get(key);
+    }
+    path.forEach((member) => visited.add(member));
+  }
+  for (const key of reasons.keys()) parentByKey.delete(key);
+  for (const [key, parent] of parentByKey) loads.get(parent)?.reports.add(key);
+  const employeesByKey = new Map(employees.filter((e) => !e.isVirtual).map((e) => [roles.personKey(e), e]));
+  const excluded: ReportingExclusion[] = [...reasons].flatMap(([key, reason]) => {
+    const employee = employeesByKey.get(key);
+    const dept = employeeDept.get(key);
+    return employee && dept ? [{ employeeKey: key, employeeId: employee.id, name: employee.name, deptId: dept.id, deptName: dept.name, reason }] : [];
+  });
+  const total = employeesByKey.size;
+  return { roles, loads: [...loads.values()], unresolved: excluded.length, excluded, parentByKey,
+    employeesByKey, employeeDept, total, included: total - excluded.length,
+    coverage: total > 0 ? (total - excluded.length) / total : null };
 }

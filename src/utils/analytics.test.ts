@@ -283,7 +283,7 @@ describe('computeHealthReport（主入口 + 汇总）', () => {
     // totalHeadcount = (5+2) + 3 = 10, totalGap = 10 - 3 = 7
     expect(report.totals.totalGap).toBe(7);
     expect(report.l1).toHaveLength(2);
-    expect(report.l2).toHaveLength(4);
+    expect(report.l2).toHaveLength(6);
     expect(report.summary.overall).toBeDefined();
   });
 
@@ -361,17 +361,17 @@ describe('computeL2 边界', () => {
     const depth = l2.find((x) => x.key === 'depth')!;
     expect(depth.value).toBeNull();
     expect(depth.status).toBe('nodata');
-    expect(depth.verdict).toContain('无法评估层级');
+    expect(depth.verdict).toContain('汇报链样本');
     for (const key of ['span', 'vacancy', 'managerRatio'] as const) {
       expect(l2.find((x) => x.key === key)!.value).toBeNull();
     }
   });
 
   it('层级深度阈值：≤4 健康、5-6 关注、>6 预警', () => {
-    expect(computeL2([chain(4)]).find((x) => x.key === 'depth')!.status).toBe('healthy');
-    expect(computeL2([chain(5)]).find((x) => x.key === 'depth')!.status).toBe('warn');
-    expect(computeL2([chain(6)]).find((x) => x.key === 'depth')!.status).toBe('warn');
-    expect(computeL2([chain(7)]).find((x) => x.key === 'depth')!.status).toBe('danger');
+    expect(depthStatusWithBreakdown(computeDepthBreakdown([chain(4)]), DEFAULT_HEALTH_THRESHOLDS)).toBe('healthy');
+    expect(depthStatusWithBreakdown(computeDepthBreakdown([chain(5)]), DEFAULT_HEALTH_THRESHOLDS)).toBe('warn');
+    expect(depthStatusWithBreakdown(computeDepthBreakdown([chain(6)]), DEFAULT_HEALTH_THRESHOLDS)).toBe('warn');
+    expect(depthStatusWithBreakdown(computeDepthBreakdown([chain(7)]), DEFAULT_HEALTH_THRESHOLDS)).toBe('danger');
   });
 
   it('小样本保留数值、暂停评价：管理幅度阈值：3-8 健康、1-2 与 9-12 关注、<1 或 >12 预警', () => {
@@ -422,7 +422,7 @@ describe('computeL2 边界', () => {
   it('无任何部门/员工/编制 → 全部不可计算指标为 null', () => {
     const l2 = computeL2([dept('empty', '空部门', 1, {})]);
     expect(l2.find((x) => x.key === 'span')!.value).toBeNull();
-    expect(l2.find((x) => x.key === 'depth')!.value).toBe(1); // 单节点自身层级为 1
+    expect(l2.find((x) => x.key === 'depth')!.value).toBeNull(); // 无人员时没有可核对的汇报链
     expect(l2.find((x) => x.key === 'managerRatio')!.value).toBeNull();
     expect(l2.find((x) => x.key === 'vacancy')!.value).toBeNull();
   });
@@ -510,7 +510,7 @@ describe('computeHealthReport 边界', () => {
   it('空树：各项为空且 totals 归零', () => {
     const report = computeHealthReport([], COSTS);
     expect(report.l1).toEqual([]);
-    expect(report.l2).toHaveLength(4);
+    expect(report.l2).toHaveLength(6);
     expect(report.l3).toEqual([]);
     expect(report.totals.totalEmployees).toBe(0);
     expect(report.totals.totalDepartments).toBe(0);
@@ -571,7 +571,7 @@ describe('generateSuggestions（指标级建议，P1-3）', () => {
       employees: Array.from({ length: 8 }, (_, i) => emp(`e${i}`, 'L1.1')),
     });
     const l2 = computeL2([root]);
-    expect(l2.filter((m) => m.status === 'nodata')).toHaveLength(2);
+    expect(l2.filter((m) => m.status === 'nodata')).toHaveLength(3);
     expect(generateSuggestions(l2).every((item) => item.severity === 'info')).toBe(true);
   });
 
@@ -1128,9 +1128,9 @@ describe('v2.0.9 B 层级深度口径修正', () => {
     expect(bd.deepestPath).toEqual(['总部', 'B', 'C', 'D', 'E', 'F']);
     // L2：value 展示 P90（主），status 按 P90 判定；max 仅作孤立深链升级
     const depth = computeL2([mixedDepthTree()]).find((x) => x.key === 'depth')!;
-    expect(depth.value).toBe(5);
+    expect(depth.value).toBeNull();
     expect(depth.depthBreakdown).toMatchObject({ max: 6, p50: 3, p90: 5 });
-    expect(depth.status).toBe('warn'); // P90=5 落在 (4,6]
+    expect(depth.status).toBe('nodata'); // 部门层级不再参与汇报链总评
   });
 
   it('均匀深链（单链）：P90=max；单部门样本 P50=P90=max；空树全部归零', () => {
@@ -1171,9 +1171,9 @@ describe('v2.0.9 B 层级深度口径修正', () => {
     expect(bd.max).toBe(7);
     expect(bd.p90).toBe(4);
     const depth = computeL2([root]).find((x) => x.key === 'depth')!;
-    expect(depth.value).toBe(4);
-    expect(depth.status).toBe('warn'); // 关注而非预警（旧口径按 7 → danger）
-    expect(depth.verdict).toContain('最深链路');
+    expect(depth.value).toBeNull();
+    expect(depth.status).toBe('nodata');
+    expect(depthStatusWithBreakdown(bd, DEFAULT_HEALTH_THRESHOLDS)).toBe('warn');
   });
 
   it('depthStatusWithBreakdown：P90 主判 + 孤立深链升级 + max 硬上限', () => {

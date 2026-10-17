@@ -1,6 +1,14 @@
+import { ScenarioCompareButton } from './ScenarioCompareButton';
+import { BUSINESS_CONTEXTS, type BusinessContext } from '../utils/businessContext';
+import { SuccessionPanel, type PositionPlanPatch } from './SuccessionPanel';
+import { ReportingChainsPanel } from './ReportingChainsPanel';
+import { FunctionalSpanTable, ManagementSettings } from './FunctionalManagement';
+import type { ManagementType } from '../utils/managementBenchmarks';
+import { ReportingQuality } from './ReportingQuality';
+import { normalizeHealthThresholds, REPORTING_COVERAGE_WARN, REPORTING_COVERAGE_MIN } from '../utils/healthThresholds';
 
 import { useMemo, useState, Fragment } from 'react';
-import { RefreshCw, Activity, Download, Building2, Lightbulb, SlidersHorizontal, GitCompare, ChevronDown, ChevronRight, Briefcase, AlertTriangle } from 'lucide-react';
+import { RefreshCw, Activity, Download, Building2, Lightbulb, SlidersHorizontal, ChevronDown, ChevronRight, Briefcase, AlertTriangle } from 'lucide-react';
 import { Department, LevelConfig, Scenario } from '../types';
 import {
   computeHealthReport,
@@ -19,8 +27,6 @@ import {
   OrganizationStage,
   STAGE_PRESETS,
   getStagePresetThresholds,
-  setStagePreset,
-  DEFAULT_STAGE,
   metricCaliberNote,
   PositionSummary,
 } from '../utils/analytics';
@@ -30,6 +36,14 @@ import { SubPageShell } from './SubPageShell';
 import { OrganizationCostSummary } from './OrganizationCostSummary';
 
 interface HealthPageProps {
+  onDuplicateCurrentForComparison?: () => boolean | void;
+  businessContext?: BusinessContext;
+  onBusinessContextChange?: (context: BusinessContext) => void;
+  onUpdatePositionPlans?: (updates: PositionPlanPatch[]) => void;
+  onDepartmentTypeChange?: (deptId: string, type?: ManagementType) => void;
+  healthThresholds?: HealthThresholds;
+  onHealthThresholdsChange?: (thresholds: HealthThresholds) => void;
+  onFocusEmployee?: (employeeId: string, deptId: string) => void;
   /** V2.4.0：人岗核对问题（页面内呈现，不再占用主页面顶部） */
   placementIssues?: string[];
   unresolvedOverflow?: string[];
@@ -130,9 +144,9 @@ function SpanCardExtra({
   const [open, setOpen] = useState(false);
   const b = m.spanBreakdown;
   if (!b || b.count === 0) return null;
-  if (b.unresolvedReports) return <p className="mt-2 text-xs text-slate-500">汇报关系待核对 {b.unresolvedReports} 条，暂不展示直管判读。</p>;
   const widest = b.distribution[0];
-  const exceeded = b.max !== null && b.max > thresholds.spanWarnMax;
+  const widestManager = m.functionalSpans?.managers.find((manager) => manager.key === widest?.managerKey);
+  const exceeded = m.status !== 'nodata' && (widestManager ? widestManager.status === 'danger' : b.max !== null && b.max > thresholds.spanWarnMax);
   return (
     <div className="mt-2">
       <div className="text-xs text-slate-500 leading-snug">
@@ -165,14 +179,15 @@ function SpanCardExtra({
             </thead>
             <tbody>
               {b.distribution.map((row) => {
-                const label =
+                const range = m.functionalSpans?.managers.find((manager) => manager.key === row.managerKey)?.range;
+                const label = m.status === 'nodata' ? '暂不判读' :
                   row.directReports === 0
                     ? '无人直管'
-                    : row.directReports < thresholds.spanHealthyMin
+                    : row.directReports < (range?.min ?? thresholds.spanHealthyMin)
                       ? '偏窄'
-                      : row.directReports > thresholds.spanWarnMax
+                      : row.directReports > (range?.warnMax ?? thresholds.spanWarnMax)
                         ? '过宽'
-                        : row.directReports > thresholds.spanHealthyMax
+                        : row.directReports > (range?.max ?? thresholds.spanHealthyMax)
                           ? '偏宽'
                           : '适中';
                 return (
@@ -186,7 +201,7 @@ function SpanCardExtra({
                     <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{row.directReports}</td>
                     <td
                       className={`px-2.5 py-1.5 text-right font-medium ${
-                        label === '过宽' || label === '无人直管'
+                        label === '暂不判读' ? 'text-slate-500' : label === '过宽' || label === '无人直管'
                           ? 'text-red-500'
                           : label === '偏窄' || label === '偏宽'
                             ? 'text-amber-500'
@@ -331,12 +346,16 @@ function SuggestionItem({ s }: { s: HealthSuggestion }) {
           {s.title}
         </div>
         <div className="text-xs text-slate-500 mt-1 leading-snug">{s.detail}</div>
+        {s.evidence && <p className="text-xs text-slate-600 mt-1">依据：{s.evidence}</p>}
+        {s.expectedImpact && <p className="text-xs text-indigo-700 mt-1">预计指标变化：{s.expectedImpact}</p>}
       </div>
     </div>
   );
 }
 
 export function HealthPage({
+  businessContext = 'normal', onBusinessContextChange, onDuplicateCurrentForComparison,
+  healthThresholds, onHealthThresholdsChange, onFocusEmployee, onDepartmentTypeChange, onUpdatePositionPlans,
   open,
   onClose,
   departments,
@@ -354,19 +373,23 @@ export function HealthPage({
   unresolvedOverflow = [],
 }: HealthPageProps) {
   const configs = useLevelConfigs();
-  const [thresholds, setThresholds] = useState<HealthThresholds>(() => getHealthThresholds());
+  const [localThresholds, setLocalThresholds] = useState<HealthThresholds>(() => getHealthThresholds());
+  const thresholds = healthThresholds ?? localThresholds;
+  const setThresholds = (next: HealthThresholds) => {
+    const validated = normalizeHealthThresholds(next);
+    setLocalThresholds(validated);
+    onHealthThresholdsChange?.(validated);
+  };
   const [thresholdsOpen, setThresholdsOpen] = useState(false);
-  const stage = (Object.keys(STAGE_PRESETS) as OrganizationStage[]).find((s) =>
-    (Object.keys(thresholds) as (keyof HealthThresholds)[]).every((key) => thresholds[key] === STAGE_PRESETS[s].thresholds[key]),
-  );
+  const stage = thresholds.managementStage ?? 'growth';
   // v2.1.1：L3 部门→岗位展开（已展开的部门 id 集合）
   const [expandedPosDepts, setExpandedPosDepts] = useState<Set<string>>(() => new Set());
   // v2.3.1（Q-23）：抽屉常驻挂载，关闭态也会重渲染；
   // 旧实现不看 open 就做全量组织指标派生，每次无关重渲染白付一次。
   // 关闭时按空部门派生（近似零成本）。
   const report = useMemo(
-    () => computeHealthReport(open ? departments : [], configs, focusDeptId, thresholds),
-    [open, departments, configs, focusDeptId, thresholds],
+    () => computeHealthReport(open ? departments : [], configs, focusDeptId, thresholds, { businessContext }),
+    [open, departments, configs, focusDeptId, thresholds, businessContext],
   );
   const suggestions = useMemo(
     () => (open ? collectAllSuggestions(report, departments, thresholds, configs) : []),
@@ -386,26 +409,24 @@ export function HealthPage({
   if (!open) return null;
 
   const updateThresholds = (patch: Partial<HealthThresholds>) => {
-    setThresholds((prev) => {
-      const next = { ...prev, ...patch };
-      setHealthThresholds(next);
-      return next;
-    });
+    const next = normalizeHealthThresholds({ ...thresholds, ...patch });
+    setThresholds(next);
+    if (!healthThresholds) setHealthThresholds(next);
   };
 
   const resetThresholds = () => {
     const defs = { ...DEFAULT_HEALTH_THRESHOLDS };
     setThresholds(defs);
-    resetHealthThresholds();
-    setStagePreset(DEFAULT_STAGE);
+    if (!healthThresholds) resetHealthThresholds();
   };
 
   /** 切换企业阶段：应用该阶段阈值预设并持久化；仍可在下方阈值面板二次微调。 */
   const handleSetStage = (s: OrganizationStage) => {
-    setStagePreset(s);
-    const preset = getStagePresetThresholds(s);
-    setThresholds({ ...preset });
-    setHealthThresholds({ ...preset });
+    const preset = { ...thresholds, ...getStagePresetThresholds(s), managementStage: s,
+      reportingCoverageMin: thresholds.reportingCoverageMin, reportingCoverageWarn: thresholds.reportingCoverageWarn,
+      managementRanges: thresholds.managementRanges, jobFamilyTypes: thresholds.jobFamilyTypes };
+    setThresholds(preset);
+    if (!healthThresholds) setHealthThresholds(preset);
   };
 
   const focusedName = focusDeptId
@@ -425,19 +446,7 @@ export function HealthPage({
       icon={<Activity className="w-5 h-5 text-indigo-500" />}
       onBack={onClose}
       actions={<>
-        <button
-          onClick={onOpenScenarioDiff}
-          disabled={scenarios.length < 2}
-          title={scenarios.length >= 2 ? '基线 vs 目标场景 差异比较' : '先复制一个场景再对比'}
-          className={`flex items-center gap-1.5 h-9 px-3.5 rounded-xl text-sm font-medium border transition-all ${
-            scenarios.length >= 2
-              ? 'text-indigo-600 border-indigo-200 bg-indigo-50 hover:bg-indigo-100'
-              : 'text-slate-300 border-slate-200 bg-slate-50 cursor-not-allowed'
-          }`}
-        >
-          <GitCompare className="w-4 h-4" />
-          场景对比
-        </button>
+        <ScenarioCompareButton canCompare={scenarios.length >= 2} onCompare={onOpenScenarioDiff} onDuplicateCurrent={onDuplicateCurrentForComparison} />
         <button
           onClick={onExportReport}
           disabled={departments.length === 0}
@@ -488,8 +497,17 @@ export function HealthPage({
             <h3 className="font-semibold mb-1">数据完整度</h3>
             <p>可计算指标 {report.dataCompleteness.availableMetrics}/{report.dataCompleteness.totalMetrics} · 未判定 {report.summary.unavailable} 项（不计入红黄绿）</p>
             <p>已设负责人 {report.dataCompleteness.departmentsWithLeader}/{report.dataCompleteness.totalDepartments} 个部门 · 已配置直属编制 {report.dataCompleteness.departmentsWithHeadcount}/{report.dataCompleteness.totalDepartments} 个部门</p>
+            <p>管理类型默认归知识型：{report.dataCompleteness.managementTypeDefaults} 名下属</p>
             <p className="mt-1 text-slate-500">完整度表示录入覆盖情况，不代表数据已核实；部门层级不等于人员到 CEO 的汇报链。</p>
           </section>
+
+          <label className="text-sm text-slate-600">当前业务场景
+            <select aria-label="当前业务场景" value={businessContext} disabled={!onBusinessContextChange} className="ml-3 rounded border p-2" onChange={(e) => onBusinessContextChange?.(e.target.value as BusinessContext)}>
+              {(Object.keys(BUSINESS_CONTEXTS) as BusinessContext[]).map((context) => <option key={context} value={context}>{BUSINESS_CONTEXTS[context].label}</option>)}
+            </select>
+            <p className="mt-1 text-xs">{BUSINESS_CONTEXTS[businessContext].advice} 同一项目的全部方案共用此场景；有效阈值按此场景派生，原设置不会被反复缩放。</p>
+          </label>
+          <ReportingQuality data={report.reporting} onFocusEmployee={onFocusEmployee} />
 
           {/* 企业阶段基准预设 */}
           <section>
@@ -523,6 +541,9 @@ export function HealthPage({
               </p>
             </div>
           </section>
+
+          <ReportingChainsPanel data={report.reportingChains} onFocusEmployee={onFocusEmployee} />
+          <SuccessionPanel data={report.succession} departments={departments} onUpdatePlans={onUpdatePositionPlans} />
 
           {/* L1 部门概览 */}
           <section>
@@ -591,15 +612,17 @@ export function HealthPage({
                       <span className="text-xs text-slate-500">{m.label}</span>
                       <CaliberNote note={metricCaliberNote(m.key)} />
                     </span>
-                    <StatusDot status={m.status} />
+                    <span><StatusDot status={m.status} />{m.includedInOverall === false && <span className="ml-2 text-xs text-slate-500">参考，不参与总评</span>}</span>
+                    {m.dataWarning && <span className="text-xs text-amber-700">{m.dataWarning}</span>}
                   </div>
                   <div className={`mt-1 text-3xl font-bold ${STATUS_STYLE[m.status].text}`}>
                     {fmt(m.value, m.unit)}
                   </div>
                   {m.key === 'span' && (
-                    <SpanCardExtra m={m} thresholds={thresholds} onFocusDept={onFocusDept} />
+                    <><SpanCardExtra m={m} thresholds={thresholds} onFocusDept={onFocusDept} />
+                    {m.functionalSpans && <FunctionalSpanTable data={m.functionalSpans} />}</>
                   )}
-                  {m.key === 'depth' && <DepthCardExtra m={m} onFocusDept={onFocusDept} />}
+                  {m.key === 'depth' && <><p className="text-xs text-slate-500">部门层级（仅参考）</p><DepthCardExtra m={m} onFocusDept={onFocusDept} /></>}
                   {m.key === 'managerRatio' && <ManagerCardExtra m={m} />}
                   <div className="text-xs text-slate-500 mt-1.5 leading-snug">{m.verdict}</div>
                 </div>
@@ -609,7 +632,7 @@ export function HealthPage({
             {thresholdsOpen && (
               <div className="mt-3 rounded-2xl bg-white/70 backdrop-blur-xl border border-white/50 shadow-card p-4 space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-600">阈值配置（存 localStorage）</span>
+                  <span className="text-xs font-semibold text-slate-600">阈值配置（随项目保存）</span>
                   <button
                     onClick={resetThresholds}
                     className="text-xs text-slate-500 hover:text-red-500 transition-colors font-medium"
@@ -617,11 +640,18 @@ export function HealthPage({
                     恢复默认
                   </button>
                 </div>
-                <ThresholdInput label="管理幅度健康下限" value={thresholds.spanHealthyMin} onChange={(v) => updateThresholds({ spanHealthyMin: v })} />
-                <ThresholdInput label="管理幅度健康上限" value={thresholds.spanHealthyMax} onChange={(v) => updateThresholds({ spanHealthyMax: v })} />
-                <ThresholdInput label="管理幅度关注上限" value={thresholds.spanWarnMax} onChange={(v) => updateThresholds({ spanWarnMax: v })} />
-                <ThresholdInput label="层级深度健康上限（层）" value={thresholds.depthHealthyMax} onChange={(v) => updateThresholds({ depthHealthyMax: v })} />
-                <ThresholdInput label="层级深度关注上限（层）" value={thresholds.depthWarnMax} onChange={(v) => updateThresholds({ depthWarnMax: v })} />
+                <ThresholdInput label="汇报覆盖率提醒线" suffix="%" value={(thresholds.reportingCoverageWarn ?? REPORTING_COVERAGE_WARN) * 100} onChange={(v) => updateThresholds({ reportingCoverageWarn: v / 100 })} />
+                <ThresholdInput label="汇报覆盖率最低线" suffix="%" value={(thresholds.reportingCoverageMin ?? REPORTING_COVERAGE_MIN) * 100} onChange={(v) => updateThresholds({ reportingCoverageMin: v / 100 })} />
+                <ManagementSettings thresholds={thresholds} onChange={updateThresholds} departments={departments} onDepartmentTypeChange={onDepartmentTypeChange} />
+                <ThresholdInput label="扩张期幅度下限保留比例" suffix="%" value={(thresholds.expansionSpanFactor ?? 0.7) * 100} onChange={(v) => updateThresholds({ expansionSpanFactor: v / 100 })} />
+                <ThresholdInput label="扩张期空岗率健康上限" suffix="%" value={thresholds.expansionVacancyHealthyMax ?? 15} onChange={(v) => updateThresholds({ expansionVacancyHealthyMax: v })} />
+                <ThresholdInput label="降本期管理者比阈值保留比例" suffix="%" value={(thresholds.efficiencyManagerFactor ?? 0.8) * 100} onChange={(v) => updateThresholds({ efficiencyManagerFactor: v / 100 })} />
+                <ThresholdInput label="降本期汇报链阈值保留比例" suffix="%" value={(thresholds.efficiencyChainFactor ?? 0.8) * 100} onChange={(v) => updateThresholds({ efficiencyChainFactor: v / 100 })} />
+                <ThresholdInput label="继任覆盖健康下限" suffix="%" value={thresholds.successionHealthyMin ?? 70} onChange={(v) => updateThresholds({ successionHealthyMin: v })} />
+                <ThresholdInput label="继任覆盖关注下限" suffix="%" value={thresholds.successionWarnMin ?? 50} onChange={(v) => updateThresholds({ successionWarnMin: v })} />
+                <ThresholdInput label="继任覆盖最少关键岗位" value={thresholds.successionSampleMin ?? 5} onChange={(v) => updateThresholds({ successionSampleMin: v })} />
+                <ThresholdInput label="汇报链健康上限（层）" value={thresholds.chainHealthyMax ?? 4} onChange={(v) => updateThresholds({ chainHealthyMax: v })} />
+                <ThresholdInput label="汇报链关注上限（层）" value={thresholds.chainWarnMax ?? 5} onChange={(v) => updateThresholds({ chainWarnMax: v })} />
                 <ThresholdInput label="管理者比健康上限（%）" value={thresholds.managerHealthyMax} onChange={(v) => updateThresholds({ managerHealthyMax: v })} />
                 <ThresholdInput label="管理者比关注上限（%）" value={thresholds.managerWarnMax} onChange={(v) => updateThresholds({ managerWarnMax: v })} />
                 <ThresholdInput label="空岗率健康上限（%）" value={thresholds.vacancyHealthyMax} onChange={(v) => updateThresholds({ vacancyHealthyMax: v })} />

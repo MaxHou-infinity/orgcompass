@@ -219,6 +219,7 @@ describe('V2.4.0 虚拟员工：App 端到端', () => {
     const { container } = render(<App />);
     // V2.4.0：原「岗位操作」弹窗已并入页面级「岗位与编制」
     fireEvent.click(screen.getByRole('button', { name: '岗位与编制' }));
+    await act(async () => { await vi.dynamicImportSettled(); });
     const page = container.querySelector('[data-page="position-board"]') as HTMLElement;
     expect(page).toBeTruthy();
     expect(within(page).queryByRole('button', { name: '建虚拟兼岗' })).toBeNull();

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import App from '../App';
 import { createProject, loadProject, PROJECT_STORAGE_KEY } from '../utils/project';
 import { HistoryStore } from '../utils/history';
@@ -62,14 +62,16 @@ const save = () => {
 };
 
 describe('v2.3.1 Q-19：无法写入时必须说真话，不得假报成功', () => {
-  it('前置条件不满足（无唯一在任主岗）→ 提示无法执行，且不写入任何确认记录', () => {
+  it('前置条件不满足（无唯一在任主岗）→ 提示无法执行，且不写入任何确认记录', async () => {
     seedMismatch();
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: '胜任度' }));
+    await act(async () => { await vi.dynamicImportSettled(); });
     const drawer = competencyPage();
     fireEvent.click(within(drawer).getByRole('button', { name: /研发部\s*1 人/ }));
     fireEvent.click(within(drawer).getByTitle('展开员工'));
     fireEvent.click(within(drawer).getByRole('button', { name: '查看 M2员工 的胜任度详情' }));
+    await act(async () => { await vi.dynamicImportSettled(); });
     const detail = screen.getByRole('dialog', { name: /胜任度详情/ });
 
     fireEvent.change(within(detail).getByRole('textbox', { name: '复核人' }), { target: { value: '复核人A' } });

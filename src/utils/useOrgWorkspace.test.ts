@@ -37,6 +37,35 @@ describe('useOrgWorkspace SaveState 状态机', () => {
     vi.restoreAllMocks();
   });
 
+  it('复制并切换保留项目诊断设置，副本编辑不污染原方案', () => {
+    const { result } = renderHook(() => useOrgWorkspace());
+    const originalId = result.current.currentScenarioId;
+    act(() => result.current.updateBusinessContext('expansion'));
+    act(() => result.current.setZoom(145));
+    let copiedId: string | undefined;
+    act(() => { copiedId = result.current.duplicateScenario(originalId, true); });
+    expect(copiedId).toBeTruthy();
+    expect(result.current.currentScenarioId).toBe(copiedId);
+    expect(result.current.project.businessContext).toBe('expansion');
+    expect(result.current.project.scenarios).toHaveLength(2);
+    act(() => result.current.setZoom(175));
+    act(() => { result.current.flushCurrent(); });
+    expect(result.current.project.scenarios.find((s) => s.id === originalId)?.canvas.zoom).toBe(145);
+    expect(projectModule.loadProject()?.currentScenarioId).toBe(copiedId);
+  });
+
+  it('复制持久化失败不切换、不产生虚假副本', () => {
+    const { result } = renderHook(() => useOrgWorkspace());
+    const originalId = result.current.currentScenarioId;
+    vi.spyOn(projectModule, 'persistProject').mockReturnValue(false);
+    let copiedId: string | undefined;
+    act(() => { copiedId = result.current.duplicateScenario(originalId, true); });
+    expect(copiedId).toBeUndefined();
+    expect(result.current.currentScenarioId).toBe(originalId);
+    expect(result.current.project.scenarios).toHaveLength(1);
+    expect(result.current.saveState).toBe('failed');
+  });
+
   it('初始状态为 saved', () => {
     const { result } = renderHook(() => useOrgWorkspace());
     expect(result.current.saveState).toBe('saved');

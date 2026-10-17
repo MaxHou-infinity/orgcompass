@@ -409,7 +409,7 @@ export function CompetencyPage({
                   <b className="tabular-nums">{fmt(board.organization.totals.totalEmployees === 0 ? null : (board.organization.report.l2.find((m) => m.key === 'span')?.value ?? null))}</b>
                 </div>
                 <div>
-                  层级深度：
+                  汇报链长度 P90：
                   <b className="tabular-nums">{fmt(board.organization.report.l2.find((m) => m.key === 'depth')?.value ?? null)}</b>
                 </div>
                 <div>

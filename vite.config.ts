@@ -11,6 +11,20 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
   },
+  build: {
+    manifest: true,
+    // React/拖拽运行时与业务视图分别缓存；保留默认 500KB 告警，不提高阈值掩盖体积。
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            { name: 'react-runtime', test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/, priority: 20 },
+            { name: 'drag-runtime', test: /node_modules[\\/]@dnd-kit[\\/]/, priority: 15 },
+          ],
+        },
+      },
+    },
+  },
   // v2.3.1（T-07）：v2.3.0 之前完全没有 test 配置块 —— 无覆盖率度量、无门槛、无统一 setup。
   // 门槛按「当前实测值向下取整」设定，作用是防止覆盖率回流（不是追求数字好看）。
   test: {

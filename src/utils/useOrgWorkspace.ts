@@ -367,20 +367,21 @@ export function useOrgWorkspace() {
   );
 
   const duplicateScenario = useCallback(
-    (sceneId: string) => {
+    (sceneId: string, switchToCopy = false) => {
       flushCurrent();
-      const target = projectRef.current.scenarios.find((s) => s.id === sceneId);
+      const target = projectRef.current.scenarios.find((scene) => scene.id === sceneId);
       if (!target) return;
       const copied = cloneScenario(target);
-      const next: ProjectFile = {
-        ...projectRef.current,
+      const next: ProjectFile = { ...projectRef.current,
+        currentScenarioId: switchToCopy ? copied.id : projectRef.current.currentScenarioId,
         scenarios: [...projectRef.current.scenarios, copied],
-      };
-      projectRef.current = next;
-      setProjectState(next);
-      persistProject(next);
-    },
-    [flushCurrent],
+        meta: { ...projectRef.current.meta, updatedAt: new Date().toISOString() } };
+      if (!persistProject(next)) { setSaveState('failed'); return; }
+      projectRef.current = next; setProjectState(next);
+      if (switchToCopy) loadSnapshot({ ...copied, levelConfigs: workspaceLevelConfigsOf(next), assessments: copied.assessments ?? [],
+        competencyModel: structuredClone(copied.competencyModel ?? DEFAULT_COMPETENCY_MODEL), positionAssignments: copied.positionAssignments ?? [] });
+      return copied.id;
+    }, [flushCurrent, loadSnapshot],
   );
 
   const renameScenario = useCallback(
@@ -550,6 +551,23 @@ export function useOrgWorkspace() {
     return ok;
   }, []);
 
+  const updateBusinessContext = useCallback((businessContext: NonNullable<ProjectFile['businessContext']>) => {
+    const next = { ...projectRef.current, businessContext, meta: { ...projectRef.current.meta, updatedAt: new Date().toISOString() } };
+    projectRef.current = next; setProjectState(next);
+    const ok = persistProject(next); setSaveState(ok ? 'saved' : 'failed'); return ok;
+  }, []);
+
+  /** 项目级阈值立即持久化，不依附某个方案。 */
+  const updateHealthThresholds = useCallback((healthThresholds: NonNullable<ProjectFile['healthThresholds']>) => {
+    const next = { ...projectRef.current, healthThresholds,
+      meta: { ...projectRef.current.meta, updatedAt: new Date().toISOString() } };
+    projectRef.current = next;
+    setProjectState(next);
+    const ok = persistProject(next);
+    setSaveState(ok ? 'saved' : 'failed');
+    return ok;
+  }, []);
+
   /** 清空当前工作区（重置，保留职级配置偏好）。v2.2.0：三字段重置为 空评估 / 默认模型 / 空时态表。
    *  v2.3.1（F-12）：清空前留一份可恢复快照。
    *  v2.3.2：补充层数据源（组织架构模板）一并清空，避免「清空后又冒出一批空部门/负责人」。 */
@@ -605,6 +623,8 @@ export function useOrgWorkspace() {
 
     /** v2.3.2：工作区级组织架构模板（补充层数据源）读 / 写 */
     setOrgTemplates,
+    updateHealthThresholds,
+    updateBusinessContext,
 
     exportProjectJson,
     importProjectJson,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeHealthReport, computeL2, DEFAULT_HEALTH_THRESHOLDS, HealthThresholds, L2Metric } from './analytics';
+import { computeHealthReport, DEFAULT_HEALTH_THRESHOLDS, HealthThresholds, L2Metric } from './analytics';
 import { Department, Employee, LevelConfig, Scenario } from '../types';
 import {
   computeScenarioDiff,
@@ -111,9 +111,9 @@ describe('computeScenarioDiff · 指标组装', () => {
       [emp('E1'), emp('E2')],
     );
     const diff = computeScenarioDiff(base, tgt, TH);
-    expect(diff.metrics.map((m) => m.key)).toEqual(['span', 'depth', 'managerRatio', 'vacancy']);
+    expect(diff.metrics.map((m) => m.key)).toEqual(['span', 'depth', 'managerRatio', 'vacancy', 'succession', 'gradeInversion']);
     // 与 computeL2 输出直接对齐（差异层只做对齐+求差，不重复计算）
-    expect(diff.metrics).toEqual(computeMetricDiffs(computeL2(base.departments, TH), computeL2(tgt.departments, TH)));
+    expect(diff.metrics).toEqual(computeMetricDiffs(computeHealthReport(base.departments, base.levelConfigs, undefined, TH).l2, computeHealthReport(tgt.departments, tgt.levelConfigs, undefined, TH).l2));
     expect(diff.baselineScenarioId).toBe('sc-base');
     expect(diff.targetScenarioId).toBe('sc-tgt');
   });

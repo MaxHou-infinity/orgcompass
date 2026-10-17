@@ -28,6 +28,7 @@ export interface Employee {
 }
 
 export interface Department {
+  defaultManagementType?: import('../utils/managementBenchmarks').ManagementType;
   id: string;
   name: string;
   level: number;
@@ -51,8 +52,13 @@ export interface Department {
 /** 岗位状态：active 正常 / frozen 编制冻结（headcount 不计待补缺口）/ archived 软删除 */
 export type PositionStatus = 'active' | 'frozen' | 'archived';
 
+export type SuccessorReadiness = 'ready_now' | 'ready_1_2y' | 'ready_3y_plus';
+export interface Successor { employeeId: string; readiness: SuccessorReadiness }
+
 /** 岗位（编制名额的载体）：岗位 = 工作定义，编制 = 岗位的计数属性，员工 = 实际占用。 */
 export interface Position {
+  isCritical?: boolean;
+  successors?: Successor[];
   id: string;                // 稳定 uuid（uid('pos')），AI 可引用
   departmentId: string;      // 显式外键 → Department.id
   name: string;              // 岗位名称（如「前端工程师」）
@@ -156,6 +162,9 @@ export interface ProjectMeta {
 
 /** 项目 / .orgproj 文件根结构 */
 export interface ProjectFile {
+  businessContext?: import('../utils/businessContext').BusinessContext;
+  /** 项目级诊断阈值，所有方案共享。旧文件缺省使用默认值。 */
+  healthThresholds?: import('../utils/healthThresholds').HealthThresholds;
   id: string;
   name: string;
   version: number;

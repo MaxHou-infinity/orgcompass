@@ -1,3 +1,5 @@
+import type { BusinessContext } from '../utils/businessContext';
+import type { HealthThresholds } from '../utils/healthThresholds';
 import { useDialogFocus } from '../utils/useDialogFocus';
 import { exportCanvas } from '../utils/exportCanvas';
 import { useMemo, useRef, useState } from 'react';
@@ -23,6 +25,8 @@ import { STATUS_STYLE, fmt, fmtCost } from '../utils/statusUI';
 import { APP_VERSION } from '../version';
 
 interface ManagementReportProps {
+  businessContext?: BusinessContext;
+  healthThresholds?: HealthThresholds;
   open: boolean;
   onClose: () => void;
   baseline: Scenario;
@@ -204,6 +208,7 @@ async function buildDiffExcelBytes(
 }
 
 export function ManagementReport({
+  businessContext = 'normal', healthThresholds,
   open,
   onClose,
   baseline,
@@ -218,8 +223,9 @@ export function ManagementReport({
   const [notes, setNotes] = useState('');
   const [calibersOpen, setCalibersOpen] = useState(false);
 
-  const thresholds = useMemo(() => open ? getHealthThresholds() : DEFAULT_HEALTH_THRESHOLDS, [open]);
-  const diff: ScenarioDiffResult = useMemo(() => computeScenarioDiff(baseline, target, thresholds), [baseline, target, thresholds]);
+  const fallbackThresholds = useMemo(() => open ? getHealthThresholds() : DEFAULT_HEALTH_THRESHOLDS, [open]);
+  const thresholds = healthThresholds ?? fallbackThresholds;
+  const diff: ScenarioDiffResult = useMemo(() => computeScenarioDiff(baseline, target, thresholds, businessContext), [baseline, target, thresholds, businessContext]);
 
   // —— v2.3 M4：岗位缺口清单（与界面岗位明细表使用同一份 deriveBoard 派生，Excel 同源）——
   // v2.3.1：去掉 `as never`，用带类型的空 Map（类型本就匹配 BoardInput.competencySummaries）。
@@ -420,7 +426,7 @@ export function ManagementReport({
 
         {/* ③ 四项指标并排对比 + 口径折叠块 */}
         <section className="report-section">
-          <h2 className="text-base font-bold text-slate-900 mb-3">四项指标并排对比</h2>
+          <h2 className="text-base font-bold text-slate-900 mb-3">指标并排对比</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {diff.metrics.map((m) => (
               <div key={m.key} className="rounded-2xl border border-slate-100 shadow-soft p-4">

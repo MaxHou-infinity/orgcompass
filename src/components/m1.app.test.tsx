@@ -66,10 +66,11 @@ describe('M1 真实 App 入口', () => {
     expect(p.scenarios.find((s) => s.id === p.currentScenarioId)!.assessments).toEqual([]);
   });
 
-  it('岗位操作跨部门套岗同步名册、画布与历史；撤销一步恢复', () => {
+  it('岗位操作跨部门套岗同步名册、画布与历史；撤销一步恢复', async () => {
     seed(); render(<App />);
     // V2.4.0：原「岗位操作」弹窗已并入页面级「岗位与编制」；套岗改为**行内**展开候选人
     fireEvent.click(screen.getByRole('button', { name: '岗位与编制' }));
+    await act(async () => { await vi.dynamicImportSettled(); });
     const page = boardPage();
     const bRow = page.querySelector('[data-position-row="pb"]') as HTMLElement;
     expect(bRow).toBeTruthy();
@@ -87,9 +88,10 @@ describe('M1 真实 App 入口', () => {
     expect(loadProject()!.scenarios[0].positionAssignments).toHaveLength(1);
   });
 
-  it('岗位删除（归档）先展示影响，取消不改；确认后关系结束、评分保留', () => {
+  it('岗位删除（归档）先展示影响，取消不改；确认后关系结束、评分保留', async () => {
     seed(); render(<App />);
     fireEvent.click(screen.getByRole('button', { name: '岗位与编制' }));
+    await act(async () => { await vi.dynamicImportSettled(); });
     const page = boardPage();
     const row = () => page.querySelector('[data-position-row="pa"]') as HTMLElement;
     fireEvent.click(within(row()).getByRole('button', { name: '删除' }));
@@ -117,7 +119,9 @@ describe('M1 真实 App 入口', () => {
 describe('M1 评分导入应用路径（仅替代文件读取）', () => {
   async function upload() {
     fireEvent.click(screen.getByRole('button', { name: '胜任度' }));
+    await act(async () => { await vi.dynamicImportSettled(); });
     fireEvent.click(screen.getByRole('button', { name: '发起批量评估' }));
+    await act(async () => { await vi.dynamicImportSettled(); });
     await act(async () => { fireEvent.change(screen.getByLabelText('导入评分表'), { target: { files: [new File([''], 'scores.xlsx')] } }); });
   }
   it('身份歧义提示，整批无评分写入', async () => {

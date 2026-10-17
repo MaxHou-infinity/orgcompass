@@ -1,3 +1,7 @@
+import { isBusinessContext } from './businessContext';
+import { isSuccessorReadiness } from './succession';
+import { isManagementType } from './managementBenchmarks';
+import { normalizeHealthThresholds } from './healthThresholds';
 import {
   ProjectFile,
   Scenario,
@@ -232,11 +236,11 @@ function carryUnknownFields<T extends object>(target: T, source: object, known: 
 const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 /** Department 的已知持久化字段（不在其中的视为「未来新增字段」，原样带回） */
-const DEPARTMENT_KEYS = ['id', 'name', 'level', 'parentId', 'children', 'employees', 'expanded', 'headcount', 'leaderId', 'leaderName', 'leaderType', 'positions'] as const;
-const POSITION_KEYS = ['id', 'departmentId', 'name', 'jobFamily', 'levelBandMin', 'levelBandMax', 'headcount', 'status', 'createdAt', 'updatedAt'] as const;
+const DEPARTMENT_KEYS = ['id', 'name', 'level', 'parentId', 'children', 'employees', 'expanded', 'headcount', 'leaderId', 'leaderName', 'leaderType', 'positions', 'defaultManagementType'] as const;
+const POSITION_KEYS = ['id', 'departmentId', 'name', 'jobFamily', 'levelBandMin', 'levelBandMax', 'headcount', 'status', 'createdAt', 'updatedAt', 'isCritical', 'successors'] as const;
 const LEVEL_CONFIG_KEYS = ['code', 'number', 'label', 'color', 'cost'] as const;
 const SCENARIO_KEYS = ['id', 'name', 'createdAt', 'updatedAt', 'departments', 'allEmployeesFlat', 'levelConfigs', 'canvas', 'positions', 'competencyModel', 'assessments', 'positionAssignments', 'seedLegacyRelations'] as const;
-const PROJECT_KEYS = ['id', 'name', 'version', 'currentScenarioId', 'scenarios', 'meta', 'orgTemplates', 'levelConfigs'] as const;
+const PROJECT_KEYS = ['id', 'name', 'version', 'currentScenarioId', 'scenarios', 'meta', 'orgTemplates', 'levelConfigs', 'healthThresholds', 'businessContext'] as const;
 const META_KEYS = ['createdAt', 'updatedAt', 'version'] as const;
 
 /** 递归清洗部门树（丢弃非法节点，归一化缺失字段） */
@@ -266,6 +270,7 @@ function sanitizeDepartments(list: unknown[]): Department[] {
       // —— v2.1.1 岗位化 ——
       positions: Array.isArray(item.positions) ? sanitizePositions(item.positions, now) : [],
       ...(leaderType !== undefined ? { leaderType } : {}),
+      ...(isManagementType(item.defaultManagementType) ? { defaultManagementType: item.defaultManagementType } : {}),
     }, item, DEPARTMENT_KEYS));
   }
   return out;
@@ -286,6 +291,13 @@ function sanitizePositions(list: unknown[], now: string): Position[] {
       id: p.id,
       departmentId: typeof p.departmentId === 'string' ? p.departmentId : '',
       name: p.name,
+      ...(typeof p.isCritical === 'boolean' ? { isCritical: p.isCritical } : {}),
+      ...(Array.isArray(p.successors) ? { successors: p.successors.flatMap((raw) => {
+        if (!raw || typeof raw !== 'object') return [];
+        const candidate = raw as Record<string, unknown>;
+        return typeof candidate.employeeId === 'string' && isSuccessorReadiness(candidate.readiness)
+          ? [{ employeeId: candidate.employeeId, readiness: candidate.readiness }] : [];
+      }) } : {}),
       jobFamily: typeof p.jobFamily === 'string' ? p.jobFamily : undefined,
       levelBandMin: typeof p.levelBandMin === 'string' ? p.levelBandMin : undefined,
       levelBandMax: typeof p.levelBandMax === 'string' ? p.levelBandMax : undefined,
@@ -762,6 +774,8 @@ export function parseProject(raw: string): ProjectFile | null {
     scenarios,
     levelConfigs,
     ...(orgTemplates.length > 0 ? { orgTemplates } : {}),
+    ...(isBusinessContext(p.businessContext) ? { businessContext: p.businessContext } : {}),
+    ...(p.healthThresholds ? { healthThresholds: normalizeHealthThresholds(p.healthThresholds) } : {}),
     meta: carryUnknownFields({
       createdAt: typeof metaRaw.createdAt === 'string' ? metaRaw.createdAt : now,
       updatedAt: typeof metaRaw.updatedAt === 'string' ? metaRaw.updatedAt : now,

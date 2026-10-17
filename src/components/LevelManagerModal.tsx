@@ -186,6 +186,7 @@ export function LevelManagerModal({ open, onClose, allEmployees }: LevelManagerM
 
         {/* 列表 */}
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
+          <p className="text-xs text-slate-500">职级按列表从低到高定义顺序；上下移动可调整比较顺序，汇报职级分析使用此顺序。</p>
           {drafts.length === 0 && (
             <p className="text-sm text-slate-400 text-center py-8">暂无职级，点击下方「新增职级」添加</p>
           )}
@@ -209,6 +210,8 @@ export function LevelManagerModal({ open, onClose, allEmployees }: LevelManagerM
                 <div data-level-row-items className="flex flex-wrap items-center gap-3">
                   <div className="flex items-center gap-2">
                     <span className="font-mono text-xs text-slate-400">#{i + 1}</span>
+                    <button type="button" aria-label={`上移职级${i + 1}`} disabled={i === 0} onClick={() => { setDrafts((previous) => { const next = [...previous]; [next[i - 1], next[i]] = [next[i], next[i - 1]]; return next; }); setErrors({}); setCustomColorIdx(null); }}>↑</button>
+                    <button type="button" aria-label={`下移职级${i + 1}`} disabled={i === drafts.length - 1} onClick={() => { setDrafts((previous) => { const next = [...previous]; [next[i], next[i + 1]] = [next[i + 1], next[i]]; return next; }); setErrors({}); setCustomColorIdx(null); }}>↓</button>
                     {/* 序列代码 */}
                     <input
                       type="text"

@@ -1,3 +1,5 @@
+import type { BusinessContext } from '../utils/businessContext';
+import type { HealthThresholds } from '../utils/healthThresholds';
 import { useDialogFocus } from '../utils/useDialogFocus';
 import { useMemo, useState } from 'react';
 import { X, GitCompare, Download, Building2, Users } from 'lucide-react';
@@ -10,7 +12,7 @@ import {
   ScenarioDiffResult,
 } from '../utils/scenarioDiff';
 import {
-  computeL2,
+  computeHealthReport,
   HEALTH_STATUS_LABEL,
   HealthStatus,
   L2Metric,
@@ -22,6 +24,8 @@ import {
 import { STATUS_STYLE, fmt, fmtCost } from '../utils/statusUI';
 
 interface ScenarioDiffViewProps {
+  businessContext?: BusinessContext;
+  healthThresholds?: HealthThresholds;
   open: boolean;
   onClose: () => void;
   baseline: Scenario;
@@ -306,6 +310,7 @@ function MetricDetail({
 const STATUS_RANK: Record<HealthStatus, number> = { nodata: -1, healthy: 0, warn: 1, danger: 2 };
 
 export function ScenarioDiffView({
+  businessContext = 'normal', healthThresholds,
   open,
   onClose,
   baseline,
@@ -318,18 +323,19 @@ export function ScenarioDiffView({
   onExportReport,
 }: ScenarioDiffViewProps) {
   const [showAll, setShowAll] = useState(false);
-  const thresholds = useMemo(() => open ? getHealthThresholds() : DEFAULT_HEALTH_THRESHOLDS, [open]);
+  const fallbackThresholds = useMemo(() => open ? getHealthThresholds() : DEFAULT_HEALTH_THRESHOLDS, [open]);
+  const thresholds = healthThresholds ?? fallbackThresholds;
   const [openMetric, setOpenMetric] = useState<L2Metric['key'] | null>(null);
 
   const diff: ScenarioDiffResult = useMemo(
-    () => computeScenarioDiff(baseline, target, thresholds),
-    [baseline, target, thresholds],
+    () => computeScenarioDiff(baseline, target, thresholds, businessContext),
+    [baseline, target, thresholds, businessContext],
   );
   const bTotals = useMemo(() => computeScenarioTotals(baseline), [baseline]);
   const tTotals = useMemo(() => computeScenarioTotals(target), [target]);
   // 明细侧 breakdown（差异计算已用同一口径；此处仅用于「口径与明细」展开）
-  const bL2 = useMemo(() => computeL2(baseline.departments, thresholds), [baseline, thresholds]);
-  const tL2 = useMemo(() => computeL2(target.departments, thresholds), [target, thresholds]);
+  const bL2 = useMemo(() => computeHealthReport(baseline.departments, baseline.levelConfigs, undefined, thresholds, { businessContext }).l2, [baseline, thresholds, businessContext]);
+  const tL2 = useMemo(() => computeHealthReport(target.departments, target.levelConfigs, undefined, thresholds, { businessContext }).l2, [target, thresholds, businessContext]);
 
   const dialogRef = useDialogFocus(open, onClose);
 
@@ -446,7 +452,7 @@ export function ScenarioDiffView({
                 <StatusDot status={overallTgt} label={overallTgt ? HEALTH_STATUS_LABEL[overallTgt] : '无数据'} />
               </div>
               <div className="text-xs text-slate-500">
-                4 项指标 <b className="text-emerald-600">{improved} 改善</b> /{' '}
+                {diff.metrics.length} 项指标 <b className="text-emerald-600">{improved} 改善</b> /{' '}
                 <b className="text-slate-500">{flatCount} 持平</b> / <b className="text-red-600">{worsened} 恶化</b>
               </div>
               <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -470,7 +476,7 @@ export function ScenarioDiffView({
 
           {/* L1 四项指标并排对比 */}
           <section>
-            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">L1 四项指标对比</h3>
+            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">L1 指标对比</h3>
             <div className="grid grid-cols-2 gap-3">
               {diff.metrics.map((m) => (
                 <div

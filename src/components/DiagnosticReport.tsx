@@ -1,3 +1,9 @@
+import { BUSINESS_CONTEXTS, type BusinessContext } from '../utils/businessContext';
+import { SuccessionPanel } from './SuccessionPanel';
+import { ReportingChainsPanel } from './ReportingChainsPanel';
+import { FunctionalSpanTable } from './FunctionalManagement';
+import { ReportingQuality } from './ReportingQuality';
+import type { HealthThresholds } from '../utils/healthThresholds';
 import { useDialogFocus } from '../utils/useDialogFocus';
 import { exportCanvas } from '../utils/exportCanvas';
 import { useMemo, useRef } from 'react';
@@ -19,6 +25,9 @@ import { STATUS_STYLE, fmt, fmtCost } from '../utils/statusUI';
 import { OrganizationCostSummary } from './OrganizationCostSummary';
 
 interface DiagnosticReportProps {
+  businessContext?: BusinessContext;
+  healthThresholds?: HealthThresholds;
+  onFocusEmployee?: (employeeId: string, deptId: string) => void;
   open: boolean;
   onClose: () => void;
   departments: Department[];
@@ -101,6 +110,7 @@ const SEV_STYLE: Record<SuggestionSeverity, string> = {
 };
 
 export function DiagnosticReport({
+  businessContext = 'normal', healthThresholds, onFocusEmployee,
   open,
   onClose,
   departments,
@@ -111,10 +121,11 @@ export function DiagnosticReport({
   onToast,
 }: DiagnosticReportProps) {
   const reportRef = useRef<HTMLDivElement>(null);
-  const thresholds = useMemo(() => open ? getHealthThresholds() : DEFAULT_HEALTH_THRESHOLDS, [open]);
+  const fallbackThresholds = useMemo(() => open ? getHealthThresholds() : DEFAULT_HEALTH_THRESHOLDS, [open]);
+  const thresholds = healthThresholds ?? fallbackThresholds;
   const report = useMemo(
-    () => computeHealthReport(open ? departments : [], levelConfigs, undefined, thresholds),
-    [open, departments, levelConfigs, thresholds],
+    () => computeHealthReport(open ? departments : [], levelConfigs, undefined, thresholds, { businessContext }),
+    [open, departments, levelConfigs, thresholds, businessContext],
   );
 
   const deptNameById = useMemo(() => {
@@ -202,6 +213,7 @@ export function DiagnosticReport({
         {/* 报告头部 */}
         <header className="border-b-2 border-slate-900 pb-4">
           <h1 className="text-2xl font-bold text-slate-900">组织架构诊断报告</h1>
+          <p className="text-sm mt-2">本报告按【{BUSINESS_CONTEXTS[businessContext].label}】场景解读</p>
           <div className="flex gap-4 mt-2 text-xs text-slate-500">
             <span>项目：{projectName}</span>
             <span>场景：{scenarioName}</span>
@@ -244,6 +256,10 @@ export function DiagnosticReport({
           </div>
         </section>
 
+        <ReportingQuality data={report.reporting} onFocusEmployee={onFocusEmployee} />
+        <ReportingChainsPanel data={report.reportingChains} onFocusEmployee={onFocusEmployee} />
+        <SuccessionPanel data={report.succession} departments={departments} />
+
         <section aria-label="数据完整度" className="text-xs text-slate-600 border border-slate-200 rounded-xl p-3">
           <b>数据完整度：</b>可计算指标 {report.dataCompleteness.availableMetrics}/{report.dataCompleteness.totalMetrics}；
           已设负责人 {report.dataCompleteness.departmentsWithLeader}/{report.dataCompleteness.totalDepartments} 个部门；
@@ -259,6 +275,8 @@ export function DiagnosticReport({
               <div key={m.key} className={`rounded-2xl border ${STATUS_STYLE[m.status].border} ${STATUS_STYLE[m.status].bg} shadow-soft p-4`}>
                 <div className="text-xs text-slate-500">{m.label}</div>
                 <div className={`text-3xl font-bold ${STATUS_STYLE[m.status].text}`}>{fmt(m.value, m.unit)}</div>
+                {m.dataWarning && <p className="text-xs text-amber-700">{m.dataWarning}</p>}
+                {m.functionalSpans && <FunctionalSpanTable data={m.functionalSpans} />}
                 {/* v2.0.9 口径小字：中位数/极值、P50/P90、内部/外部/兼岗 */}
                 {m.key === 'span' && m.spanBreakdown && (
                   <div className="text-xs text-slate-500 mt-0.5 leading-snug">
@@ -267,7 +285,7 @@ export function DiagnosticReport({
                 )}
                 {m.key === 'depth' && m.depthBreakdown && m.depthBreakdown.deptCount > 0 && (
                   <div className="text-xs text-slate-500 mt-0.5 leading-snug">
-                    P50={m.depthBreakdown.p50} 层 · 最深 {m.depthBreakdown.max} 层
+                    部门层级（仅参考）：P50={m.depthBreakdown.p50} 层 · 最深 {m.depthBreakdown.max} 层
                   </div>
                 )}
                 {m.key === 'managerRatio' && m.managerBreakdown && (
@@ -425,7 +443,7 @@ export function DiagnosticReport({
                     </span>
                     <span>
                       <span className="font-medium">{s.deptName ? `${s.deptName} · ` : ''}{s.title}</span>
-                      <span className="text-slate-500">：{s.detail}</span>
+                      <span className="text-slate-500">：{s.detail}{s.evidence && <span className="block">依据：{s.evidence}</span>}{s.expectedImpact && <span className="block">预计指标变化：{s.expectedImpact}</span>}</span>
                     </span>
                   </li>
                 ))}

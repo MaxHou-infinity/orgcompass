@@ -1,28 +1,23 @@
+import { LazyView } from './components/LazyView';
+import type { PositionPlanPatch } from './components/SuccessionPanel';
+import type { ManagementType } from './utils/managementBenchmarks';
+import { DEFAULT_HEALTH_THRESHOLDS } from './utils/healthThresholds';
 import { fitViewZoom } from './utils/zoom';
 import { exportCanvas } from './utils/exportCanvas';
-import { useRef, useCallback, useEffect, useMemo, useState } from 'react';
+import { useRef, useCallback, useEffect, useMemo, useState, lazy } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { AppModal } from './components/AppModal';
 import { Sidebar } from './components/Sidebar';
 import { OrgChart } from './components/OrgChart';
 import { TopBar } from './components/TopBar';
-import { LevelManagerModal } from './components/LevelManagerModal';
-import { HealthPage } from './components/HealthDrawer';
 import { ProjectModal } from './components/ProjectModal';
-import { DiagnosticReport } from './components/DiagnosticReport';
-import { ScenarioDiffView } from './components/ScenarioDiffView';
-import { ManagementReport } from './components/ManagementReport';
 import { SearchModal } from './components/SearchModal';
-import { PositionBoardPage } from './components/PositionBoardPage';
 import type { PositionCreateFields } from './components/PositionModal';
 import { TemplatePreviewModal } from './components/TemplatePreviewModal';
 import { VirtualAssignmentModal, type VirtualAssignmentDraft, type VirtualAssignmentResult } from './components/VirtualAssignmentModal';
 import { OnboardingOverlay } from './components/OnboardingOverlay';
 import { UnassignedEmployeesDrawer } from './components/UnassignedEmployeesDrawer';
-import { CompetencyPage } from './components/CompetencyDrawer';
-import { BatchAssessmentModal, NewAssessment } from './components/BatchAssessmentModal';
-import { CompetencyDetailModal } from './components/CompetencyDetailModal';
-import { CompetencyModelModal } from './components/CompetencyModelModal';
+import type { NewAssessment } from './components/BatchAssessmentModal';
 import { computeUnassignedEmployees } from './utils/analytics';
 import { computeLevelGaps } from './utils/deptLevel';
 import { findUnconfiguredLevels } from './utils/levels';
@@ -72,6 +67,16 @@ import { BOARD_FILTER_LABEL, type BoardDerivation } from './utils/boardScope';
 import { saveTextFile, saveFile } from './utils/tauri';
 import { useOrgWorkspace } from './utils/useOrgWorkspace';
 
+const LevelManagerModal = lazy(() => import('./components/LevelManagerModal').then((module) => ({ default: module.LevelManagerModal })));
+const HealthPage = lazy(() => import('./components/HealthDrawer').then((module) => ({ default: module.HealthPage })));
+const DiagnosticReport = lazy(() => import('./components/DiagnosticReport').then((module) => ({ default: module.DiagnosticReport })));
+const ScenarioDiffView = lazy(() => import('./components/ScenarioDiffView').then((module) => ({ default: module.ScenarioDiffView })));
+const ManagementReport = lazy(() => import('./components/ManagementReport').then((module) => ({ default: module.ManagementReport })));
+const PositionBoardPage = lazy(() => import('./components/PositionBoardPage').then((module) => ({ default: module.PositionBoardPage })));
+const CompetencyPage = lazy(() => import('./components/CompetencyDrawer').then((module) => ({ default: module.CompetencyPage })));
+const CompetencyDetailModal = lazy(() => import('./components/CompetencyDetailModal').then((module) => ({ default: module.CompetencyDetailModal })));
+const CompetencyModelModal = lazy(() => import('./components/CompetencyModelModal').then((module) => ({ default: module.CompetencyModelModal })));
+const BatchAssessmentModal = lazy(() => import('./components/BatchAssessmentModal').then((module) => ({ default: module.BatchAssessmentModal })));
 const EMPTY_HIGHLIGHT: SearchHighlight = { deptIds: new Set(), empIds: new Set() };
 
 // 查找部门辅助函数（模块级纯函数，不依赖组件状态）
@@ -431,6 +436,20 @@ export default function App() {
     });
   }, [setDepartments]);
 
+  const handleUpdatePositionPlans = useCallback((updates: PositionPlanPatch[]) => {
+    const update = (list: Department[]): Department[] => list.map((dept) => ({ ...dept,
+      positions: dept.positions?.map((position) => {
+        const change = updates.find((row) => row.departmentId === dept.id && row.positionId === position.id);
+        return change ? { ...position, ...change.patch, updatedAt: new Date().toISOString() } : position;
+      }), children: update(dept.children) }));
+    setDepartments(update);
+  }, [setDepartments]);
+
+  const handleDepartmentTypeChange = useCallback((id: string, type?: ManagementType) => {
+    const update = (list: Department[]): Department[] => list.map((dept) => dept.id === id ? { ...dept, defaultManagementType: type } : { ...dept, children: update(dept.children) });
+    setDepartments(update);
+  }, [setDepartments]);
+
   const handleUpdateDepartment = useCallback((id: string, name: string) => {
     setDepartments((prev) => {
       const update = (depts: Department[]): Department[] => {
@@ -786,6 +805,21 @@ export default function App() {
     setDepartments((prev) => [...prev]);
     showToast('画布已刷新');
   }, [setDepartments, showToast]);
+
+  const handleDiagnosticEmployeeFocus = useCallback((employeeId: string, deptId: string) => {
+    setReportOpen(false);
+    setView('canvas');
+    const chain = findDeptChain(departments, deptId) ?? [];
+    setDepartments((prev) => expandDepartments(prev, new Set(chain)));
+    setSearchHighlight({ deptIds: new Set(), empIds: new Set([employeeId]) });
+    let attempts = 0;
+    const locate = () => {
+      const node = document.querySelector<HTMLElement>(`[data-emp-id="${CSS.escape(employeeId)}"]`);
+      if (node) node.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      else if (++attempts < 30) requestAnimationFrame(locate);
+    };
+    requestAnimationFrame(locate);
+  }, [departments, setDepartments]);
 
   /** 搜索结果跳转：展开命中祖先链 + 滚动定位到实体 */
   const handleSearchJump = useCallback((match: SearchMatch) => {
@@ -1478,6 +1512,12 @@ export default function App() {
   // —— v2.0.9 场景差异比较 ——
 
   /** 打开差异视图：flushCurrent 确保快照已落盘（S2 实时性）；基线 = 第一个场景，目标 = 当前场景。 */
+  const handleDuplicateForComparison = useCallback(() => {
+    const id = duplicateScenario(project.currentScenarioId, true);
+    if (!id) { showToast('复制未保存，请检查本机存储'); return false; }
+    setView('canvas'); showToast('已复制并切换到副本，可调整后再对比'); return true;
+  }, [duplicateScenario, project.currentScenarioId, showToast]);
+
   const handleOpenScenarioDiff = useCallback(() => {
     setView('canvas');
     flushCurrent();
@@ -1631,6 +1671,7 @@ export default function App() {
         }}>确认执行</button>
       </>}><p className="text-sm text-slate-700 whitespace-pre-line">{pendingAction?.description}</p></AppModal>
       <TopBar
+        onDuplicateCurrentForComparison={handleDuplicateForComparison}
         onFitView={handleFitView}
         onToggleSidebar={() => setSidebarHidden((prev) => !prev)}
         sidebarHidden={sidebarHidden}
@@ -1690,7 +1731,7 @@ export default function App() {
         >
           {/* V2.4.0：「岗位与编制」是**页面级**子界面 —— 占用整个画布区，而不是弹窗 */}
           {boardOpen ? (
-            <PositionBoardPage
+            <LazyView label="PositionBoardPage"><PositionBoardPage
               onBack={() => setView('canvas')}
               projectName={project.name}
               scenario={currentScenario}
@@ -1708,9 +1749,16 @@ export default function App() {
               onAssignEmployee={handleAssignEmployeeToPosition}
               onToast={showToast}
               onLocateDept={(deptId) => { setView('canvas'); handleCompetencyFocusDept(deptId); }}
-            />
+            /></LazyView>
           ) : view === 'health' ? (
-            <HealthPage
+            <LazyView label="HealthPage"><HealthPage
+            businessContext={project.businessContext ?? 'normal'}
+            onBusinessContextChange={ws.updateBusinessContext}
+            healthThresholds={project.healthThresholds ?? DEFAULT_HEALTH_THRESHOLDS}
+            onHealthThresholdsChange={ws.updateHealthThresholds}
+            onDepartmentTypeChange={handleDepartmentTypeChange}
+            onUpdatePositionPlans={handleUpdatePositionPlans}
+            onFocusEmployee={handleDiagnosticEmployeeFocus}
             placementIssues={placementIssues}
             unresolvedOverflow={unresolvedOverflow}
             open={view === 'health'}
@@ -1726,9 +1774,9 @@ export default function App() {
             currentScenarioName={currentScenario?.name ?? "场景"}
             scenarios={project.scenarios}
             onOpenScenarioDiff={handleOpenScenarioDiff}
-            />
+            /></LazyView>
           ) : view === 'competency' ? (
-            <CompetencyPage
+            <LazyView label="CompetencyPage"><CompetencyPage
             open={view === 'competency'}
             onClose={() => setView('canvas')}
             competencySummaries={competencySummaries}
@@ -1746,7 +1794,7 @@ export default function App() {
             levelConfigs={levelConfigs}
             onExportGapList={handleExportGapList}
             confirmedNotCompetent={confirmedNotCompetent}
-            />
+            /></LazyView>
           ) : (
           <OrgChart
             departments={departments}
@@ -1804,11 +1852,11 @@ export default function App() {
         </div>
       )}
 
-      <LevelManagerModal
+      {levelManagerOpen && <LazyView label="LevelManagerModal"><LevelManagerModal
         open={levelManagerOpen}
         onClose={() => setLevelManagerOpen(false)}
         allEmployees={allEmployeesFlat}
-      />
+      /></LazyView>}
 
       <ProjectModal
         open={projectModalOpen}
@@ -1828,7 +1876,10 @@ export default function App() {
         focusImport={projectModalFocusImport}
       />
 
-      <DiagnosticReport
+      {reportOpen && <LazyView label="DiagnosticReport"><DiagnosticReport
+        businessContext={project.businessContext ?? 'normal'}
+        healthThresholds={project.healthThresholds ?? DEFAULT_HEALTH_THRESHOLDS}
+        onFocusEmployee={handleDiagnosticEmployeeFocus}
         open={reportOpen}
         onClose={() => setReportOpen(false)}
         departments={departments}
@@ -1837,10 +1888,12 @@ export default function App() {
         projectName={project.name}
         scenarioName={currentScenario?.name ?? "场景"}
         onToast={showToast}
-      />
+      /></LazyView>}
 
       {scenarioDiffOpen && baselineScenario && targetScenario && (
-        <ScenarioDiffView
+        <LazyView label="ScenarioDiffView"><ScenarioDiffView
+          businessContext={project.businessContext ?? 'normal'}
+          healthThresholds={project.healthThresholds ?? DEFAULT_HEALTH_THRESHOLDS}
           open={scenarioDiffOpen}
           onClose={() => setScenarioDiffOpen(false)}
           baseline={baselineScenario}
@@ -1851,11 +1904,13 @@ export default function App() {
           onLocateDept={handleLocateDept}
           onLocateEmployee={handleLocateEmployee}
           onExportReport={() => setMgmtReportOpen(true)}
-        />
+        /></LazyView>
       )}
 
       {mgmtReportOpen && baselineScenario && targetScenario && (
-        <ManagementReport
+        <LazyView label="ManagementReport"><ManagementReport
+          businessContext={project.businessContext ?? 'normal'}
+          healthThresholds={project.healthThresholds ?? DEFAULT_HEALTH_THRESHOLDS}
           open={mgmtReportOpen}
           onClose={() => setMgmtReportOpen(false)}
           baseline={baselineScenario}
@@ -1865,7 +1920,7 @@ export default function App() {
           onLocateDept={handleLocateDept}
           onLocateEmployee={handleLocateEmployee}
           onToast={showToast}
-        />
+        /></LazyView>
       )}
 
       <SearchModal
@@ -1919,7 +1974,7 @@ export default function App() {
 
       {/* —— v2.2.0 胜任度：看板抽屉 / 批量评估 / 详情 / 维度配置 —— */}
       {/* v2.3 M4：岗位缺口清单（当前场景直读；与看板同一派生口径） */}
-      <BatchAssessmentModal
+      {batchOpen && <LazyView label="BatchAssessmentModal"><BatchAssessmentModal
         open={batchOpen}
         onClose={() => setBatchOpen(false)}
         departments={departments}
@@ -1929,9 +1984,9 @@ export default function App() {
         assessments={assessments}
         onSave={handleSaveAssessments}
         onImportExcel={handleImportAssessmentExcel}
-      />
+      /></LazyView>}
 
-      <CompetencyDetailModal
+      {detailEmpId !== null && <LazyView label="CompetencyDetailModal"><CompetencyDetailModal
         open={detailEmpId !== null}
         onClose={() => setDetailEmpId(null)}
         employee={detailEmployee}
@@ -1944,9 +1999,9 @@ export default function App() {
         assignments={detailAssignments}
         reviews={detailReviews}
         onReview={handleConfirmNotCompetent}
-      />
+      /></LazyView>}
 
-      <CompetencyModelModal
+      {modelOpen && <LazyView label="CompetencyModelModal"><CompetencyModelModal
         open={modelOpen}
         onClose={() => setModelOpen(false)}
         model={competencyModel}
@@ -1955,7 +2010,7 @@ export default function App() {
           setCompetencyModel(m);
           showToast('维度配置已保存');
         }}
-      />
+      /></LazyView>}
     </div>
   );
 }

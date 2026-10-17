@@ -58,6 +58,8 @@ jobs:
           npm run lint
           npm run typecheck
           npm run test
+          npm run build
+          npm run verify:chunks
 
       - name: 构建并发布安装包
         uses: tauri-apps/tauri-action@v0

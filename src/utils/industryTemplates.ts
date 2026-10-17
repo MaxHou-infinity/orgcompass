@@ -67,10 +67,10 @@ interface DemoDesign {
 }
 const DESIGNS: DemoDesign[] = [
   { id: 'internet', name: '互联网科技', root: '科技公司', teams: ['研发部', '产品部', '市场部', '运营部'], sizes: [9, 8, 8, 8], accent: '#6366f1', icon: 'Globe' },
-  { id: 'manufacturing', name: '制造业', root: '制造中心', teams: ['生产部', '质量部', '供应链部', '设备部', '工艺部', '计划部'], sizes: [8, 9, 8, 8, 9, 8], accent: '#10b981', icon: 'Factory' },
-  { id: 'retail', name: '零售连锁', root: '连锁总部', teams: ['华东区', '华北区', '商品中心', '电商部', '运营支持部'], sizes: [9, 8, 8, 9, 8], accent: '#f59e0b', icon: 'Store' },
+  { id: 'manufacturing', name: '制造业', root: '制造中心', teams: ['生产部', '质量部', '供应链部', '设备部', '工艺部', '计划部'], sizes: [16, 9, 8, 8, 9, 8], accent: '#10b981', icon: 'Factory' },
+  { id: 'retail', name: '零售连锁', root: '连锁总部', teams: ['华东区', '华北区', '商品中心', '电商部', '运营支持部'], sizes: [16, 12, 8, 9, 8], accent: '#f59e0b', icon: 'Store' },
   { id: 'hospital', name: '医院科层', root: '示例医院', teams: ['内科', '外科', '护理部', '医技部', '药剂科', '行政部'], sizes: [9, 9, 8, 8, 8, 8], accent: '#0ea5e9', icon: 'HeartPulse' },
-  { id: 'education', name: '教育服务', root: '教育集团', teams: ['教学中心', '教务部', '行政部', '东校区', '西校区'], sizes: [8, 8, 8, 9, 9], accent: '#8b5cf6', icon: 'GraduationCap' },
+  { id: 'education', name: '教育服务', root: '教育集团', teams: ['教学中心', '教务部', '行政部', '东校区', '西校区'], sizes: [9, 8, 8, 9, 9], accent: '#8b5cf6', icon: 'GraduationCap' },
 ];
 
 function createDemo(design: DemoDesign): IndustryTemplate {
@@ -80,26 +80,37 @@ function createDemo(design: DemoDesign): IndustryTemplate {
     return emp(`demo-${design.id}-${number}`, name, `DEMO-${design.id}-${number}`, level, depts);
   };
   const chief = person('示例总负责人', 'L5', [design.root]);
-  const employees = [chief, ...['人力', '财务', '法务', '行政', '数据', '内控'].map((role) => person(`示例${role}专员`, 'L2.2', [design.root]))];
+  const employees = [chief, ...['人力', '财务', '法务', '行政', '数据', '内控'].slice(0, Math.min(6, 10 - design.teams.length)).map((role) => person(`示例${role}专员`, 'L2.2', [design.root]))];
   const orgTemplates = [org({ depts: [design.root], deptLevel: '1', leaderId: chief.employeeId, leaderName: chief.name })];
   design.teams.forEach((team, index) => {
     const path = [design.root, team];
-    const owner = person(`示例${team}负责人`, 'L4.1', path);
+    const owner = person(`示例${team}负责人`, 'L3.2', path);
     employees.push(owner);
     orgTemplates.push(org({ depts: path, deptLevel: '2', leaderId: owner.employeeId, leaderName: owner.name }));
     // 业务组没有行政负责人，其成员默认向最近的职能负责人汇报。
-    const group = [...path, `${team}业务组`];
-    orgTemplates.push(org({ depts: group, deptLevel: '3' }));
+    const groups = design.id === 'manufacturing'
+      ? [[...path, `${team}车间`, `${team}作业班组`]]
+      : design.id === 'hospital' ? [[...path, `${team}诊疗单元`, `${team}专业组`]]
+      : design.id === 'retail' && index < 2 ? [1, 2].map((n) => [...path, `${team}城市运营`, `${team}示例门店${n}`])
+      : design.id === 'education' && index >= 3 ? [[...path, `${team}教学组`]]
+      : [[...path, `${team}业务组`]];
+    for (const group of groups) for (let depth = 3; depth <= group.length; depth++) {
+      const branch = group.slice(0, depth);
+      if (!orgTemplates.some((t) => t.dept3 === branch[2] && t.dept4 === (branch[3] || ''))) {
+        orgTemplates.push(org({ depts: branch, deptLevel: String(depth) }));
+      }
+    }
     let teamLead: Employee | undefined;
     for (let i = 1; i < design.sizes[index]; i++) {
+      const group = groups[Math.min(groups.length - 1, Math.floor((i - 1) / Math.ceil((design.sizes[index] - 1) / groups.length)))];
       const member = person(`示例${team}成员${i}`, 'L2.2', group);
-      if (index === 0 && i === 1) { teamLead = member; member.title = '专业组长'; }
+      if (index === 0 && i === 1) { teamLead = member; member.title = '专业组长'; member.level = 'L3.1'; }
       // 仅这三条关系是示例设计的显式事实；它们不来自结构推断。
       if (teamLead && i >= 2 && i <= 4) member.reportsToEmployeeId = teamLead.employeeId;
       employees.push(member);
     }
   });
-  return { ...design, description: '合成教学组织：默认基准下整体健康，含 1 个待招岗；正职负责人和专业带人者分别展示，未设负责人的业务组保留推断边界。人数、编制和成本均非行业基准。', employees, orgTemplates };
+  return { ...design, description: '合成教学组织：保留行业组织形态，预置关键岗继任未配置、1 个待招岗两个问题；正职负责人和专业带人者分别展示，未设负责人的业务组保留推断边界。人数、编制和成本均非行业基准。', employees, orgTemplates };
 }
 
 /** 全部内置模板（顺序即下拉展示顺序）。 */
@@ -113,16 +124,22 @@ export function loadIndustryTemplate(
   const departments = buildDepartmentTree(allEmployeesFlat, template.orgTemplates);
   const configure = (list: Department[]) => {
     for (const d of list) {
+      // 教学样本的显式配置，不是根据用户部门名称推断职能。
+      d.defaultManagementType = 'knowledge';
       const groups = new Map<string, Employee[]>();
       for (const e of d.employees) {
-        const name = e.employeeId === d.leaderId ? '部门负责人' : e.title || '业务专员';
+        const name = e.employeeId === d.leaderId ? '部门负责人' : e.reportsToEmployeeId ? '专业组成员' : e.title || '业务专员';
         groups.set(name, [...(groups.get(name) ?? []), e]);
       }
       d.positions = [...groups].map(([name, assigned]): Position => {
         const id = uid('pos');
         const now = new Date().toISOString();
         for (const e of assigned) { e.positionId = id; e.assignmentType = 'primary'; }
+        const isExpert = assigned.every((e) => e.title === '专业组长' || !!e.reportsToEmployeeId);
+        const inOperationalTeam = (template.id === 'manufacturing' && assigned[0].dept2 === '生产部') ||
+          (template.id === 'retail' && ['华东区', '华北区'].includes(assigned[0].dept2 ?? ''));
         return { id, departmentId: d.id, name, headcount: assigned.length,
+          jobFamily: isExpert ? '高级专家' : inOperationalTeam ? (template.id === 'retail' ? '门店' : '产线') : '运营',
           levelBandMin: assigned[0].level, levelBandMax: assigned[0].level,
           status: 'active', createdAt: now, updatedAt: now };
       });

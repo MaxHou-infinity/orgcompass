@@ -63,16 +63,16 @@ describe('HR 评审：汇报线与管理者口径', () => {
       dept('B', [employee('b', { name: '同名' }), employee('c', { name: '同名' })], { leaderName: '同名' })];
     expect(computeManagerIdSet(roots, roots.flatMap((d) => d.employees))).toEqual(new Set(['m']));
     expect(deriveManagementLoads(roots).loads.find((l) => l.key === m.employeeId)?.reports.size).toBe(0);
-    expect(deriveManagementLoads(roots).unresolved).toBe(1);
+    expect(deriveManagementLoads(roots).unresolved).toBe(3);
     expect(computeL2(roots).find((m) => m.key === 'span')).toMatchObject({ value: 0, status: 'nodata' });
   });
 });
 
 describe('HR 评审：缺失数据与建议', () => {
-  it('空组织四项灰色，红黄绿均为零，整体不作健康结论', () => {
+  it('空组织六项灰色，红黄绿均为零，整体不作健康结论', () => {
     const report = computeHealthReport([], []);
     expect(report.l2.every((m) => m.status === 'nodata' && m.value === null)).toBe(true);
-    expect(report.summary).toMatchObject({ red: 0, yellow: 0, green: 0, unavailable: 4, overall: 'nodata' });
+    expect(report.summary).toMatchObject({ red: 0, yellow: 0, green: 0, unavailable: 6, overall: 'nodata' });
     expect(report.dataCompleteness.availableMetrics).toBe(0);
     expect(generateSuggestions(report.l2).every((s) => s.severity === 'info')).toBe(true);
   });
@@ -140,7 +140,7 @@ describe('HR 评审：成本与演示数据', () => {
     expect(data.allEmployeesFlat.every((e) => e.positionId)).toBe(true);
     expect(template.employees.every((e) => !e.positionId)).toBe(true);
     const report = computeHealthReport(data.departments, [], undefined, DEFAULT_HEALTH_THRESHOLDS);
-    expect(report.dataCompleteness.availableMetrics).toBe(4);
+    expect(report.dataCompleteness.availableMetrics).toBe(5);
     expect(report.l2.find((m) => m.key === 'vacancy')?.value).not.toBeNull();
     const project = createProject('演示');
     Object.assign(project.scenarios[0], { departments: data.departments, allEmployeesFlat: data.allEmployeesFlat });
