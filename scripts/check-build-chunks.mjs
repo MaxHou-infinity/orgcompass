@@ -1,5 +1,5 @@
 import { readFileSync, statSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, relative, isAbsolute, sep } from 'node:path';
 
 const root = resolve('dist');
 const manifest = JSON.parse(readFileSync(resolve(root, '.vite/manifest.json'), 'utf8'));
@@ -11,7 +11,8 @@ for (const view of ['HealthDrawer', 'CompetencyDrawer', 'ScenarioDiffView', 'Dia
 }
 for (const chunk of Object.values(manifest)) {
   for (const file of [chunk.file, ...(chunk.css ?? []), ...(chunk.assets ?? [])]) {
-    if (/^(https?:)?\/\//.test(file) || !resolve(root, file).startsWith(root + '/')) throw new Error(`资源必须位于本地 dist：${file}`);
+    const localPath = relative(root, resolve(root, file));
+    if (/^(https?:)?\/\//.test(file) || localPath === '..' || localPath.startsWith('..' + sep) || isAbsolute(localPath)) throw new Error(`资源必须位于本地 dist：${file}`);
     statSync(resolve(root, file));
   }
   for (const dependency of [...(chunk.imports ?? []), ...(chunk.dynamicImports ?? [])]) {
