@@ -12,7 +12,7 @@ export function contextualSuggestions(suggestions: HealthSuggestion[], report: H
     const metric = report.l2.find((m) => m.key === suggestion.metricKey);
     const row = report.l3.find((row) => row.deptId === suggestion.deptId);
     const evidence = row ? `${row.name}：实际 ${row.actual} 人，编制 ${row.headcount ?? '未配置'}，缺口 ${row.gap ?? '未知'}。`
-      : metric ? `${metric.label} ${metric.value ?? '未知'}${metric.unit}；${metric.verdict}` : suggestion.detail;
+      : metric ? `${metric.label} ${metric.value === null || metric.value === undefined ? '暂无数值' : `${metric.value}${metric.unit}`}；${metric.verdict}` : suggestion.detail;
     return { ...suggestion, evidence, expectedImpact: `拟改善${metric?.label ?? (suggestion.metricKey === 'span' ? '管理幅度' : '配置完整度')}；方案未确定前不量化变化。`, detail: `${suggestion.detail} ${policy.advice}` };
   });
   if (context !== 'efficiency') return result;

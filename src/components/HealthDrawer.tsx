@@ -30,7 +30,7 @@ import {
   metricCaliberNote,
   PositionSummary,
 } from '../utils/analytics';
-import { STATUS_STYLE, fmt, fmtCost } from '../utils/statusUI';
+import { STATUS_STYLE, fmt, fmtCost, fmtMetric, isMetricUnconfigured } from '../utils/statusUI';
 import { useLevelConfigs, getLevelColor } from '../utils/levels';
 import { SubPageShell } from './SubPageShell';
 import { OrganizationCostSummary } from './OrganizationCostSummary';
@@ -304,6 +304,26 @@ function LevelDistributionBar({
         );
       })}
     </div>
+  );
+}
+
+/** v2.5.1 降本合并测算假设：经理转专业岗（默认）/ 离岗。阈值面板与降本建议区共用。 */
+function SavingsAssumptionSelect({ value, onChange, ariaLabel = '降本合并测算假设' }: {
+  value: 'toIC' | 'leave' | undefined;
+  onChange: (v: 'toIC' | 'leave') => void;
+  ariaLabel?: string;
+}) {
+  return (
+    <select
+      aria-label={ariaLabel}
+      value={value ?? 'toIC'}
+      onChange={(e) => onChange(e.target.value === 'leave' ? 'leave' : 'toIC')}
+      title="经理转专业岗：只节省管理溢价（本人成本 − 原团队最高专业岗成本）；经理离岗：节省其全部月成本"
+      className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-700 bg-white focus-ring"
+    >
+      <option value="toIC">经理转专业岗（只计管理溢价）</option>
+      <option value="leave">经理离岗（计全部成本）</option>
+    </select>
   );
 }
 
@@ -617,8 +637,8 @@ export function HealthPage({
                     <span><StatusDot status={m.status} />{m.includedInOverall === false && <span className="ml-2 text-xs text-slate-500">参考，不参与总评</span>}</span>
                     {m.dataWarning && <span className="text-xs text-amber-700">{m.dataWarning}</span>}
                   </div>
-                  <div className={`mt-1 text-3xl font-bold ${STATUS_STYLE[m.status].text}`}>
-                    {fmt(m.value, m.unit)}
+                  <div className={`mt-1 ${isMetricUnconfigured(m.key, report.succession) ? 'text-2xl' : 'text-3xl'} font-bold ${STATUS_STYLE[m.status].text}`}>
+                    {fmtMetric(m.value, m.unit, isMetricUnconfigured(m.key, report.succession))}
                   </div>
                   {m.key === 'span' && (
                     <><SpanCardExtra m={m} thresholds={thresholds} onFocusDept={onFocusDept} />
@@ -651,11 +671,9 @@ export function HealthPage({
                 <ThresholdInput label="降本期汇报链阈值保留比例" suffix="%" value={(thresholds.efficiencyChainFactor ?? 0.8) * 100} onChange={(v) => updateThresholds({ efficiencyChainFactor: v / 100 })} />
                 <ThresholdInput label="管理者梯队健康下限（后备/岗）" value={thresholds.pipelineHealthyMin ?? 0.8} onChange={(v) => updateThresholds({ pipelineHealthyMin: v })} />
                 <ThresholdInput label="管理者梯队关注下限（后备/岗）" value={thresholds.pipelineWarnMin ?? 0.5} onChange={(v) => updateThresholds({ pipelineWarnMin: v })} />
-                <label className="flex items-center justify-between gap-2 text-xs text-slate-600">降本合并测算假设
-                  <select aria-label="降本合并测算假设" value={thresholds.efficiencySavingsAssumption ?? 'toIC'} onChange={(e) => updateThresholds({ efficiencySavingsAssumption: e.target.value === 'leave' ? 'leave' : 'toIC' })} className="rounded border border-slate-200 px-2 py-1">
-                    <option value="toIC">经理转专业岗（只计管理溢价）</option>
-                    <option value="leave">经理离岗（计全部成本）</option>
-                  </select>
+                <label className="flex items-center justify-between gap-3">
+                  <span className="text-xs text-slate-500">降本合并测算假设（仅「降本增效」场景的合并方案使用）</span>
+                  <SavingsAssumptionSelect value={thresholds.efficiencySavingsAssumption} onChange={(v) => updateThresholds({ efficiencySavingsAssumption: v })} />
                 </label>
                 <ThresholdInput label="继任覆盖健康下限" suffix="%" value={thresholds.successionHealthyMin ?? 70} onChange={(v) => updateThresholds({ successionHealthyMin: v })} />
                 <ThresholdInput label="继任覆盖关注下限" suffix="%" value={thresholds.successionWarnMin ?? 50} onChange={(v) => updateThresholds({ successionWarnMin: v })} />
@@ -694,7 +712,15 @@ export function HealthPage({
                 <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
                 组织优化建议
               </h3>
-              <span className="text-xs text-slate-500">基于健康度自动生成 · {suggestions.length} 条</span>
+              <span className="flex items-center gap-3 text-xs text-slate-500">
+                {/* v2.5.1 评审：测算假设原先只在阈值面板第 13 行，离受影响的「合并方案测算」建议 600px+；降本场景下就近提供同一开关。 */}
+                {businessContext === 'efficiency' && (
+                  <label className="flex items-center gap-1.5">合并测算假设
+                    <SavingsAssumptionSelect ariaLabel="合并测算假设（建议区）" value={thresholds.efficiencySavingsAssumption} onChange={(v) => updateThresholds({ efficiencySavingsAssumption: v })} />
+                  </label>
+                )}
+                基于健康度自动生成 · {suggestions.length} 条
+              </span>
             </div>
             {suggestions.length === 0 ? (
               <div className="rounded-2xl bg-white/70 backdrop-blur-xl border border-white/50 shadow-card p-4 text-sm text-slate-500 text-center">

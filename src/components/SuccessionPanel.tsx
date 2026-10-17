@@ -23,10 +23,21 @@ export function SuccessionPanel({ data, departments, onUpdatePlans }: {
   };
   return <section aria-label="关键岗位与继任" className="rounded-xl border border-slate-200 p-4 text-xs space-y-3">
     <h3 className="font-semibold text-sm">关键岗位与继任</h3>
-    <p className={STATUS_STYLE[data.status].text}>继任覆盖率 {data.coverage === null ? '—' : `${data.coverage.toFixed(1)}%`} · {data.coveredCount}/{data.criticalCount} 个关键岗位 · {HEALTH_STATUS_LABEL[data.status]}</p>
+    {/* v2.5.1 评审：一个继任人都没录入时 coverage 仍算出 0，这里与 L2 指标卡保持一致显示「未配置」，不出现「0.0%」。 */}
+    <p className={STATUS_STYLE[data.status].text}>{data.configured
+      ? <>继任覆盖率 {data.coverage === null ? '—' : `${data.coverage.toFixed(1)}%`} · {data.coveredCount}/{data.criticalCount} 个关键岗位 · {HEALTH_STATUS_LABEL[data.status]}</>
+      : <>继任覆盖率 未配置 · {data.criticalCount} 个关键岗位均未录入继任人 · {HEALTH_STATUS_LABEL[data.status]}</>}</p>
     <p>未配置继任人 {data.unconfigured} 个关键岗位；{data.invalidCandidates} 条无效候选（不计覆盖）；随时可接及 1–2 年可接才算覆盖。只计算正常岗位，关键属性默认为正职负责人所在岗位，手动取消优先。</p>
-    <h4 className="font-semibold">单点风险（无有效继任人，按配置职级从高到低）</h4>
-    <ul>{data.risks.map((risk) => <li key={risk.positionId}>{risk.departmentName} / {risk.positionName} · 未配置有效继任人</li>)}</ul>
+    {data.configured ? <>
+      <h4 className="font-semibold">单点风险（无有效继任人，按配置职级从高到低）</h4>
+      {data.risks.length > 0
+        ? <ul>{data.risks.map((risk) => <li key={risk.positionId}>{risk.departmentName} / {risk.positionName} · 未配置有效继任人</li>)}</ul>
+        : <p className="text-slate-500">暂无：每个关键岗位都至少有 1 名有效继任人。</p>}
+    </> : <>
+      <h4 className="font-semibold">待配置继任的关键岗位（按配置职级从高到低）</h4>
+      <p className="text-slate-500">尚未录入任何继任人，以下为待补录清单，不作单点风险判读；可在下方「配置关键岗位和继任人」中补录或导入。</p>
+      <ul className="text-slate-600">{data.risks.map((risk) => <li key={risk.positionId}>{risk.departmentName} / {risk.positionName}</li>)}</ul>
+    </>}
     {data.concentration.map((person) => <p key={person.employeeId} className="text-amber-700">继任人过度集中：{person.name} → {person.positions.length} 个关键岗位（{person.positions.join('、')}）</p>)}
     {onUpdatePlans && <details><summary>配置关键岗位和继任人</summary>
       <div className="space-y-2 my-2">{data.all.map((position) => <div key={position.positionId} className="border-b py-2">
