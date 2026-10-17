@@ -169,13 +169,15 @@ export function LevelManagerModal({ open, onClose, allEmployees }: LevelManagerM
         一行有 6 组控件（职级码 / 标签 / 成本 / 使用人数 / 颜色 / 删除），
         Chromium 实测：内容实需 644px，而 max-w-2xl 只给 596px ——
         加入「N 人使用」徽标后必然溢出到卡片背景之外（颜色块与删除按钮跑到框外）。
+        v2.5.1 评审：新增「可比职级值」后一行 7 组控件，Chromium 1440 实测 max-w-3xl 下颜色块/删除按钮全部折到第二行，
+        行高 64→112px；放宽到 max-w-4xl（896px），1024 宽窗口下仍有余量，窄窗口照旧 flex-wrap。
       */}
-      <div className="relative w-full max-w-3xl max-h-[85vh] flex flex-col rounded-3xl bg-white/90 backdrop-blur-xl border border-white/40 shadow-2xl overflow-hidden animate-fadeInUp">
+      <div className="relative w-full max-w-4xl max-h-[85vh] flex flex-col rounded-3xl bg-white/90 backdrop-blur-xl border border-white/40 shadow-2xl overflow-hidden animate-fadeInUp">
         {/* 头部 */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-indigo-500/5 to-transparent">
           <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
             职级管理
-            <span className="text-xs font-normal text-slate-400">自定义职级序列 / 编号 / 标签 / 颜色</span>
+            <span className="text-xs font-normal text-slate-400">自定义序列 / 编号 / 标签 / 可比职级值 / 成本 / 颜色</span>
           </h2>
           <button
             onClick={onClose}
@@ -188,7 +190,7 @@ export function LevelManagerModal({ open, onClose, allEmployees }: LevelManagerM
 
         {/* 列表 */}
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
-          <p className="text-xs text-slate-500">职级按列表从低到高定义顺序；上下移动可调整比较顺序，汇报职级分析使用此顺序。</p>
+          <p className="text-xs text-slate-500">职级按列表从低到高排列，上下移动只影响展示顺序。汇报链倒挂/平级与继任排序按「可比」列的可比职级值比较（如 L3.1 与 E3.1 同为 3.1 视为平级）；留空则按编号推导。</p>
           {drafts.length === 0 && (
             <p className="text-sm text-slate-400 text-center py-8">暂无职级，点击下方「新增职级」添加</p>
           )}
@@ -252,17 +254,21 @@ export function LevelManagerModal({ open, onClose, allEmployees }: LevelManagerM
                     maxLength={20}
                     aria-label={`第 ${i + 1} 行 中文标签`}
                   />
-                  {/* v2.5.1 可比职级值：跨序列比较资历，留空按编号推导 */}
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={d.rank ?? ''}
-                    onChange={(e) => updateDraft(i, { rank: e.target.value === '' ? undefined : Number(e.target.value) })}
-                    className="w-16 px-2 py-1.5 rounded-lg text-sm text-slate-700 focus-ring border border-slate-200"
-                    placeholder={String(levelRank({ number: d.number }) ?? '序位')}
-                    title="可比职级值：用于跨序列判断上下级倒挂/平级（如 L3.1 与 E3.1 同为 3.1）。留空按编号推导，调整列表顺序不影响比较。"
-                    aria-label={`第 ${i + 1} 行 可比职级值`}
-                  />
+                  {/* v2.5.1 可比职级值：跨序列比较资历，留空按编号推导。
+                      评审：原先无可见标签，与左侧编号、右侧成本三个数字并排难以区分；补「可比」前缀，
+                      占位符写明「自动 x」并调浅，避免把推导值误读成已填写的值。 */}
+                  <label className="flex items-center gap-1" title="可比职级值：用于跨序列判断上下级倒挂/平级（如 L3.1 与 E3.1 同为 3.1）。留空按编号推导，调整列表顺序不影响比较。">
+                    <span className="text-[10px] text-slate-500">可比</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={d.rank ?? ''}
+                      onChange={(e) => updateDraft(i, { rank: e.target.value === '' ? undefined : Number(e.target.value) })}
+                      className="w-16 px-2 py-1.5 rounded-lg text-sm text-slate-700 placeholder:text-slate-300 focus-ring border border-slate-200"
+                      placeholder={levelRank({ number: d.number }) === null ? '—' : `自动 ${levelRank({ number: d.number })}`}
+                      aria-label={`第 ${i + 1} 行 可比职级值`}
+                    />
+                  </label>
                   {/* 月均成本 */}
                   <div className="flex items-center gap-1.5">
                     <input
@@ -271,19 +277,24 @@ export function LevelManagerModal({ open, onClose, allEmployees }: LevelManagerM
                       min="0"
                       value={d.cost ?? ''}
                       onChange={(e) => updateDraft(i, { cost: e.target.value === '' ? undefined : Number(e.target.value) })}
-                      className="w-16 px-2 py-1.5 rounded-lg text-sm text-slate-700 focus-ring border border-slate-200"
+                      className="w-16 px-2 py-1.5 rounded-lg text-sm text-slate-700 placeholder:text-slate-300 focus-ring border border-slate-200"
                       placeholder="成本"
+                      aria-label={`第 ${i + 1} 行 月均成本`}
+                      title="月均成本（万元/月），用于管理者成本占比与降本测算"
                     />
                     <span className="text-[10px] text-slate-400 w-6">w</span>
                   </div>
-                  {usage && (
-                    <span
-                      className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200"
-                      title={`当前有 ${usage.count} 名员工使用该职级：${usage.samples.join('、')}${usage.count > usage.samples.length ? ' 等' : ''}。改动职级码或删除该行，他们会掉色且成本归零。`}
-                    >
-                      {usage.count} 人使用
-                    </span>
-                  )}
+                  {/* v2.5.1 评审：徽标位固定宽度，有/无「N 人使用」的行，后面的「可比 / 成本 / 颜色」列都能上下对齐 */}
+                  <span className="w-[4.5rem] shrink-0 flex justify-end">
+                    {usage && (
+                      <span
+                        className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200"
+                        title={`当前有 ${usage.count} 名员工使用该职级：${usage.samples.join('、')}${usage.count > usage.samples.length ? ' 等' : ''}。改动职级码或删除该行，他们会掉色且成本归零。`}
+                      >
+                        {usage.count} 人使用
+                      </span>
+                    )}
+                  </span>
                   {/* 颜色（v2.0.12：默认语义化自动配色——序列色系+级别深浅；点击色块可自定义） */}
                   <div className="flex items-center gap-1.5">
                     {customColorIdx === i ? (
