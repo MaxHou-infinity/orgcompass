@@ -104,6 +104,8 @@ export interface LevelConfig {
   color: string;
   /** 该职级的月均成本（可选；用于健康度 L3 成本核算，如 2.4 表示 2.4w/月）。 */
   cost?: number;
+  /** v2.5.1 可比职级值（跨序列资历，如 L3.1 与 E3.1 同为 3.1）：缺省时由编号推导，列表顺序不影响比较。 */
+  rank?: number;
 }
 
 /**

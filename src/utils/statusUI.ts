@@ -74,6 +74,25 @@ export function fmt(value: number | null, unit = ''): string {
   return `${v}${unit}`;
 }
 
+/**
+ * 健康度指标主数值格式化（v2.5.1 评审）：
+ * - 比值型（人/岗，如管理者梯队）保留两位小数——一位小数会把 0.75 显示成 0.8，与 0.8 健康线的灯号自相矛盾；
+ * - `unconfigured` 为真时（如继任一个都没录入）显示「未配置」而不是「—」，与判读文案一致。
+ */
+export function fmtMetric(value: number | null, unit = '', unconfigured = false): string {
+  if (unconfigured) return '未配置';
+  if (unit === '人/岗' && value !== null && Number.isFinite(value)) return `${Number(value.toFixed(2))}${unit}`;
+  return fmt(value, unit);
+}
+
+/** 继任类指标是否处于「未配置」（范围内一个继任人都没录入）——只读 computeSuccession 已给出的 configured 标记，不做推断。 */
+export function isMetricUnconfigured(key: string, succession?: { configured: boolean; pipeline: { configured: boolean } }): boolean {
+  if (!succession) return false;
+  if (key === 'succession') return !succession.configured;
+  if (key === 'managerPipeline') return !succession.pipeline.configured;
+  return false;
+}
+
 /** 金额格式化（单位 w）：保留 1 位小数；null / 非有限数 → '—'（v2.3.1 Q-06） */
 export function fmtCost(value: number | null): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '—';

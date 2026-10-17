@@ -24,9 +24,17 @@ it('同数据扩张不报偏窄，降本提示窄幅团队并给出条件成本�
   const suggestions = collectAllSuggestions(efficiency, roots, DEFAULT_HEALTH_THRESHOLDS, []);
   const merge = suggestions.find((s) => s.id.startsWith('efficiency-merge'))!;
   expect(merge.evidence).toContain('4/4');
-  expect(merge.expectedImpact).toContain('20.0%→17.2%');
-  expect(merge.expectedImpact).toContain('月成本减少 3.0 万元');
-  expect(merge.expectedImpact).toContain('本人离岗（不是转岗）');
+  // v2.5.1 默认假设：经理转专业岗，只节省管理溢价 3.0 − 1.0 = 2.0；全员不变，管理者 6→5。
+  expect(merge.expectedImpact).toContain('转为专业岗、不离岗');
+  expect(merge.expectedImpact).toContain('管理溢价');
+  expect(merge.expectedImpact).toContain('20.0%→16.7%');
+  expect(merge.expectedImpact).toContain('月成本约减少 2.0 万元');
+  // 可切换为“离岗”假设：节省全部成本，全员 30→29。
+  const leave = collectAllSuggestions(computeHealthReport(roots, [], undefined, { ...DEFAULT_HEALTH_THRESHOLDS, efficiencySavingsAssumption: 'leave' }, { businessContext: 'efficiency' }),
+    roots, { ...DEFAULT_HEALTH_THRESHOLDS, efficiencySavingsAssumption: 'leave' }, []).find((s) => s.id.startsWith('efficiency-merge'))!;
+  expect(leave.expectedImpact).toContain('本人离岗（不是转岗）');
+  expect(leave.expectedImpact).toContain('20.0%→17.2%');
+  expect(leave.expectedImpact).toContain('月成本约减少 3.0 万元');
   expect(suggestions.every((s) => s.evidence && s.expectedImpact)).toBe(true);
   expect(collectAllSuggestions(expansion, roots).some((s) => s.title.includes('偏窄'))).toBe(false);
 });
@@ -81,8 +89,9 @@ it('建议沿用新的职能与继任口径，不再引用旧全局幅度区间'
   const span = suggestions.find((s) => s.id === 'm-span');
   expect(span?.detail).toContain('知识型');
   expect(span?.detail).toContain('5–10');
+  // v2.5.1：一个继任人都没录入 → 未配置（nodata），提示补数据，不是 0% 红灯。
+  expect(report.l2.find((m) => m.key === 'succession')).toMatchObject({ status: 'nodata', value: null });
   const succession = suggestions.find((s) => s.id === 'm-succession');
-  expect(succession?.severity).toBe('critical');
-  expect(succession?.evidence).toContain('0%');
-  expect(succession?.expectedImpact).toContain('继任覆盖率');
+  expect(succession?.severity).toBe('info');
+  expect(succession?.detail).toContain('未配置');
 });

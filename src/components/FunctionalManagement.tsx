@@ -7,7 +7,7 @@ import { HEALTH_STATUS_LABEL } from '../utils/analytics';
 export function FunctionalSpanTable({ data }: { data: ReturnType<typeof computeFunctionalSpans> }) {
   return <div aria-label="按管理类型的幅度" className="mt-3 text-xs overflow-x-auto">
     <table className="w-full text-left"><thead><tr><th>类型</th><th>管理者</th><th>中位幅度</th><th>健康区间</th><th>健康占比</th><th>状态</th></tr></thead>
-      <tbody>{data.types.map((row) => <tr key={row.type}><td>{MANAGEMENT_TYPE_LABELS[row.type]}</td><td>{row.count}</td><td>{row.median ?? '—'}</td><td>{row.range.min}–{row.range.max}</td><td>{row.healthyShare === null ? '—' : `${Math.round(row.healthyShare * 100)}%`}</td><td>{HEALTH_STATUS_LABEL[row.status]}</td></tr>)}</tbody>
+      <tbody>{data.types.map((row) => <tr key={row.type}><td>{MANAGEMENT_TYPE_LABELS[row.type]}</td><td>{row.count}</td><td>{row.median ?? '—'}{row.max !== null && row.overloaded.length > 0 ? `（最宽 ${row.max}）` : ''}</td><td>{row.range.min}–{row.range.max}</td><td>{row.healthyShare === null ? '—' : `${Math.round(row.healthyShare * 100)}%`}</td><td>{HEALTH_STATUS_LABEL[row.status]}</td></tr>)}</tbody>
     </table><p className="mt-2 text-slate-500">每类至少 3 位管理者才参与总灯号；{data.defaultedReports} 名下属未配置可用序列/部门类型，暂按知识型计算。同票优先部门默认类型，否则按知识、操作、专家顺序。</p>
   </div>;
 }

@@ -283,7 +283,7 @@ describe('computeHealthReport（主入口 + 汇总）', () => {
     // totalHeadcount = (5+2) + 3 = 10, totalGap = 10 - 3 = 7
     expect(report.totals.totalGap).toBe(7);
     expect(report.l1).toHaveLength(2);
-    expect(report.l2).toHaveLength(6);
+    expect(report.l2).toHaveLength(7);
     expect(report.summary.overall).toBeDefined();
   });
 
@@ -510,7 +510,7 @@ describe('computeHealthReport 边界', () => {
   it('空树：各项为空且 totals 归零', () => {
     const report = computeHealthReport([], COSTS);
     expect(report.l1).toEqual([]);
-    expect(report.l2).toHaveLength(6);
+    expect(report.l2).toHaveLength(7);
     expect(report.l3).toEqual([]);
     expect(report.totals.totalEmployees).toBe(0);
     expect(report.totals.totalDepartments).toBe(0);

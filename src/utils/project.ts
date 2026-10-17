@@ -238,7 +238,7 @@ const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 /** Department 的已知持久化字段（不在其中的视为「未来新增字段」，原样带回） */
 const DEPARTMENT_KEYS = ['id', 'name', 'level', 'parentId', 'children', 'employees', 'expanded', 'headcount', 'leaderId', 'leaderName', 'leaderType', 'positions', 'defaultManagementType'] as const;
 const POSITION_KEYS = ['id', 'departmentId', 'name', 'jobFamily', 'levelBandMin', 'levelBandMax', 'headcount', 'status', 'createdAt', 'updatedAt', 'isCritical', 'successors'] as const;
-const LEVEL_CONFIG_KEYS = ['code', 'number', 'label', 'color', 'cost'] as const;
+const LEVEL_CONFIG_KEYS = ['code', 'number', 'label', 'color', 'cost', 'rank'] as const;
 const SCENARIO_KEYS = ['id', 'name', 'createdAt', 'updatedAt', 'departments', 'allEmployeesFlat', 'levelConfigs', 'canvas', 'positions', 'competencyModel', 'assessments', 'positionAssignments', 'seedLegacyRelations'] as const;
 const PROJECT_KEYS = ['id', 'name', 'version', 'currentScenarioId', 'scenarios', 'meta', 'orgTemplates', 'levelConfigs', 'healthThresholds', 'businessContext'] as const;
 const META_KEYS = ['createdAt', 'updatedAt', 'version'] as const;
@@ -326,6 +326,8 @@ function sanitizeLevelConfigs(list: unknown[]): LevelConfig[] {
       label: c.label,
       color: normalizeLevelColor(c.color, fullCode({ code, number })),
       cost: typeof c.cost === 'number' && Number.isFinite(c.cost) ? c.cost : undefined,
+      // v2.5.1：可比职级值显式保存；旧文件缺省时不写回，比较时由 levelRank() 按编号推导（迁移无损、往返一致）。
+      ...(typeof c.rank === 'number' && Number.isFinite(c.rank) ? { rank: c.rank } : {}),
     }, c, LEVEL_CONFIG_KEYS));
   }
   return out.length > 0 ? out : DEFAULT_LEVELS.map((c) => ({ ...c }));

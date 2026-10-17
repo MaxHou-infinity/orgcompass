@@ -98,12 +98,14 @@ describe('v2.3.2 职级行溢出防线', () => {
     expect(items.className).not.toContain('flex-nowrap');
   });
 
-  it('弹窗宽度足够容纳一行 6 组控件（max-w-3xl；Chromium 实测实需 644px）', () => {
+  // v2.5.1 评审：新增「可比职级值」后为 7 组控件，max-w-3xl 在 1440 下折行，放宽到 max-w-4xl。
+  it('弹窗宽度足够容纳一行 7 组控件（max-w-4xl；含 v2.5.1 可比职级值）', () => {
     const { container } = renderModal();
     const panel = container.querySelector('[role="dialog"] .rounded-3xl') as HTMLElement;
     expect(panel).not.toBeNull();
-    expect(panel.className).toContain('max-w-3xl');
+    expect(panel.className).toContain('max-w-4xl');
     expect(panel.className).not.toContain('max-w-2xl');
+    expect(panel.className).not.toContain('max-w-3xl');
   });
 
   it('每一行都有稳定的行容器锚点（改动行结构时测试不会静默失效）', () => {

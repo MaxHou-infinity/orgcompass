@@ -1,5 +1,6 @@
 import type { Department, LevelConfig } from '../types';
 import { deriveManagementLoads } from './management';
+import { fullCode, levelRankMap } from './level';
 
 export function computeReportingChains(roots: Department[], levels: LevelConfig[] = []) {
   const graph = deriveManagementLoads(roots);
@@ -19,11 +20,13 @@ export function computeReportingChains(roots: Department[], levels: LevelConfig[
     chains.push({ employeeId: employee.id, deptId: graph.employeeDept.get(start)!.id,
       names: keys.map((key) => graph.employeesByKey.get(key)!.name), keys, length: keys.length - 1 });
   }
-  const sorted = chains.map((c) => c.length).sort((a, b) => a - b);
+  // v2.5.1：顶层负责人（链长 0，没有上级）不是“被汇报链隔开”的人，不进入分位数，避免压低 P50/P90。
+  const sorted = chains.filter((c) => c.length > 0).map((c) => c.length).sort((a, b) => a - b);
   const percentile = (p: number) => sorted.length ? sorted[Math.max(0, Math.ceil(sorted.length * p) - 1)] : null;
   const distribution = [...new Set(sorted)].map((length) => ({ length, count: sorted.filter((n) => n === length).length }));
-  // 职级管理列表从低到高的显式配置顺序；未知职级不按字符串或数字猜测。
-  const order = new Map(levels.map((level, index) => [`${level.code}${level.number}`, { ...level, rank: index }]));
+  // v2.5.1：按每个职级的可比职级值（rank，缺省由编号推导）比较，跨序列 L/E 按实际资历；列表顺序不影响结果。
+  const ranks = levelRankMap(levels);
+  const order = new Map(levels.filter((level) => ranks.has(fullCode(level))).map((level) => [fullCode(level), { ...level, rank: ranks.get(fullCode(level))! }]));
   const inversions: { managerId: string; managerName: string; managerLevel: string; employeeId: string; employeeName: string; employeeLevel: string; deptId: string; kind: 'inversion' | 'equal' }[] = [];
   const missingLevels = new Set<string>();
   let checkedRelations = 0;
@@ -46,8 +49,8 @@ export function computeReportingChains(roots: Department[], levels: LevelConfig[
     return managerKeys.slice(1).every((key, i) => {
       const lower = order.get(graph.employeesByKey.get(managerKeys[i])!.level);
       const upper = order.get(graph.employeesByKey.get(key)!.level);
-      // “不足一整级”只在同序列且编号已配置时比较，跨序列不编造等价关系。
-      return lower && upper && lower.code === upper.code && upper.rank >= lower.rank && Math.abs(Number(upper.number) - Number(lower.number)) < 1;
+      // “不足一整级”：相邻管理层可比职级值差 < 1（含跨序列，按 rank 比较）。
+      return lower && upper && upper.rank >= lower.rank && upper.rank - lower.rank < 1;
     });
   });
   return { count: chains.length, total: graph.total, incomplete, p50: percentile(0.5), p90: percentile(0.9), max: sorted.at(-1) ?? null,

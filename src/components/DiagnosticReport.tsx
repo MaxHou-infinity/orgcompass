@@ -21,7 +21,7 @@ import {
   getHealthThresholds,
   DEFAULT_HEALTH_THRESHOLDS,
 } from '../utils/analytics';
-import { STATUS_STYLE, fmt, fmtCost } from '../utils/statusUI';
+import { STATUS_STYLE, fmt, fmtCost, fmtMetric, isMetricUnconfigured } from '../utils/statusUI';
 import { OrganizationCostSummary } from './OrganizationCostSummary';
 
 interface DiagnosticReportProps {
@@ -274,7 +274,7 @@ export function DiagnosticReport({
             {report.l2.map((m) => (
               <div key={m.key} className={`rounded-2xl border ${STATUS_STYLE[m.status].border} ${STATUS_STYLE[m.status].bg} shadow-soft p-4`}>
                 <div className="text-xs text-slate-500">{m.label}</div>
-                <div className={`text-3xl font-bold ${STATUS_STYLE[m.status].text}`}>{fmt(m.value, m.unit)}</div>
+                <div className={`${isMetricUnconfigured(m.key, report.succession) ? 'text-2xl' : 'text-3xl'} font-bold ${STATUS_STYLE[m.status].text}`}>{fmtMetric(m.value, m.unit, isMetricUnconfigured(m.key, report.succession))}</div>
                 {m.dataWarning && <p className="text-xs text-amber-700">{m.dataWarning}</p>}
                 {m.functionalSpans && <FunctionalSpanTable data={m.functionalSpans} />}
                 {/* v2.0.9 口径小字：中位数/极值、P50/P90、内部/外部/兼岗 */}

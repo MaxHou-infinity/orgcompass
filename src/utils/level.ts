@@ -120,3 +120,21 @@ export function withAlpha(color: string, alphaHex: string): string {
   const base = six ? `#${six[1]}` : '#CCCCCC';
   return `${base}${alphaHex}`;
 }
+
+/** v2.5.1：可比职级值。显式 rank 优先；旧数据缺省时按编号推导（L3.1 与 E3.1 同为 3.1）。非法时返回 null。 */
+export function levelRank(config: Pick<LevelConfig, 'number'> & { rank?: number }): number | null {
+  if (typeof config.rank === 'number' && Number.isFinite(config.rank)) return config.rank;
+  const derived = Number(config.number);
+  return Number.isFinite(derived) ? derived : null;
+}
+
+/** 职级码 → 可比值；同一职级码重复配置时取第一条，与 fullCode 匹配口径一致。 */
+export function levelRankMap(configs: LevelConfig[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const config of configs) {
+    const code = fullCode(config);
+    const rank = levelRank(config);
+    if (rank !== null && !map.has(code)) map.set(code, rank);
+  }
+  return map;
+}

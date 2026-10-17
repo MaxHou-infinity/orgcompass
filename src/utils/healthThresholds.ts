@@ -10,6 +10,11 @@ export interface HealthThresholds {
   successionHealthyMin?: number;
   successionWarnMin?: number;
   successionSampleMin?: number;
+  /** v2.5.1 管理者梯队：近期可接后备人数 ÷ 管理岗数 ≥ healthy 健康；≥ warn 关注；其余预警。 */
+  pipelineHealthyMin?: number;
+  pipelineWarnMin?: number;
+  /** v2.5.1 降本合并测算假设：toIC = 被合并经理转为专业岗，只节省管理溢价；leave = 本人离岗，节省全部成本。 */
+  efficiencySavingsAssumption?: 'toIC' | 'leave';
   chainHealthyMax?: number;
   chainWarnMax?: number;
   managementStage?: ManagementStage;
@@ -39,6 +44,7 @@ export interface HealthThresholds {
 export const DEFAULT_HEALTH_THRESHOLDS: HealthThresholds = {
   expansionSpanFactor: 0.7, expansionVacancyHealthyMax: 15, efficiencyManagerFactor: 0.8, efficiencyChainFactor: 0.8,
   successionHealthyMin: 70, successionWarnMin: 50, successionSampleMin: 5,
+  pipelineHealthyMin: 0.8, pipelineWarnMin: 0.5, efficiencySavingsAssumption: 'toIC',
   chainHealthyMax: 4, chainWarnMax: 5,
   managementStage: 'growth', managementRanges: DEFAULT_MANAGEMENT_RANGES, jobFamilyTypes: DEFAULT_JOB_FAMILY_TYPES,
   reportingCoverageWarn: REPORTING_COVERAGE_WARN,
@@ -70,10 +76,13 @@ export function normalizeHealthThresholds(raw: unknown): HealthThresholds {
   if (source.managementStage === 'startup' || source.managementStage === 'growth' || source.managementStage === 'mature') result.managementStage = source.managementStage;
   result.managementRanges = normalizeManagementRanges(source.managementRanges);
   if (source.jobFamilyTypes && typeof source.jobFamilyTypes === 'object' && !Array.isArray(source.jobFamilyTypes)) {
-    result.jobFamilyTypes = Object.fromEntries(Object.entries(source.jobFamilyTypes).filter(([key, value]) => key.length > 0 && key.length < 100 && isManagementType(value)));
+    // v2.5.1 迁移：旧项目只保存了旧版默认映射，合并新默认后用户自定义仍优先。
+    result.jobFamilyTypes = { ...DEFAULT_JOB_FAMILY_TYPES, ...Object.fromEntries(Object.entries(source.jobFamilyTypes).filter(([key, value]) => key.length > 0 && key.length < 100 && isManagementType(value))) };
   }
   if (result.successionHealthyMin! > 100 || result.successionWarnMin! > result.successionHealthyMin!) { result.successionHealthyMin = 70; result.successionWarnMin = 50; }
   result.successionSampleMin = Math.max(1, Math.ceil(result.successionSampleMin!));
+  if (result.pipelineWarnMin! > result.pipelineHealthyMin!) { result.pipelineHealthyMin = 0.8; result.pipelineWarnMin = 0.5; }
+  result.efficiencySavingsAssumption = source.efficiencySavingsAssumption === 'leave' ? 'leave' : 'toIC';
   if (result.chainHealthyMax! > result.chainWarnMax!) { result.chainHealthyMax = 4; result.chainWarnMax = 5; }
   for (const key of ['expansionSpanFactor', 'efficiencyManagerFactor', 'efficiencyChainFactor'] as const) {
     if (result[key]! > 1) result[key] = DEFAULT_HEALTH_THRESHOLDS[key];

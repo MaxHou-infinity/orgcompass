@@ -111,7 +111,7 @@ describe('computeScenarioDiff · 指标组装', () => {
       [emp('E1'), emp('E2')],
     );
     const diff = computeScenarioDiff(base, tgt, TH);
-    expect(diff.metrics.map((m) => m.key)).toEqual(['span', 'depth', 'managerRatio', 'vacancy', 'succession', 'gradeInversion']);
+    expect(diff.metrics.map((m) => m.key)).toEqual(['span', 'depth', 'managerRatio', 'vacancy', 'succession', 'managerPipeline', 'gradeInversion']);
     // 与 computeL2 输出直接对齐（差异层只做对齐+求差，不重复计算）
     expect(diff.metrics).toEqual(computeMetricDiffs(computeHealthReport(base.departments, base.levelConfigs, undefined, TH).l2, computeHealthReport(tgt.departments, tgt.levelConfigs, undefined, TH).l2));
     expect(diff.baselineScenarioId).toBe('sc-base');
