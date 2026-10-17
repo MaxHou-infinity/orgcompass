@@ -12,6 +12,7 @@ import {
   normalizeLevelNumber,
   fullCode,
   autoColor,
+  levelRank,
 } from '../utils/level';
 import { Employee, LevelConfig } from '../types';
 import { useDialogFocus } from '../utils/useDialogFocus';
@@ -134,6 +135,7 @@ export function LevelManagerModal({ open, onClose, allEmployees }: LevelManagerM
         label: d.label.trim(),
         color: d.color || autoColor(fullCode(d)),
         cost: typeof d.cost === 'number' && Number.isFinite(d.cost) ? d.cost : undefined,
+        ...(typeof d.rank === 'number' && Number.isFinite(d.rank) ? { rank: d.rank } : {}),
       })),
     );
     setErrors({});
@@ -249,6 +251,17 @@ export function LevelManagerModal({ open, onClose, allEmployees }: LevelManagerM
                     placeholder="中文标签，如 初级专员"
                     maxLength={20}
                     aria-label={`第 ${i + 1} 行 中文标签`}
+                  />
+                  {/* v2.5.1 可比职级值：跨序列比较资历，留空按编号推导 */}
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={d.rank ?? ''}
+                    onChange={(e) => updateDraft(i, { rank: e.target.value === '' ? undefined : Number(e.target.value) })}
+                    className="w-16 px-2 py-1.5 rounded-lg text-sm text-slate-700 focus-ring border border-slate-200"
+                    placeholder={String(levelRank({ number: d.number }) ?? '序位')}
+                    title="可比职级值：用于跨序列判断上下级倒挂/平级（如 L3.1 与 E3.1 同为 3.1）。留空按编号推导，调整列表顺序不影响比较。"
+                    aria-label={`第 ${i + 1} 行 可比职级值`}
                   />
                   {/* 月均成本 */}
                   <div className="flex items-center gap-1.5">

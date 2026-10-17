@@ -19,19 +19,19 @@ const STORAGE_KEY = 'org-designer.level-configs';
  * 与用户自建职级的自动配色规则保持一致。
  */
 export const DEFAULT_LEVELS: LevelConfig[] = [
-  { code: 'L', number: '0', label: '实习生', color: autoColor('L0'), cost: 0.5 },
-  { code: 'L', number: '1.1', label: '初级专员', color: autoColor('L1.1'), cost: 1.2 },
-  { code: 'L', number: '1.2', label: '中级专员', color: autoColor('L1.2'), cost: 1.5 },
-  { code: 'L', number: '2.1', label: '高级专员', color: autoColor('L2.1'), cost: 2.0 },
-  { code: 'L', number: '2.2', label: '资深专员', color: autoColor('L2.2'), cost: 2.4 },
-  { code: 'L', number: '3.1', label: '团队经理', color: autoColor('L3.1'), cost: 3.0 },
-  { code: 'E', number: '3.1', label: '专家', color: autoColor('E3.1'), cost: 3.6 },
-  { code: 'L', number: '3.2', label: '部门经理', color: autoColor('L3.2'), cost: 4.0 },
-  { code: 'E', number: '3.2', label: '高级专家', color: autoColor('E3.2'), cost: 4.8 },
-  { code: 'L', number: '4.1', label: '高级经理', color: autoColor('L4.1'), cost: 5.5 },
-  { code: 'E', number: '4.1', label: '资深专家', color: autoColor('E4.1'), cost: 6.5 },
-  { code: 'L', number: '4.2', label: '总监', color: autoColor('L4.2'), cost: 8.0 },
-  { code: 'L', number: '5', label: '副总裁', color: autoColor('L5'), cost: 12.0 },
+  { code: 'L', number: '0', label: '实习生', color: autoColor('L0'), cost: 0.5, rank: 0 },
+  { code: 'L', number: '1.1', label: '初级专员', color: autoColor('L1.1'), cost: 1.2, rank: 1.1 },
+  { code: 'L', number: '1.2', label: '中级专员', color: autoColor('L1.2'), cost: 1.5, rank: 1.2 },
+  { code: 'L', number: '2.1', label: '高级专员', color: autoColor('L2.1'), cost: 2.0, rank: 2.1 },
+  { code: 'L', number: '2.2', label: '资深专员', color: autoColor('L2.2'), cost: 2.4, rank: 2.2 },
+  { code: 'L', number: '3.1', label: '团队经理', color: autoColor('L3.1'), cost: 3.0, rank: 3.1 },
+  { code: 'E', number: '3.1', label: '专家', color: autoColor('E3.1'), cost: 3.6, rank: 3.1 },
+  { code: 'L', number: '3.2', label: '部门经理', color: autoColor('L3.2'), cost: 4.0, rank: 3.2 },
+  { code: 'E', number: '3.2', label: '高级专家', color: autoColor('E3.2'), cost: 4.8, rank: 3.2 },
+  { code: 'L', number: '4.1', label: '高级经理', color: autoColor('L4.1'), cost: 5.5, rank: 4.1 },
+  { code: 'E', number: '4.1', label: '资深专家', color: autoColor('E4.1'), cost: 6.5, rank: 4.1 },
+  { code: 'L', number: '4.2', label: '总监', color: autoColor('L4.2'), cost: 8.0, rank: 4.2 },
+  { code: 'L', number: '5', label: '副总裁', color: autoColor('L5'), cost: 12.0, rank: 5 },
 ];
 
 /**
@@ -92,6 +92,7 @@ function loadFromStorage(): LevelConfig[] {
           label: item.label.trim(),
           color: normalizeLevelColor(item.color, fullCode({ code, number })),
           cost: typeof item.cost === 'number' && Number.isFinite(item.cost) ? item.cost : undefined,
+          ...(typeof item.rank === 'number' && Number.isFinite(item.rank) ? { rank: item.rank } : {}),
         };
       })
       .filter((item) => validateLevel(item).length === 0);
