@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import type { Department, Employee } from '../types';
-import { computeFunctionalSpans, DEFAULT_MANAGEMENT_RANGES } from './managementBenchmarks';
+import { DEFAULT_JOB_FAMILY_TYPES, computeFunctionalSpans, DEFAULT_MANAGEMENT_RANGES } from './managementBenchmarks';
 import { computeL2, DEFAULT_HEALTH_THRESHOLDS } from './analytics';
 import { createProject, parseProject, serializeProject } from './project';
 
@@ -40,7 +40,8 @@ it('阶段×类型九组配置和序列映射可编辑，随项目保存；默�
   project.healthThresholds = { ...DEFAULT_HEALTH_THRESHOLDS, managementStage: 'mature', managementRanges: ranges, jobFamilyTypes: { 自定义客服: 'operational' } };
   project.scenarios[0].departments = roots;
   const restored = parseProject(serializeProject(project))!;
-  expect(restored.healthThresholds).toEqual(project.healthThresholds);
+  // v2.5.1：读取时合并新版默认序列映射，用户自定义项优先保留。
+  expect(restored.healthThresholds).toEqual({ ...project.healthThresholds, jobFamilyTypes: { ...DEFAULT_JOB_FAMILY_TYPES, 自定义客服: 'operational' } });
   expect(computeL2(roots, restored.healthThresholds).find((m) => m.key === 'span')?.status).toBe('healthy');
   expect(computeFunctionalSpans(roots).managers.every((m) => m.type === 'knowledge')).toBe(true);
 });

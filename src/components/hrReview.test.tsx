@@ -15,7 +15,7 @@ it('健康度页面将缺失数据呈现为灰色，另列完整度且不报四�
   render(<HealthPage open onClose={vi.fn()} departments={[]} onClearFocus={vi.fn()} onFocusDept={vi.fn()}
     onUpdateHeadcount={vi.fn()} onExportReport={vi.fn()} currentScenarioName="空场景"
     scenarios={createProject('演示').scenarios} onOpenScenarioDiff={vi.fn()} />);
-  expect(screen.getByRole('region', { name: '数据完整度' }).textContent).toContain('可计算指标 0/6');
+  expect(screen.getByRole('region', { name: '数据完整度' }).textContent).toContain('可计算指标 0/7');
   expect(screen.getByText('未判定 6')).toBeTruthy();
   expect(screen.getByText('黄 0')).toBeTruthy();
   expect(screen.getByText('整体暂不判定')).toBeTruthy();
@@ -41,7 +41,7 @@ it('诊断报告消费相同的无数据和完整度结果', () => {
   render(<DiagnosticReport open onClose={vi.fn()} departments={[]} levelConfigs={[]}
     projectName="演示" scenarioName="空场景" onToast={vi.fn()} />);
   expect(screen.getAllByText('暂不判定').length).toBeGreaterThan(0);
-  expect(screen.getByRole('region', { name: '数据完整度' }).textContent).toContain('可计算指标 0/6');
+  expect(screen.getByRole('region', { name: '数据完整度' }).textContent).toContain('可计算指标 0/7');
   expect(screen.getByText('红0 黄0 绿0 · 未判定6')).toBeTruthy();
 });
 

@@ -128,7 +128,7 @@ export interface L2Metric {
   referenceOnly?: boolean;
   functionalSpans?: ReturnType<typeof computeFunctionalSpans>;
   dataWarning?: string;
-  key: 'span' | 'depth' | 'managerRatio' | 'vacancy' | 'succession' | 'gradeInversion' | 'managerCost' | 'duplicatePositions' | 'reportingConflicts';
+  key: 'span' | 'depth' | 'managerRatio' | 'vacancy' | 'succession' | 'managerPipeline' | 'gradeInversion' | 'managerCost' | 'duplicatePositions' | 'reportingConflicts';
   label: string;
   /** 指标值；不可计算时为 null（如无负责人、无编制、无员工）。
    *  v2.0.9 语义：span = 直管数中位数；depth = 深度 P90（主）；managerRatio = 内部负责人 ÷ 含管理者全员。 */
@@ -215,6 +215,11 @@ export interface HealthReport {
     totalDepartments: number;
     departmentsWithHeadcount: number;
     managementTypeDefaults: number;
+    /** v2.5.1：岗位序列不在映射表中的取值（不猜测类型）。 */
+    unmappedJobFamilies: string[];
+    /** v2.5.1：未录入继任人的关键岗位数；全部未录入时继任指标为「未配置」。 */
+    successionUnconfigured: number;
+    criticalPositions: number;
   };
   costBreakdown: {
     knownCost: number;
@@ -871,11 +876,14 @@ export function computeL2(roots: Department[], thresholds: HealthThresholds = ge
   const chains = computeReportingChains(roots);
   const chainSufficient = chains.total >= MANAGEMENT_SAMPLE_MIN.employees && chains.p90 !== null;
   let depthStatusVal: HealthStatus = !chainSufficient ? 'nodata' : chains.p90! <= (thresholds.chainHealthyMax ?? 4) ? 'healthy' : chains.p90! <= (thresholds.chainWarnMax ?? 5) ? 'warn' : 'danger';
+  // v2.5.1：孤立深链——P90 健康但最长链超过关注上限，至少「关注」（延续 v2.0.9 “单点失衡不被抹平”的口径）。
+  const isolatedDeepChain = depthStatusVal === 'healthy' && chains.max !== null && chains.max > (thresholds.chainWarnMax ?? 5);
+  if (isolatedDeepChain) depthStatusVal = 'warn';
   const chainCoverage = chains.total ? chains.count / chains.total : 0;
   if (chainCoverage < (thresholds.reportingCoverageMin ?? REPORTING_COVERAGE_MIN)) depthStatusVal = 'nodata';
   const depthVerdict = !chainSufficient ? `汇报链样本 ${chains.total} 人，不足 ${MANAGEMENT_SAMPLE_MIN.employees} 人或暂无可核对完整链，仅作参考。部门层级 P90=${depth}，不参与总评。`
     : chainCoverage < (thresholds.reportingCoverageMin ?? REPORTING_COVERAGE_MIN) ? '完整汇报链覆盖不足，暂不判定；请修正异常汇报关系。'
-    : `人员汇报链 P50=${chains.p50}，P90=${chains.p90}，最长 ${chains.max} 位管理者；部门层级 P90=${depth}（仅参考）。`;
+    : `人员汇报链 P50=${chains.p50}，P90=${chains.p90}，最长 ${chains.max} 位管理者；部门层级 P90=${depth}（仅参考）。${isolatedDeepChain ? `存在孤立深链：${chains.longest[0]?.names.join(' → ')}，超过关注上限 ${thresholds.chainWarnMax ?? 5} 层，建议核对该链的中间层级。` : ''}`;
 
   // —— 管理者比（v2.0.9：剔除外部 + 统一去重 + 暴露兼岗；分母含管理者，辅助口径展示）——
   const managerBreakdown = computeManagerBreakdown(roots);
@@ -938,6 +946,10 @@ export function computeL2(roots: Department[], thresholds: HealthThresholds = ge
     spanStatusVal = functionalSpans.status;
     spanVerdict = `按职能分别评估（每类至少 3 名管理者）；总灯号取可评价类型最差值，总体中位数 ${span} 人仅作参考。`;
     if (functionalSpans.status === 'nodata') spanVerdict += '各类型管理者样本不足，暂不判定。';
+    const overloaded = functionalSpans.types.filter((row) => row.status !== 'nodata').flatMap((row) => row.overloaded.map((m) => `${m.name}（${MANAGEMENT_TYPE_LABELS[row.type]}，${m.directReports} 人 > ${row.range.warnMax}）`));
+    if (overloaded.length) spanVerdict += `单点幅度过宽：${overloaded.join('、')}。`;
+    const narrow = functionalSpans.types.filter((row) => row.status !== 'nodata' && row.median !== null && row.median < row.range.min);
+    if (narrow.length) spanVerdict += narrow.map((row) => `${MANAGEMENT_TYPE_LABELS[row.type]}中位幅度 ${row.median} 人，低于健康下限 ${row.range.min} 人。`).join('');
   }
 
   const sampleSufficient = managementSampleSufficient(roots);
@@ -1019,7 +1031,8 @@ export type DiagnosticMetricKey = L2Metric['key'];
  * 供 UI 展开「口径说明」使用；文案来自 HR 审计。
  */
 export const METRIC_CALIBER_NOTES: Record<DiagnosticMetricKey, string> = {
-  succession: '关键岗位继任覆盖率只计 ready_now 与 ready_1_2y；现任人、虚拟人及无效引用不算继任。关键岗位少于设置的样本门槛不判灯。',
+  succession: '关键岗位继任覆盖率只计 ready_now 与 ready_1_2y；现任人、虚拟人及无效引用不算继任。范围内尚未录入任何继任人时显示「未配置」、不判灯并计入数据完整度；关键岗位少于设置的样本门槛不判灯。',
+  managerPipeline: '管理者梯队 = 管理岗（现任为正职负责人或有明确下属者）的近期可接后备（ready_now / ready_1_2y，按真人去重）÷ 管理岗数。默认 ≥0.8 健康、≥0.5 关注；未录入继任或管理岗少于样本门槛时不判灯。快速扩张场景计入总评。',
   gradeInversion: '按配置职级顺序逐对比较；下级更高为倒挂，平级仅提示；未知职级跳过并记录完整度。',
   managerCost: '已知管理者月成本占已知全员月成本；缺少成本时不可计算占比，无独立健康阈值。',
   duplicatePositions: '跨部门同名同序列、相同职级带宽的岗位是待核对候选，不等于确定的冗余岗位。',
@@ -1297,8 +1310,15 @@ export function computeHealthReport(
   }
 
   const inversionCount = chains.inversions.filter((pair) => pair.kind === 'inversion').length;
-  l2 = [...l2, { key: 'succession', label: '关键岗位继任覆盖率', value: succession.coverage, unit: '%', status: succession.status,
-    verdict: `${succession.coveredCount}/${succession.criticalCount} 个关键岗位有近期可接班人；${succession.unconfigured} 个未配置。关键岗位少于 ${thresholds.successionSampleMin ?? 5} 个仅展示数值。` },
+  const pipeline = succession.pipeline;
+  l2 = [...l2, { key: 'succession', label: '关键岗位继任覆盖率', value: succession.configured ? succession.coverage : null, unit: '%', status: succession.status,
+    verdict: !succession.configured
+      ? `未配置：${succession.criticalCount} 个关键岗位均未录入继任人，暂不判定（计入数据完整度）。`
+      : `${succession.coveredCount}/${succession.criticalCount} 个关键岗位有近期可接班人；${succession.unconfigured} 个未配置。${succession.vacantUncovered.length ? `关键岗位已空缺且无近期继任：${succession.vacantUncovered.map((p) => `${p.departmentName}/${p.positionName}`).join('、')}（单点风险，至少关注）。` : ''}${succession.criticalCount < (thresholds.successionSampleMin ?? 5) ? `关键岗位少于 ${thresholds.successionSampleMin ?? 5} 个，仅展示数值。` : ''}` },
+    { key: 'managerPipeline', label: '管理者梯队', value: pipeline.ratio, unit: '人/岗', status: pipeline.status,
+      verdict: !pipeline.configured
+        ? `未配置：${pipeline.managerPositions} 个管理岗均未录入继任人，暂不判定。`
+        : `${pipeline.managerPositions} 个管理岗共有 ${pipeline.readyBench} 名近期可接后备（去重），每岗 ${pipeline.ratio} 人。${pipeline.managerPositions < (thresholds.successionSampleMin ?? 5) ? `管理岗少于 ${thresholds.successionSampleMin ?? 5} 个，仅展示数值。` : ''}` },
     { key: 'gradeInversion', label: '职级倒挂', value: chains.checkedRelations ? inversionCount : null, unit: '对',
       status: chains.checkedRelations < MANAGEMENT_SAMPLE_MIN.employees ? 'nodata' : inversionCount > 0 ? 'danger' : 'healthy',
       verdict: `已核对 ${chains.checkedRelations} 对上下级，倒挂 ${inversionCount} 对；${chains.missingLevels} 人职级未配置，平级不计总评。至少核对 ${MANAGEMENT_SAMPLE_MIN.employees} 对才作组织级判读。` }];
@@ -1330,6 +1350,9 @@ export function computeHealthReport(
       availableMetrics: l2.filter((m) => m.value !== null).length,
       totalMetrics: l2.length,
       managementTypeDefaults: l2.find((m) => m.key === 'span')?.functionalSpans?.defaultedReports ?? 0,
+      unmappedJobFamilies: l2.find((m) => m.key === 'span')?.functionalSpans?.unmappedFamilies ?? [],
+      successionUnconfigured: succession.unconfigured,
+      criticalPositions: succession.criticalCount,
       departmentsWithLeader: flattenDepartments(scope).filter((d) => (d.leaderType ?? 'owner') !== 'vacant' && (d.leaderId || d.leaderName)).length,
       totalDepartments: totals.totalDepartments,
       departmentsWithHeadcount: flattenDepartments(scope).filter((d) => deptHeadcount(d) !== null).length,
@@ -1391,7 +1414,7 @@ export function generateSuggestions(metrics: L2Metric[], thresholds: HealthThres
     switch (m.key) {
       case 'span': {
         const types = m.functionalSpans?.types.filter((row) => row.count >= 3 && row.status !== 'healthy' && row.status !== 'nodata');
-        const evidence = types?.map((row) => `${MANAGEMENT_TYPE_LABELS[row.type]}：${row.count} 名管理者，中位幅度 ${row.median} 人，健康区间 ${row.range.min}–${row.range.max} 人`).join('；');
+        const evidence = types?.map((row) => `${MANAGEMENT_TYPE_LABELS[row.type]}：${row.count} 名管理者，中位幅度 ${row.median} 人，健康区间 ${row.range.min}–${row.range.max} 人${row.overloaded.length ? `；超过上限 ${row.range.warnMax} 人：${row.overloaded.map((m) => `${m.name}（${m.directReports} 人）`).join('、')}` : ''}`).join('；');
         push(m, '优化管理幅度', `${evidence || (m.functionalSpans ? m.verdict : `${m.verdict}；本次设置参考区间 ${thresholds.spanHealthyMin}-${thresholds.spanHealthyMax} 人`)}。请按本次职能基准核对直属汇报与职责，再确定调整方案。`, sev);
         break;
       }
@@ -1423,6 +1446,9 @@ export function generateSuggestions(metrics: L2Metric[], thresholds: HealthThres
               : `空岗率 ${m.value}%，偏高。建议规划招聘节奏，及时补充人力。`,
           sev,
         );
+        break;
+      case 'managerPipeline':
+        push(m, '补充管理者后备梯队', `${m.verdict} 扩张期请为管理岗提前确定近期可接后备，并安排带教与轮岗；不自动推断后备人选。`, sev);
         break;
       case 'succession':
         push(m, '补齐关键岗位继任储备', `${m.verdict} 请从单点风险清单逐岗核对候选人及准备度，不自动推断接班人。`, sev);

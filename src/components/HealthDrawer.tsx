@@ -320,6 +320,7 @@ function ThresholdInput({ label, value, onChange, suffix = '' }: {
         <input
           type="number"
           min="0"
+          step="any"
           value={value}
           onChange={(e) => {
             const v = Number(e.target.value);
@@ -497,7 +498,8 @@ export function HealthPage({
             <h3 className="font-semibold mb-1">数据完整度</h3>
             <p>可计算指标 {report.dataCompleteness.availableMetrics}/{report.dataCompleteness.totalMetrics} · 未判定 {report.summary.unavailable} 项（不计入红黄绿）</p>
             <p>已设负责人 {report.dataCompleteness.departmentsWithLeader}/{report.dataCompleteness.totalDepartments} 个部门 · 已配置直属编制 {report.dataCompleteness.departmentsWithHeadcount}/{report.dataCompleteness.totalDepartments} 个部门</p>
-            <p>管理类型默认归知识型：{report.dataCompleteness.managementTypeDefaults} 名下属</p>
+            <p>管理类型默认归知识型：{report.dataCompleteness.managementTypeDefaults} 名下属{report.dataCompleteness.unmappedJobFamilies.length > 0 ? ` · 未映射岗位序列：${report.dataCompleteness.unmappedJobFamilies.join('、')}` : ''}</p>
+            <p>继任：{report.dataCompleteness.successionUnconfigured}/{report.dataCompleteness.criticalPositions} 个关键岗位未录入继任人{report.succession.configured ? '' : '（继任指标显示为未配置）'}</p>
             <p className="mt-1 text-slate-500">完整度表示录入覆盖情况，不代表数据已核实；部门层级不等于人员到 CEO 的汇报链。</p>
           </section>
 
@@ -647,6 +649,14 @@ export function HealthPage({
                 <ThresholdInput label="扩张期空岗率健康上限" suffix="%" value={thresholds.expansionVacancyHealthyMax ?? 15} onChange={(v) => updateThresholds({ expansionVacancyHealthyMax: v })} />
                 <ThresholdInput label="降本期管理者比阈值保留比例" suffix="%" value={(thresholds.efficiencyManagerFactor ?? 0.8) * 100} onChange={(v) => updateThresholds({ efficiencyManagerFactor: v / 100 })} />
                 <ThresholdInput label="降本期汇报链阈值保留比例" suffix="%" value={(thresholds.efficiencyChainFactor ?? 0.8) * 100} onChange={(v) => updateThresholds({ efficiencyChainFactor: v / 100 })} />
+                <ThresholdInput label="管理者梯队健康下限（后备/岗）" value={thresholds.pipelineHealthyMin ?? 0.8} onChange={(v) => updateThresholds({ pipelineHealthyMin: v })} />
+                <ThresholdInput label="管理者梯队关注下限（后备/岗）" value={thresholds.pipelineWarnMin ?? 0.5} onChange={(v) => updateThresholds({ pipelineWarnMin: v })} />
+                <label className="flex items-center justify-between gap-2 text-xs text-slate-600">降本合并测算假设
+                  <select aria-label="降本合并测算假设" value={thresholds.efficiencySavingsAssumption ?? 'toIC'} onChange={(e) => updateThresholds({ efficiencySavingsAssumption: e.target.value === 'leave' ? 'leave' : 'toIC' })} className="rounded border border-slate-200 px-2 py-1">
+                    <option value="toIC">经理转专业岗（只计管理溢价）</option>
+                    <option value="leave">经理离岗（计全部成本）</option>
+                  </select>
+                </label>
                 <ThresholdInput label="继任覆盖健康下限" suffix="%" value={thresholds.successionHealthyMin ?? 70} onChange={(v) => updateThresholds({ successionHealthyMin: v })} />
                 <ThresholdInput label="继任覆盖关注下限" suffix="%" value={thresholds.successionWarnMin ?? 50} onChange={(v) => updateThresholds({ successionWarnMin: v })} />
                 <ThresholdInput label="继任覆盖最少关键岗位" value={thresholds.successionSampleMin ?? 5} onChange={(v) => updateThresholds({ successionSampleMin: v })} />

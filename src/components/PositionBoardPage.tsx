@@ -1,4 +1,5 @@
 import { Fragment, useMemo, useState } from 'react';
+import { JOB_FAMILY_OPTIONS } from '../utils/managementBenchmarks';
 import { Briefcase, Download, Filter, Plus, UserMinus, X, Check, ChevronRight, ChevronDown, Layers } from 'lucide-react';
 import { SubPageShell } from './SubPageShell';
 import { deriveBoard } from '../utils/boardScope';
@@ -50,7 +51,7 @@ interface PositionBoardPageProps {
   onLocateDept?: (deptId: string) => void;
 }
 
-const JOB_FAMILIES = ['技术', '产品', '设计', '职能', '管理', '销售', '运营'];
+const JOB_FAMILIES: readonly string[] = JOB_FAMILY_OPTIONS;
 
 interface Draft {
   deptId: string;

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { JOB_FAMILY_OPTIONS } from '../utils/managementBenchmarks';
 import { AppModal } from './AppModal';
 import { fullCode } from '../utils/level';
 import type { Department, LevelConfig } from '../types';
@@ -12,7 +13,7 @@ export interface PositionCreateFields {
 }
 
 /** 岗位序列（jobFamily）可选项 —— 与 route map 文档对齐。 */
-const JOB_FAMILIES = ['技术', '产品', '设计', '职能', '管理', '销售', '运营'];
+const JOB_FAMILIES: readonly string[] = JOB_FAMILY_OPTIONS;
 
 /**
  * 「新建岗位」应用内弹窗（v2.1.1，替代 PositionSection 内联短表单）。
