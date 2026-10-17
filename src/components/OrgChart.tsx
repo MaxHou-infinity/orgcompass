@@ -2,7 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } fr
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, useSensor, useSensors, PointerSensor } from '@dnd-kit/core';
 import { DepartmentCard } from './DepartmentCard';
 import { Department, Employee, LeaderType } from '../types';
-import { accumZoomWheel, applyZoomSteps } from '../utils/zoom';
+import { accumZoomWheel, applyZoomSteps, rootCenterScrollLeft } from '../utils/zoom';
 import { employeeDeptMap, expandedMembersForSearch } from '../utils/search';
 import { SearchHighlight, SearchHighlightContext } from './SearchContext';
 import { PositionSummary } from '../utils/analytics';
@@ -176,6 +176,7 @@ export function calculateTreeLayout(
  * 320 是权衡点：负责人行与 8/10 的部门名完整显示，最长的两个部门名只截掉一两个字，画布宽度仍然可控。
  */
 export const CARD_WIDTH = 320;
+
 
 /**
  * 部门卡高度估算（v2.0.10）：部门卡高度随成员数动态变化。
@@ -722,7 +723,9 @@ export function OrgChart({
         const el = zoomContainerRef.current;
         const canvas = canvasRef.current;
         if (el && canvas) {
-          const targetLeft = 0;
+          // v2.5.1 评审修复：大组织（零售/制造模板）根部门位于画布中部，scrollLeft=0 时首屏只有空白或末级门店。
+          // 水平方向把第一个根部门居中（多根时首个根部门完整可见，其左侧为它自己的下级）；纵向仍从顶部开始。
+          const targetLeft = rootCenterScrollLeft(canvas, el.clientWidth);
           // 首屏从根部门开始阅读，垂直居中会裁掉根节点。
           const targetTop = 0;
           el.scrollLeft = Math.max(0, targetLeft);
@@ -861,19 +864,23 @@ export function OrgChart({
   const treeNodes = calculateTreeLayout(departments, 0, 0, 100, visibleMemberIds, measuredHeights);
   // 方案 A：布局宽度/高度都由坐标树计算（与绝对定位坐标一致，而非累加根 width）
   const layoutHeight = computeLayoutHeight(treeNodes, visibleMemberIds, measuredHeights);
-  // 遍历所有节点取 max(x + width)，确保 wrapper 包住最右的部门（含子部门）
+  // 遍历所有节点取最右卡片右缘，确保 wrapper 包住最右的部门（含子部门）。
+  // v2.5.1 评审修复：n.x 是「卡片」左缘、n.width 是「子树带」宽度，二者相加会把画布多算出半个子树带
+  // （零售模板 100% 时多出约 5.6k px 空白，适配视图因此按 1.5 倍宽度计算）。卡片右缘 = n.x + CARD_WIDTH。
   const layoutWidth = (() => {
     let maxRight = 0;
     const walk = (list: TreeNode[]) => {
       for (const n of list) {
-        maxRight = Math.max(maxRight, n.x + n.width);
+        maxRight = Math.max(maxRight, n.x + CARD_WIDTH);
         walk(n.children);
       }
     };
     walk(treeNodes);
     return maxRight;
   })();
-  const totalWidth = Math.max(containerWidth, layoutWidth);
+  // containerWidth 量的是画布自身 scrollWidth（= 上一轮 canvasWidth），与 layoutWidth 取 max 会形成反馈：
+  // 每次缩放/数据变化画布都再加宽 64px。坐标布局可用时只信布局；量不到布局（jsdom 等）才回退实测值。
+  const totalWidth = layoutWidth > 0 ? layoutWidth : containerWidth;
   const canvasWidth = Math.max(totalWidth + 64, 100); // +padding p-8 (32*2)
   
   return (

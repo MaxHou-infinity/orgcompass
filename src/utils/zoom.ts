@@ -57,3 +57,17 @@ export function applyZoomSteps(
   const next = currentZoom * Math.pow(steps > 0 ? 1 / factor : factor, Math.abs(steps));
   return Math.min(Math.max(next, min), max);
 }
+
+/**
+ * 让第一个根部门卡在视口内水平居中所需的 scrollLeft（v2.5.1 评审）。
+ * 用渲染后的包围盒（已含 transform:scale）相对画布左缘计算，因此须在新缩放生效后调用；找不到卡片时返回 0。
+ */
+export function rootCenterScrollLeft(canvas: HTMLElement, viewportWidth: number): number {
+  const root = canvas.querySelector<HTMLElement>('[data-dept-id]');
+  if (!root || !(viewportWidth > 0)) return 0;
+  const rootRect = root.getBoundingClientRect();
+  const canvasRect = canvas.getBoundingClientRect();
+  const center = rootRect.left - canvasRect.left + rootRect.width / 2;
+  if (!Number.isFinite(center) || rootRect.width === 0) return 0;
+  return Math.max(0, Math.round(center - viewportWidth / 2));
+}

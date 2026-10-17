@@ -2,7 +2,7 @@ import { LazyView } from './components/LazyView';
 import type { PositionPlanPatch } from './components/SuccessionPanel';
 import type { ManagementType } from './utils/managementBenchmarks';
 import { DEFAULT_HEALTH_THRESHOLDS } from './utils/healthThresholds';
-import { fitViewZoom } from './utils/zoom';
+import { fitViewZoom, rootCenterScrollLeft } from './utils/zoom';
 import { exportCanvas } from './utils/exportCanvas';
 import { useRef, useCallback, useEffect, useMemo, useState, lazy } from 'react';
 import { AlertTriangle } from 'lucide-react';
@@ -265,6 +265,13 @@ export default function App() {
       const next = fitViewZoom(canvas.offsetWidth, canvas.offsetHeight, viewport.clientWidth - 48, viewport.clientHeight - 48);
       setZoom(next);
       viewport.scrollTo({ left: 0, top: 0 });
+      // v2.5.1 评审：适配到 50% 仍放不下时（零售/制造模板），scrollLeft=0 只看到最左侧末级部门，
+      // 根部门在画布中部。等新缩放渲染后把根部门水平居中，纵向仍从顶部开始。
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+        const c = canvasRef.current;
+        const v = mainRef.current;
+        if (c && v && v.scrollWidth > v.clientWidth) v.scrollTo({ left: rootCenterScrollLeft(c, v.clientWidth), top: 0 });
+      }));
       if (next === 50) showToast('已缩至 50%；超出视口的部分可平移查看');
     }));
   }, [setZoom, showToast]);
