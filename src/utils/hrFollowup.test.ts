@@ -27,7 +27,8 @@ describe('按有效关系统计，不以单条异常阻断全局', () => {
     expect(span.dataWarning).toBeUndefined(); // 覆盖率 97.5%，按任务 A 不加角标
     roots[1].employees.push(...Array.from({ length: 10 }, (_, j): Employee =>
       ({ id: `extra${j}`, employeeId: `EX${j}`, name: `新增${j}`, level: 'L2' })));
-    expect(computeL2(roots, DEFAULT_HEALTH_THRESHOLDS).find((m) => m.key === 'span')?.status).toBe('healthy'); // 按类型中位数判灯，个体超宽在部门建议中提示
+    // v2.5.1：同类最宽者 17 人超过知识型关注上限 15，单点过宽不被中位数抹平 → 至少关注。
+    expect(computeL2(roots, DEFAULT_HEALTH_THRESHOLDS).find((m) => m.key === 'span')?.status).toBe('warn');
     expect(generateDeptSuggestions(roots, DEFAULT_HEALTH_THRESHOLDS).some((s) => s.deptId === 'd1' && s.metricKey === 'span' && s.severity === 'critical')).toBe(true);
   });
 
@@ -72,44 +73,79 @@ describe('管理诊断小样本门槛', () => {
   });
 });
 
-describe('合成模板验收', () => {
-  it.each(INDUSTRY_TEMPLATES)('$id 基础结构指标健康，新继任指标如实暴露未配置风险', (template) => {
+describe('合成模板验收（v2.5.1：行业形态 + 预置问题）', () => {
+  /** 每套模板只应命中自己的预置问题；其余总评指标健康，且全部越过小样本门槛（不靠 nodata 回避）。 */
+  const intended: Record<string, Partial<Record<string, 'warn' | 'danger'>>> = {
+    manufacturing: { depth: 'warn' },
+    retail: { span: 'warn' },
+    hospital: { gradeInversion: 'danger' },
+    internet: { span: 'warn', managerRatio: 'warn' },
+    education: { succession: 'warn' },
+  };
+  it.each(INDUSTRY_TEMPLATES)('$id 只命中预置问题，其余指标健康', (template) => {
     const source = JSON.stringify(template);
     const data = loadIndustryTemplate(template);
-    const report = computeHealthReport(data.departments, [], undefined, DEFAULT_HEALTH_THRESHOLDS);
-    expect(report.summary.overall).toBe('danger');
-    expect(report.succession.unconfigured).toBeGreaterThanOrEqual(5);
-    expect(report.l2.filter((metric) => ['span', 'depth', 'managerRatio', 'vacancy'].includes(metric.key)).every((metric) => metric.status === 'healthy')).toBe(true);
-    expect(report.totals.totalGap).toBe(1);
-    expect(generateDeptSuggestions(data.departments, DEFAULT_HEALTH_THRESHOLDS, DEFAULT_LEVELS).filter((s) => s.metricKey === 'span')).toHaveLength(0);
-    expect(computeHealthReport(data.departments, DEFAULT_LEVELS).reportingChains.compressed).toHaveLength(0);
-    for (const dept of flattenDepartments(data.departments)) {
-      for (const employee of dept.employees) {
-        const path = [employee.dept1, employee.dept2, employee.dept3, employee.dept4, employee.dept5, employee.dept6].filter(Boolean);
-        expect(dept.name).toBe(path.at(-1));
-      }
+    const report = computeHealthReport(data.departments, DEFAULT_LEVELS, undefined, DEFAULT_HEALTH_THRESHOLDS);
+    const expected = intended[template.id];
+    for (const metric of report.l2.filter((m) => m.includedInOverall)) {
+      expect([metric.key, metric.status]).toEqual([metric.key, expected[metric.key] ?? 'healthy']);
     }
-    const roles = deriveManagementLoads(data.departments).roles;
-    expect(roles.reportingKeys.size).toBe(1);
-    expect(roles.managerKeys.size).toBe(roles.ownerKeys.size + 1);
-    expect(report.l2.find((m) => m.key === 'span')?.spanBreakdown?.count).toBe(roles.managerKeys.size);
-    // 载入只套岗/配编制，绝不把结构推断升级为显式关系。
-    expect(data.allEmployeesFlat.filter((e) => e.reportsToEmployeeId)).toHaveLength(3);
+    expect(report.summary.unavailable).toBe(0);
+    expect(report.summary.red).toBe(Object.values(expected).filter((s) => s === 'danger').length);
+    expect(report.reporting.coverage).toBe(1);
+    expect(report.dataCompleteness.managementTypeDefaults).toBe(0);
+    expect(report.dataCompleteness.unmappedJobFamilies).toEqual([]);
+    expect(report.succession.configured).toBe(true);
+    expect(data.allEmployeesFlat.length).toBeGreaterThanOrEqual(80);
+    // 汇报关系全部来自模板显式数据；载入不改写、不推断。
+    expect(data.allEmployeesFlat.filter((e) => !e.reportsToEmployeeId)).toHaveLength(1);
     expect(data.allEmployeesFlat.map((e) => e.reportsToEmployeeId)).toEqual(template.employees.map((e) => e.reportsToEmployeeId));
+    expect(new Set(data.allEmployeesFlat.map((e) => e.name)).size).toBe(data.allEmployeesFlat.length);
+    expect(template.description).toContain('预置问题');
     expect(JSON.stringify(template)).toBe(source);
-    expect(deriveManagementLoads(data.departments).unresolved).toBe(0);
     const next = loadIndustryTemplate(template);
     data.allEmployeesFlat[0].name = '修改';
     expect(next.allEmployeesFlat[0].name).not.toBe('修改');
   });
+
+  it('各模板的预置问题能被具体定位', () => {
+    const report = (id: string) => {
+      const data = loadIndustryTemplate(INDUSTRY_TEMPLATES.find((t) => t.id === id)!);
+      return { data, report: computeHealthReport(data.departments, DEFAULT_LEVELS, undefined, DEFAULT_HEALTH_THRESHOLDS) };
+    };
+    const mfg = report('manufacturing').report;
+    expect(mfg.reportingChains.max).toBe(6);
+    expect(mfg.reportingChains.p90).toBe(4);
+    expect(mfg.l2.find((m) => m.key === 'depth')?.verdict).toContain('孤立深链');
+    const operational = mfg.l2.find((m) => m.key === 'span')!.functionalSpans!.types.find((t) => t.type === 'operational')!;
+    expect(operational.count).toBeGreaterThanOrEqual(3);
+    expect(operational.median).toBeGreaterThanOrEqual(15);
+    expect(operational.median).toBeLessThanOrEqual(25);
+    const retail = report('retail').report;
+    expect(retail.l2.find((m) => m.key === 'span')!.functionalSpans!.types.find((t) => t.type === 'knowledge')!.overloaded).toEqual([expect.objectContaining({ directReports: 16 })]);
+    expect(retail.l2.find((m) => m.key === 'span')!.functionalSpans!.types.find((t) => t.type === 'operational')!.status).toBe('healthy');
+    const hospital = report('hospital').report;
+    expect(hospital.reportingChains.inversions.filter((i) => i.kind === 'inversion')).toEqual([expect.objectContaining({ managerLevel: 'L3.2', employeeLevel: 'E4.1' })]);
+    const internet = report('internet').report;
+    expect(internet.l2.find((m) => m.key === 'span')!.functionalSpans!.types.find((t) => t.type === 'knowledge')!.median).toBe(2);
+    const education = report('education').report;
+    expect(education.succession.vacantUncovered).toEqual([expect.objectContaining({ departmentName: '东校区' })]);
+    expect(education.succession.risks.map((r) => r.departmentName)).toEqual(['东校区']);
+  });
 });
 
-it('行业结构显式保留制造/医院深层部门、零售门店网络及岗位族差异', () => {
+it('行业结构：制造/零售深层部门、零售门店网络、医院病区与操作型岗位族', () => {
   const demos = new Map(INDUSTRY_TEMPLATES.map((t) => [t.id, loadIndustryTemplate(t)]));
-  for (const id of ['manufacturing', 'hospital']) {
-    expect(Math.max(...flattenDepartments(demos.get(id)!.departments).map((d) => d.level))).toBe(4);
-  }
-  expect(flattenDepartments(demos.get('retail')!.departments).filter((d) => d.name.includes('示例门店'))).toHaveLength(4);
-  expect(flattenDepartments(demos.get('manufacturing')!.departments).flatMap((d) => d.positions ?? []).some((p) => p.jobFamily === '产线')).toBe(true);
-  expect(new Set([...demos.values()].map((d) => d.allEmployeesFlat.length)).size).toBeGreaterThan(2);
+  const maxLevel = (id: string) => Math.max(...flattenDepartments(demos.get(id)!.departments).map((d) => d.level));
+  expect(maxLevel('manufacturing')).toBe(5);
+  expect(maxLevel('retail')).toBe(4);
+  expect(maxLevel('hospital')).toBe(4);
+  expect(maxLevel('internet')).toBe(2);
+  expect(flattenDepartments(demos.get('retail')!.departments).filter((d) => d.name.endsWith('店'))).toHaveLength(26);
+  expect(flattenDepartments(demos.get('hospital')!.departments).filter((d) => d.name.endsWith('病区'))).toHaveLength(4);
+  const families = (id: string) => new Set(flattenDepartments(demos.get(id)!.departments).flatMap((d) => d.positions ?? []).map((p) => p.jobFamily));
+  expect(families('manufacturing').has('生产')).toBe(true);
+  expect(families('retail').has('门店')).toBe(true);
+  expect(families('hospital').has('护理')).toBe(true);
+  expect(new Set([...demos.values()].map((d) => d.allEmployeesFlat.length)).size).toBe(5);
 });

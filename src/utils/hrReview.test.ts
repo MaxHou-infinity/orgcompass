@@ -136,11 +136,12 @@ describe('HR 评审：成本与演示数据', () => {
   it.each(INDUSTRY_TEMPLATES.map((t) => [t.id, t] as const))('%s 模板完整套岗、配编制且重复载入互不污染', (_id, template) => {
     const data = loadIndustryTemplate(template);
     expect(data.allEmployeesFlat.length).toBeGreaterThanOrEqual(20);
-    expect(data.allEmployeesFlat.length).toBeLessThanOrEqual(65);
+    expect(data.allEmployeesFlat.length).toBeLessThanOrEqual(400);
     expect(data.allEmployeesFlat.every((e) => e.positionId)).toBe(true);
     expect(template.employees.every((e) => !e.positionId)).toBe(true);
     const report = computeHealthReport(data.departments, [], undefined, DEFAULT_HEALTH_THRESHOLDS);
-    expect(report.dataCompleteness.availableMetrics).toBe(5);
+    // 未传职级配置时职级倒挂无法核对（null），其余 6 项均有数值。
+    expect(report.dataCompleteness.availableMetrics).toBe(6);
     expect(report.l2.find((m) => m.key === 'vacancy')?.value).not.toBeNull();
     const project = createProject('演示');
     Object.assign(project.scenarios[0], { departments: data.departments, allEmployeesFlat: data.allEmployeesFlat });
