@@ -1,4 +1,3 @@
-import type { BusinessContext } from '../utils/businessContext';
 import type { HealthThresholds } from '../utils/healthThresholds';
 import { useDialogFocus } from '../utils/useDialogFocus';
 import { exportCanvas } from '../utils/exportCanvas';
@@ -25,7 +24,6 @@ import { STATUS_STYLE, fmt, fmtCost } from '../utils/statusUI';
 import { APP_VERSION } from '../version';
 
 interface ManagementReportProps {
-  businessContext?: BusinessContext;
   healthThresholds?: HealthThresholds;
   open: boolean;
   onClose: () => void;
@@ -208,7 +206,7 @@ async function buildDiffExcelBytes(
 }
 
 export function ManagementReport({
-  businessContext = 'normal', healthThresholds,
+  healthThresholds,
   open,
   onClose,
   baseline,
@@ -225,7 +223,7 @@ export function ManagementReport({
 
   const fallbackThresholds = useMemo(() => open ? getHealthThresholds() : DEFAULT_HEALTH_THRESHOLDS, [open]);
   const thresholds = healthThresholds ?? fallbackThresholds;
-  const diff: ScenarioDiffResult = useMemo(() => computeScenarioDiff(baseline, target, thresholds, businessContext), [baseline, target, thresholds, businessContext]);
+  const diff: ScenarioDiffResult = useMemo(() => computeScenarioDiff(baseline, target, thresholds), [baseline, target, thresholds]);
 
   // —— v2.3 M4：岗位缺口清单（与界面岗位明细表使用同一份 deriveBoard 派生，Excel 同源）——
   // v2.3.1：去掉 `as never`，用带类型的空 Map（类型本就匹配 BoardInput.competencySummaries）。

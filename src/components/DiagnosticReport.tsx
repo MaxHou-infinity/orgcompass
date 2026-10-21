@@ -1,4 +1,3 @@
-import { BUSINESS_CONTEXTS, type BusinessContext } from '../utils/businessContext';
 import { SuccessionPanel } from './SuccessionPanel';
 import { ReportingChainsPanel } from './ReportingChainsPanel';
 import { FunctionalSpanTable } from './FunctionalManagement';
@@ -20,12 +19,12 @@ import {
   PositionSummary,
   getHealthThresholds,
   DEFAULT_HEALTH_THRESHOLDS,
+  STAGE_PRESETS,
 } from '../utils/analytics';
 import { STATUS_STYLE, fmt, fmtCost, fmtMetric, isMetricUnconfigured } from '../utils/statusUI';
 import { OrganizationCostSummary } from './OrganizationCostSummary';
 
 interface DiagnosticReportProps {
-  businessContext?: BusinessContext;
   healthThresholds?: HealthThresholds;
   onFocusEmployee?: (employeeId: string, deptId: string) => void;
   open: boolean;
@@ -110,7 +109,7 @@ const SEV_STYLE: Record<SuggestionSeverity, string> = {
 };
 
 export function DiagnosticReport({
-  businessContext = 'normal', healthThresholds, onFocusEmployee,
+  healthThresholds, onFocusEmployee,
   open,
   onClose,
   departments,
@@ -123,9 +122,10 @@ export function DiagnosticReport({
   const reportRef = useRef<HTMLDivElement>(null);
   const fallbackThresholds = useMemo(() => open ? getHealthThresholds() : DEFAULT_HEALTH_THRESHOLDS, [open]);
   const thresholds = healthThresholds ?? fallbackThresholds;
+  const stage = thresholds.managementStage ?? 'growth';
   const report = useMemo(
-    () => computeHealthReport(open ? departments : [], levelConfigs, undefined, thresholds, { businessContext }),
-    [open, departments, levelConfigs, thresholds, businessContext],
+    () => computeHealthReport(open ? departments : [], levelConfigs, undefined, thresholds),
+    [open, departments, levelConfigs, thresholds],
   );
 
   const deptNameById = useMemo(() => {
@@ -213,7 +213,7 @@ export function DiagnosticReport({
         {/* 报告头部 */}
         <header className="border-b-2 border-slate-900 pb-4">
           <h1 className="text-2xl font-bold text-slate-900">组织架构诊断报告</h1>
-          <p className="text-sm mt-2">本报告按【{BUSINESS_CONTEXTS[businessContext].label}】场景解读</p>
+          <p className="text-sm mt-2">对照基准：【{STAGE_PRESETS[stage].label}】· 结论与建议为规则生成，仅供参考</p>
           <div className="flex gap-4 mt-2 text-xs text-slate-500">
             <span>项目：{projectName}</span>
             <span>场景：{scenarioName}</span>

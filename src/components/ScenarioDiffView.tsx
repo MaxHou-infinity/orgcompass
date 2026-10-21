@@ -1,4 +1,3 @@
-import type { BusinessContext } from '../utils/businessContext';
 import type { HealthThresholds } from '../utils/healthThresholds';
 import { useDialogFocus } from '../utils/useDialogFocus';
 import { useMemo, useState } from 'react';
@@ -24,7 +23,6 @@ import {
 import { STATUS_STYLE, fmt, fmtCost } from '../utils/statusUI';
 
 interface ScenarioDiffViewProps {
-  businessContext?: BusinessContext;
   healthThresholds?: HealthThresholds;
   open: boolean;
   onClose: () => void;
@@ -310,7 +308,7 @@ function MetricDetail({
 const STATUS_RANK: Record<HealthStatus, number> = { nodata: -1, healthy: 0, warn: 1, danger: 2 };
 
 export function ScenarioDiffView({
-  businessContext = 'normal', healthThresholds,
+  healthThresholds,
   open,
   onClose,
   baseline,
@@ -328,14 +326,14 @@ export function ScenarioDiffView({
   const [openMetric, setOpenMetric] = useState<L2Metric['key'] | null>(null);
 
   const diff: ScenarioDiffResult = useMemo(
-    () => computeScenarioDiff(baseline, target, thresholds, businessContext),
-    [baseline, target, thresholds, businessContext],
+    () => computeScenarioDiff(baseline, target, thresholds),
+    [baseline, target, thresholds],
   );
   const bTotals = useMemo(() => computeScenarioTotals(baseline), [baseline]);
   const tTotals = useMemo(() => computeScenarioTotals(target), [target]);
   // 明细侧 breakdown（差异计算已用同一口径；此处仅用于「口径与明细」展开）
-  const bL2 = useMemo(() => computeHealthReport(baseline.departments, baseline.levelConfigs, undefined, thresholds, { businessContext }).l2, [baseline, thresholds, businessContext]);
-  const tL2 = useMemo(() => computeHealthReport(target.departments, target.levelConfigs, undefined, thresholds, { businessContext }).l2, [target, thresholds, businessContext]);
+  const bL2 = useMemo(() => computeHealthReport(baseline.departments, baseline.levelConfigs, undefined, thresholds).l2, [baseline, thresholds]);
+  const tL2 = useMemo(() => computeHealthReport(target.departments, target.levelConfigs, undefined, thresholds).l2, [target, thresholds]);
 
   const dialogRef = useDialogFocus(open, onClose);
 

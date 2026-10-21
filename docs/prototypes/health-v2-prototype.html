@@ -1,0 +1,693 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>组织健康度 v2.6 原型 · OrgCompass</title>
+<style>
+  :root{
+    --ink:#0f172a; --ink2:#334155; --muted:#64748b; --faint:#94a3b8;
+    --line:#e2e8f0; --line-soft:#f1f5f9;
+    --accent:#6366f1; --accent2:#8b5cf6; --accent-soft:#eef2ff;
+    --ok:#059669; --ok-soft:#ecfdf5;
+    --warn:#d97706; --warn-soft:#fffbeb;
+    --danger:#dc2626; --danger-soft:#fef2f2;
+    --card:rgba(255,255,255,.82);
+    --shadow:0 1px 2px rgba(15,23,42,.04),0 8px 24px -12px rgba(15,23,42,.10);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro SC","PingFang SC","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    color:var(--ink); background:
+      radial-gradient(1100px 500px at 12% -8%, #eef2ff 0%, transparent 60%),
+      radial-gradient(900px 460px at 92% 4%, #f5f3ff 0%, transparent 55%),
+      #f8fafc;
+    -webkit-font-smoothing:antialiased; font-size:14px; line-height:1.5;
+  }
+  .wrap{max-width:1240px;margin:0 auto;padding:0 28px}
+
+  /* 顶栏（示意，原型省略左侧栏） */
+  .topbar{height:52px;display:flex;align-items:center;gap:18px;padding:0 22px;
+    background:rgba(255,255,255,.72);backdrop-filter:blur(14px);border-bottom:1px solid var(--line);
+    position:sticky;top:0;z-index:30}
+  .logo{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent2));
+    display:grid;place-items:center;color:#fff;font-size:12px;font-weight:700}
+  .brand{display:flex;align-items:center;gap:9px;font-weight:650;font-size:13.5px}
+  .saved{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--muted)}
+  .dot-saved{width:6px;height:6px;border-radius:50%;background:#10b981}
+  .crumb{margin-left:8px;font-size:12.5px;color:var(--ink2);background:var(--line-soft);
+    border:1px solid var(--line);border-radius:9px;padding:5px 10px}
+  .top-right{margin-left:auto;display:flex;align-items:center;gap:16px;font-size:12.5px;color:var(--muted)}
+  .top-right .on{color:var(--accent);font-weight:600}
+
+  /* 页头 */
+  .page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding:26px 0 18px}
+  .back{font-size:12px;color:var(--muted);margin-bottom:8px;display:inline-flex;gap:5px;align-items:center}
+  .page-head h1{margin:0;font-size:21px;letter-spacing:-.2px;display:flex;align-items:center;gap:9px}
+  .page-head h1 svg{color:var(--accent)}
+  .sub{margin:7px 0 0;font-size:12.5px;color:var(--muted)}
+  .sub b{color:var(--ink2);font-weight:600}
+  .actions{display:flex;gap:9px;align-items:center;padding-top:2px}
+  .btn{font:inherit;font-size:12.5px;font-weight:600;border-radius:10px;padding:8px 14px;cursor:pointer;
+    border:1px solid var(--line);background:#fff;color:var(--ink2);transition:.15s}
+  .btn:hover{border-color:#c7d2fe;color:var(--ink)}
+  .btn.primary{color:#fff;border:none;background:linear-gradient(135deg,var(--accent),var(--accent2));
+    box-shadow:0 6px 16px -6px rgba(99,102,241,.55)}
+  .btn.primary:hover{filter:brightness(1.04)}
+
+  /* 卡片 */
+  .card{background:var(--card);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.7);
+    border-radius:16px;box-shadow:var(--shadow);margin-bottom:16px}
+  .card-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 20px 0}
+  .card-head h2{margin:0;font-size:14px;letter-spacing:.2px}
+  .card-head .hint{font-size:11.5px;color:var(--faint)}
+  .card-body{padding:14px 20px 18px}
+  .link{font:inherit;font-size:11.5px;color:var(--accent);background:none;border:none;padding:0;cursor:pointer;font-weight:600}
+
+  /* ① 事实带 */
+  .kpi-band{display:grid;grid-template-columns:repeat(5,1fr);padding:0;overflow:hidden}
+  .kpi{padding:18px 20px;border-right:1px solid rgba(226,232,240,.75);position:relative}
+  .kpi:last-child{border-right:0}
+  .kpi .label{font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:5px}
+  .kpi .val{font-size:27px;font-weight:700;letter-spacing:-.6px;margin-top:4px;font-variant-numeric:tabular-nums}
+  .kpi .val .unit{font-size:13px;font-weight:600;color:var(--muted);margin-left:2px;letter-spacing:0}
+  .kpi .note{font-size:11.5px;color:var(--faint);margin-top:2px}
+  .kpi .note.ok{color:var(--ok)}
+  .kpi .note.warn{color:var(--warn)}
+  .kpi.hot{background:linear-gradient(180deg,rgba(255,251,235,.9),rgba(255,255,255,0))}
+  .kpi .flag{position:absolute;top:16px;right:16px;font-size:10.5px;font-weight:700;color:var(--warn);
+    background:var(--warn-soft);border-radius:999px;padding:2px 7px}
+
+  /* 表格 */
+  table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+  th{font-size:11px;font-weight:600;color:var(--muted);text-align:left;padding:9px 10px;
+    border-bottom:1px solid var(--line);letter-spacing:.3px;white-space:nowrap}
+  th.r,td.r{text-align:right}
+  td{padding:9px 10px;border-bottom:1px solid var(--line-soft);font-size:13px;color:var(--ink2)}
+  tbody tr:last-child td{border-bottom:0}
+  tbody tr:hover td{background:rgba(238,242,255,.42)}
+  tfoot td{border-top:1px solid var(--line);border-bottom:0;font-weight:650;color:var(--ink);padding-top:11px}
+
+  .dept{display:flex;align-items:center;gap:6px;color:var(--ink)}
+  .dept .caret{width:14px;color:var(--faint);font-size:10px;transition:.15s}
+  .dept.root{font-weight:650}
+  .child td:first-child{padding-left:34px}
+  .num{width:52px;padding:3px 6px;text-align:right;font:inherit;font-size:13px;font-variant-numeric:tabular-nums;
+    color:var(--ink);border:1px dashed #dbe3ef;border-radius:7px;background:rgba(248,250,252,.9);transition:.15s}
+  .num:hover{border-color:#a5b4fc;background:#fff}
+  .num:focus{outline:none;border-color:var(--accent);background:#fff;box-shadow:0 0 0 3px rgba(99,102,241,.12)}
+  .pos-row{display:none}
+  .pos-row td{background:rgba(248,250,252,.55);font-size:12px;color:var(--muted)}
+  .pos-row .num{font-size:12px;padding:2px 5px;width:46px}
+  .caret.click{cursor:pointer;padding:0 2px}
+  .caret.click:hover{color:var(--accent)}
+  .tag{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600}
+  .tag i{width:6px;height:6px;border-radius:50%;display:inline-block}
+  .tag.ok{color:var(--ok)} .tag.ok i{background:#10b981}
+  .tag.warn{color:var(--warn)} .tag.warn i{background:#f59e0b}
+  .tag.danger{color:var(--danger)} .tag.danger i{background:#ef4444}
+  .tag.gray{color:var(--faint)} .tag.gray i{background:#cbd5e1}
+
+  /* ③ 指标表 */
+  .basis-pill{font-size:11.5px;color:var(--ink2);background:var(--accent-soft);border:1px solid #e0e7ff;
+    border-radius:999px;padding:4px 10px;display:inline-flex;gap:6px;align-items:center}
+  .basis-pill b{color:var(--accent)}
+  .m-row{cursor:pointer}
+  .m-row td:first-child{color:var(--ink);font-weight:550;display:flex;align-items:center;gap:7px}
+  .m-row .q{width:15px;height:15px;border-radius:50%;background:var(--line);color:var(--muted);
+    font-size:10px;font-weight:700;display:grid;place-items:center;flex:none}
+  .m-row.hot td:first-child{box-shadow:inset 3px 0 0 #f59e0b}
+  .m-val{font-size:15px;font-weight:700;color:var(--ink)}
+  .m-val small{font-size:11.5px;font-weight:600;color:var(--muted);margin-left:1px}
+  .dev{font-size:11.5px;font-weight:600}
+  .dev.up{color:var(--warn)} .dev.down{color:var(--warn)} .dev.flat{color:var(--ok)}
+  .detail{display:none}
+  .detail.open{display:table-row}
+  .detail td{background:rgba(248,250,252,.85);padding:12px 14px 14px 34px;font-size:12px;color:var(--ink2);line-height:1.65}
+  .detail .k{color:var(--muted)}
+  .mini{width:100%;border-collapse:collapse;margin-top:6px}
+  .mini th{font-size:10.5px;padding:5px 8px;border-bottom:1px solid var(--line)}
+  .mini td{font-size:11.5px;padding:5px 8px;border-bottom:1px solid rgba(241,245,249,.9)}
+  .legend{display:flex;gap:14px;align-items:center;font-size:11px;color:var(--faint);padding:10px 20px 0}
+
+  /* ④ 折叠明细 */
+  details{border-top:1px solid var(--line-soft)}
+  details:first-of-type{border-top:0}
+  summary{list-style:none;cursor:pointer;padding:12px 20px;display:flex;align-items:center;gap:10px;
+    font-size:12.5px;color:var(--ink2);user-select:none}
+  summary::-webkit-details-marker{display:none}
+  summary:hover{background:rgba(248,250,252,.8)}
+  summary .caret{font-size:10px;color:var(--faint);transition:.15s}
+  details[open] summary .caret{transform:rotate(90deg)}
+  summary .count{margin-left:auto;font-size:11.5px;color:var(--muted)}
+  .detail-body{padding:2px 20px 14px 44px;font-size:12px;color:var(--muted);line-height:1.75}
+  .detail-body code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;
+    background:var(--line-soft);padding:1px 5px;border-radius:5px;color:var(--ink2)}
+
+  /* AI 位 */
+  .ai-slot{border:1px dashed #c7d2fe;border-radius:16px;background:linear-gradient(135deg,rgba(238,242,255,.95),rgba(245,243,255,.75));
+    padding:16px 20px;display:flex;align-items:center;gap:14px;margin-bottom:16px}
+  .ai-slot .ico{width:34px;height:34px;border-radius:10px;background:#fff;display:grid;place-items:center;
+    box-shadow:0 2px 8px rgba(99,102,241,.15);color:var(--accent);font-size:15px}
+  .ai-slot h3{margin:0;font-size:13px;display:flex;align-items:center;gap:7px}
+  .ai-slot .soon{font-size:10px;font-weight:700;color:var(--accent);background:#fff;border-radius:999px;padding:2px 7px}
+  .ai-slot p{margin:3px 0 0;font-size:11.5px;color:var(--muted)}
+  .ai-slot .btn{margin-left:auto}
+
+  /* 基准条 */
+  .basis-bar{display:flex;align-items:center;gap:12px;font-size:11.5px;color:var(--muted);
+    border-top:1px solid var(--line);padding:14px 2px 34px;margin-top:4px}
+  .basis-bar b{color:var(--ink2)}
+  .basis-bar .btn{margin-left:auto;padding:6px 12px;font-size:11.5px}
+
+  /* 弹窗 */
+  .backdrop{position:fixed;inset:0;background:rgba(15,23,42,.28);backdrop-filter:blur(3px);
+    display:grid;place-items:center;z-index:50;padding:24px}
+  .backdrop[hidden]{display:none}
+  .modal{background:#fff;border-radius:18px;width:min(760px,100%);box-shadow:0 24px 60px -20px rgba(15,23,42,.4);
+    overflow:hidden;animation:pop .16s ease-out}
+  @keyframes pop{from{opacity:0;transform:translateY(6px) scale(.99)}to{opacity:1;transform:none}}
+  .modal-head{padding:20px 22px 4px}
+  .modal-head h3{margin:0;font-size:15px}
+  .modal-head p{margin:6px 0 0;font-size:12px;color:var(--muted)}
+  .options{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:16px 22px 6px}
+  .opt{border:1.5px solid var(--line);border-radius:14px;padding:14px;cursor:pointer;transition:.15s;position:relative}
+  .opt:hover{border-color:#c7d2fe;background:#fafaff}
+  .opt.active{border-color:var(--accent);background:linear-gradient(180deg,#f5f3ff,#fff);
+    box-shadow:0 0 0 3px rgba(99,102,241,.10)}
+  .opt h4{margin:0;font-size:13.5px;display:flex;align-items:center;gap:6px}
+  .opt .scale{font-size:11px;color:var(--faint);margin-top:2px}
+  .opt ul{margin:9px 0 0;padding:0;list-style:none;font-size:11.5px;color:var(--ink2);line-height:1.9}
+  .opt li span{color:var(--muted)}
+  .opt .fit{margin-top:9px;padding-top:9px;border-top:1px dashed var(--line);font-size:11px;color:var(--muted);line-height:1.6}
+  .modal-foot{display:flex;align-items:center;gap:10px;padding:16px 22px 20px}
+  .modal-foot .note{font-size:11px;color:var(--faint);line-height:1.5}
+  .modal-foot .btn.primary{margin-left:auto}
+
+  .toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,14px);background:var(--ink);color:#fff;
+    font-size:12px;padding:9px 16px;border-radius:10px;opacity:0;transition:.22s;pointer-events:none;z-index:60}
+  .toast.show{opacity:1;transform:translate(-50%,0)}
+
+  @media (max-width:1100px){
+    .kpi-band{grid-template-columns:repeat(3,1fr)}
+    .kpi:nth-child(3){border-right:0}
+    .options{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand"><div class="logo">罗</div>组织罗盘 <span style="font-size:10px;color:#94a3b8;font-weight:500">OrgCompass</span></div>
+  <div class="saved"><span class="dot-saved"></span>已保存 17:48</div>
+  <div class="crumb">场景：互联网科技</div>
+  <div class="top-right">
+    <span>岗位与编制</span><span>胜任度</span><span>搜索</span>
+    <span class="on">健康度</span><span>场景对比</span><span>100%</span>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="page-head">
+    <div>
+      <div class="back">← 返回画布</div>
+      <h1>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        组织健康度
+      </h1>
+      <p class="sub">数据快照 · 对照基准 <b>成长期</b> · 共 7 项指标可计算 · 更新于 17:48</p>
+    </div>
+    <div class="actions">
+      <button class="btn">场景对比</button>
+      <button class="btn primary">导出诊断报告</button>
+    </div>
+  </div>
+
+  <!-- ① 事实带 -->
+  <section class="card kpi-band" aria-label="关键事实">
+    <div class="kpi">
+      <div class="label">实际人数</div>
+      <div class="val">82</div>
+      <div class="note">含虚拟兼岗 0 人</div>
+    </div>
+    <div class="kpi">
+      <div class="label">编制</div>
+      <div class="val">82</div>
+      <div class="note">7 个部门已配置</div>
+    </div>
+    <div class="kpi">
+      <div class="label">缺口</div>
+      <div class="val">0</div>
+      <div class="note ok">满编</div>
+    </div>
+    <div class="kpi">
+      <div class="label">月成本</div>
+      <div class="val">216.1<span class="unit">w</span></div>
+      <div class="note">成本缺失 0 人</div>
+    </div>
+    <div class="kpi">
+      <div class="label">可计算指标</div>
+      <div class="val">7<span class="unit">/7</span></div>
+      <div class="note"><a class="link" href="#quality">查看数据完整度</a></div>
+    </div>
+  </section>
+
+  <!-- ② 编制 vs 实际 vs 缺口 -->
+  <section class="card" id="headcount">
+    <div class="card-head">
+      <h2>编制 vs 实际 vs 缺口</h2>
+      <div class="hint">人数与成本含下级部门 · 缺口不含在途 offer、待入职与待离职 · 编制可直接修改</div>
+    </div>
+    <div class="card-body" style="padding-top:10px">
+      <table>
+        <thead>
+          <tr>
+            <th>部门</th>
+            <th class="r">编制</th>
+            <th class="r">实际</th>
+            <th class="r">缺口</th>
+            <th class="r">平均成本</th>
+            <th class="r">实际成本</th>
+            <th class="r">缺口成本</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="root-row" data-actual="82" data-avg="2.6">
+            <td><span class="dept root"><span class="caret click" data-toggle="depts">▾</span>云栖科技</span></td>
+            <td class="r">82</td>
+            <td class="r">82</td>
+            <td class="r" data-gap><span class="tag ok"><i></i>满编</span></td>
+            <td class="r">2.6w</td>
+            <td class="r">216.1w</td>
+            <td class="r" data-gapcost>0w</td>
+          </tr>
+          <tr class="child dept-row" data-actual="11" data-avg="2.7">
+            <td><span class="dept"><span class="caret" style="visibility:hidden">▸</span>产品部</span></td>
+            <td class="r"><input class="num" type="number" value="11" data-hc aria-label="产品部编制"></td>
+            <td class="r">11</td>
+            <td class="r" data-gap><span class="tag ok"><i></i>满编</span></td>
+            <td class="r">2.7w</td>
+            <td class="r">29.5w</td>
+            <td class="r" data-gapcost>0w</td>
+          </tr>
+          <tr class="child dept-row" data-actual="10" data-avg="2.4">
+            <td><span class="dept"><span class="caret" style="visibility:hidden">▸</span>设计部</span></td>
+            <td class="r"><input class="num" type="number" value="10" data-hc aria-label="设计部编制"></td>
+            <td class="r">10</td>
+            <td class="r" data-gap><span class="tag ok"><i></i>满编</span></td>
+            <td class="r">2.4w</td>
+            <td class="r">23.5w</td>
+            <td class="r" data-gapcost>0w</td>
+          </tr>
+          <tr class="child dept-row" data-actual="11" data-avg="2.3">
+            <td><span class="dept"><span class="caret" style="visibility:hidden">▸</span>市场部</span></td>
+            <td class="r"><input class="num" type="number" value="11" data-hc aria-label="市场部编制"></td>
+            <td class="r">11</td>
+            <td class="r" data-gap><span class="tag ok"><i></i>满编</span></td>
+            <td class="r">2.3w</td>
+            <td class="r">25.5w</td>
+            <td class="r" data-gapcost>0w</td>
+          </tr>
+          <tr class="child dept-row" data-actual="27" data-avg="2.7" data-dept="rd">
+            <td><span class="dept"><span class="caret click" data-toggle="rd">▸</span>研发中心</span></td>
+            <td class="r"><input class="num" type="number" value="27" data-hc aria-label="研发中心编制"></td>
+            <td class="r">27</td>
+            <td class="r" data-gap><span class="tag ok"><i></i>满编</span></td>
+            <td class="r">2.7w</td>
+            <td class="r">73.6w</td>
+            <td class="r" data-gapcost>0w</td>
+          </tr>
+          <tr class="pos-row" data-pos="rd" data-actual="12" data-avg="2.8">
+            <td><span class="dept" style="padding-left:18px;font-size:12px">前端工程师</span></td>
+            <td class="r"><input class="num" type="number" value="12" data-hc></td>
+            <td class="r">12</td>
+            <td class="r" data-gap><span class="tag ok"><i></i>满编</span></td>
+            <td class="r">2.8w</td>
+            <td class="r">—</td>
+            <td class="r" data-gapcost>0w</td>
+          </tr>
+          <tr class="pos-row" data-pos="rd" data-actual="9" data-avg="2.6">
+            <td><span class="dept" style="padding-left:18px;font-size:12px">后端工程师</span></td>
+            <td class="r"><input class="num" type="number" value="9" data-hc></td>
+            <td class="r">9</td>
+            <td class="r" data-gap><span class="tag ok"><i></i>满编</span></td>
+            <td class="r">2.6w</td>
+            <td class="r">—</td>
+            <td class="r" data-gapcost>0w</td>
+          </tr>
+          <tr class="pos-row" data-pos="rd" data-actual="6" data-avg="2.7">
+            <td><span class="dept" style="padding-left:18px;font-size:12px">测试工程师</span></td>
+            <td class="r"><input class="num" type="number" value="6" data-hc></td>
+            <td class="r">6</td>
+            <td class="r" data-gap><span class="tag ok"><i></i>满编</span></td>
+            <td class="r">2.7w</td>
+            <td class="r">—</td>
+            <td class="r" data-gapcost>0w</td>
+          </tr>
+          <tr class="child dept-row" data-actual="11" data-avg="2.3">
+            <td><span class="dept"><span class="caret" style="visibility:hidden">▸</span>运营部</span></td>
+            <td class="r"><input class="num" type="number" value="11" data-hc aria-label="运营部编制"></td>
+            <td class="r">11</td>
+            <td class="r" data-gap><span class="tag ok"><i></i>满编</span></td>
+            <td class="r">2.3w</td>
+            <td class="r">25.5w</td>
+            <td class="r" data-gapcost>0w</td>
+          </tr>
+          <tr class="child dept-row" data-actual="10" data-avg="2.4">
+            <td><span class="dept"><span class="caret" style="visibility:hidden">▸</span>职能部</span></td>
+            <td class="r"><input class="num" type="number" value="10" data-hc aria-label="职能部编制"></td>
+            <td class="r">10</td>
+            <td class="r" data-gap><span class="tag ok"><i></i>满编</span></td>
+            <td class="r">2.4w</td>
+            <td class="r">23.5w</td>
+            <td class="r" data-gapcost>0w</td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="font-size:11px;color:var(--faint);margin:10px 0 0">
+        原型说明：直接改「编制」数字可看到该行缺口与缺口成本联动；点「研发中心」左侧箭头可展开岗位级编制。根部门为汇总值，只读。
+      </p>
+    </div>
+  </section>
+
+  <!-- ③ 结构指标 -->
+  <section class="card" id="metrics">
+    <div class="card-head">
+      <h2>结构指标</h2>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span class="basis-pill">对照基准 <b id="basisName">成长期</b></span>
+        <button class="link" onclick="openBasis()">调整基准</button>
+      </div>
+    </div>
+    <div class="legend">
+      <span class="tag danger"><i></i>预警</span>
+      <span class="tag warn"><i></i>关注</span>
+      <span class="tag ok"><i></i>健康</span>
+      <span class="tag gray"><i></i>未配置</span>
+      <span style="margin-left:auto">灯号仅表示与当前基准的偏离，不构成建议</span>
+    </div>
+    <div class="card-body" style="padding-top:8px">
+      <table>
+        <thead>
+          <tr>
+            <th>指标</th>
+            <th class="r">数值</th>
+            <th>基准区间</th>
+            <th class="r">偏离</th>
+            <th class="r">判读</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="m-row hot" data-metric="span" onclick="toggleDetail(this)">
+            <td>管理幅度 <span class="q">?</span></td>
+            <td class="r"><span class="m-val">2<small>人</small></span></td>
+            <td><span data-basis="span">5–10 人（知识型）</span></td>
+            <td class="r"><span class="dev down">−3 人</span></td>
+            <td class="r"><span class="tag warn"><i></i>关注</span></td>
+          </tr>
+          <tr class="detail" data-detail="span">
+            <td colspan="5">
+              <div><span class="k">按职能分别评估，每类至少 3 名管理者；总灯号取可评价类型的最差值。</span></div>
+              <table class="mini">
+                <tr><th>类型</th><th class="r">管理者</th><th class="r">中位幅度</th><th class="r">健康区间</th><th class="r">健康占比</th><th class="r">状态</th></tr>
+                <tr><td>操作型</td><td class="r">0</td><td class="r">—</td><td class="r">10–25</td><td class="r">—</td><td class="r" style="color:#94a3b8">暂不判定</td></tr>
+                <tr><td>知识型</td><td class="r">15</td><td class="r">2</td><td class="r">5–10</td><td class="r">47%</td><td class="r" style="color:#d97706">关注</td></tr>
+                <tr><td>专家型</td><td class="r">0</td><td class="r">—</td><td class="r">2–6</td><td class="r">—</td><td class="r" style="color:#94a3b8">暂不判定</td></tr>
+              </table>
+              <div style="margin-top:8px">最宽：<b>产品部 10 人</b> · 极值 2–10 人 · 15 名管理者（兼任已合并）</div>
+            </td>
+          </tr>
+
+          <tr class="m-row hot" data-metric="managerRatio" onclick="toggleDetail(this)">
+            <td>管理者比 <span class="q">?</span></td>
+            <td class="r"><span class="m-val">18.3<small>%</small></span></td>
+            <td><span data-basis="managerRatio">≤15%</span></td>
+            <td class="r"><span class="dev up">+3.3pct</span></td>
+            <td class="r"><span class="tag warn"><i></i>关注</span></td>
+          </tr>
+          <tr class="detail" data-detail="managerRatio">
+            <td colspan="5">
+              <div>内部 15 ÷ 82 人 = 18.3% · IC:Mgr = 4.5:1</div>
+              <div class="k">正职负责人 7 人 · 明确汇报关系中的带人者 15 人（两类可重叠）· 不含虚拟兼岗</div>
+            </td>
+          </tr>
+
+          <tr class="m-row" data-metric="depth" onclick="toggleDetail(this)">
+            <td>汇报链长度 <span class="q">?</span></td>
+            <td class="r"><span class="m-val">3<small>层</small></span></td>
+            <td><span data-basis="depth">≤4 层</span></td>
+            <td class="r"><span class="dev flat">区间内</span></td>
+            <td class="r"><span class="tag ok"><i></i>健康</span></td>
+          </tr>
+          <tr class="detail" data-detail="depth">
+            <td colspan="5"><span class="k">人员汇报链</span> P50=2 · P90=3 · 最长 3 位管理者；部门层级 P90=2（仅参考）</td>
+          </tr>
+
+          <tr class="m-row" data-metric="vacancy" onclick="toggleDetail(this)">
+            <td>空岗率 <span class="q">?</span></td>
+            <td class="r"><span class="m-val">0<small>%</small></span></td>
+            <td><span data-basis="vacancy">≤10%</span></td>
+            <td class="r"><span class="dev flat">区间内</span></td>
+            <td class="r"><span class="tag ok"><i></i>健康</span></td>
+          </tr>
+          <tr class="detail" data-detail="vacancy">
+            <td colspan="5"><span class="k">有效编制 82 · 实际 82 · 缺口 0；向下累加，不从上级继承编制名额。空岗可能是战略储备，缺口不等于已批准招聘需求。</span></td>
+          </tr>
+
+          <tr class="m-row" data-metric="succession" onclick="toggleDetail(this)">
+            <td>关键岗位继任覆盖率 <span class="q">?</span></td>
+            <td class="r"><span class="m-val">100<small>%</small></span></td>
+            <td><span data-basis="succession">≥70%</span></td>
+            <td class="r"><span class="dev flat">区间内</span></td>
+            <td class="r"><span class="tag ok"><i></i>健康</span></td>
+          </tr>
+          <tr class="detail" data-detail="succession">
+            <td colspan="5"><span class="k">7/7 个关键岗位至少 1 名近期可接继任人；0 个未配置；0 条无效候选（不计数）。</span></td>
+          </tr>
+
+          <tr class="m-row" data-metric="pipeline" onclick="toggleDetail(this)">
+            <td>管理者梯队 <span class="q">?</span></td>
+            <td class="r"><span class="m-val">0.88<small>人/岗</small></span></td>
+            <td><span data-basis="pipeline">≥0.8 人/岗</span></td>
+            <td class="r"><span class="dev flat">区间内</span></td>
+            <td class="r"><span class="tag ok"><i></i>健康</span></td>
+          </tr>
+          <tr class="detail" data-detail="pipeline">
+            <td colspan="5"><span class="k">8 个管理岗共有 7 名近期可接后备（按真人去重）· 参考指标，不参与整体判读。</span></td>
+          </tr>
+
+          <tr class="m-row" data-metric="inversion" onclick="toggleDetail(this)">
+            <td>职级倒挂 <span class="q">?</span></td>
+            <td class="r"><span class="m-val">0<small>对</small></span></td>
+            <td><span data-basis="inversion">0 对</span></td>
+            <td class="r"><span class="dev flat">区间内</span></td>
+            <td class="r"><span class="tag ok"><i></i>健康</span></td>
+          </tr>
+          <tr class="detail" data-detail="inversion">
+            <td colspan="5"><span class="k">已核对 81 对上下级，按可比职级值比较；平级只提示、不计入总评；至少核对 30 对才作组织级判读。</span></td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="font-size:11px;color:var(--faint);margin:10px 0 0">点击任意指标行展开明细与口径；异常项自动置顶。</p>
+    </div>
+  </section>
+
+  <!-- ④ 明细与数据质量 -->
+  <section class="card" id="quality">
+    <div class="card-head">
+      <h2>明细与数据质量</h2>
+      <div class="hint">默认折叠，只显示需要核对的条目数</div>
+    </div>
+    <div style="padding-top:8px">
+      <details>
+        <summary><span class="caret">▶</span>汇报链与职级 <span class="count">5 条待核对 · 最长 3 位管理者</span></summary>
+        <div class="detail-body">
+          职级带过窄，管理层级多于职级层级：李昊然 → 贺宏亮 → 陈俊睿<br>
+          职级带过窄，管理层级多于职级层级：范志强 → 杜子伟 → 陈俊睿<br>
+          职级带过窄，管理层级多于职级层级：迟娇 → 蒋志强 → 陈俊睿<br>
+          <span style="color:#94a3b8">（共 5 条，其余 2 条同类）</span>
+        </div>
+      </details>
+      <details>
+        <summary><span class="caret">▶</span>关键岗位与继任 <span class="count">7/7 已配置 · 0 个单点风险</span></summary>
+        <div class="detail-body">每个关键岗位都至少有 1 名有效继任人；未配置继任的岗位为 0。<br>
+          <span style="color:#94a3b8">继任人按 ready_now / ready_1_2y 计入，现任人、虚拟人不算继任。</span></div>
+      </details>
+      <details>
+        <summary><span class="caret">▶</span>汇报覆盖率 <span class="count">100.0%</span></summary>
+        <div class="detail-body">纳入 82/82 名去重真人；无上级的合法根节点保留，异常关系排除。</div>
+      </details>
+      <details>
+        <summary><span class="caret">▶</span>数据完整度 <span class="count">7/7 指标可计算 · 未判定 0 项</span></summary>
+        <div class="detail-body">
+          已设负责人 7/7 个部门 · 已配置直属编制 7/7 个部门<br>
+          管理类型默认归知识型：0 名下属 · 未映射岗位序列：无<br>
+          完整度表示录入覆盖情况，不代表数据已核实；部门层级不等于人员到 CEO 的汇报链。
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <!-- AI 位 -->
+  <section class="ai-slot">
+    <div class="ico">✦</div>
+    <div>
+      <h3>AI 深度分析 <span class="soon">即将上线</span></h3>
+      <p>补充业务上下文后，由 AI 给出结论、优先级与调整建议 —— 本页只呈现可复算的事实与偏离，不再直接给建议。</p>
+    </div>
+    <button class="btn" style="opacity:.6;cursor:not-allowed">暂不可用</button>
+  </section>
+
+  <footer class="basis-bar">
+    诊断基准：<b id="basisFoot">成长期</b> · 知识型管理幅度 5–10 人 · 汇报链 ≤4 层 · 管理者比 ≤15% · 空岗率 ≤10%
+    <button class="btn" onclick="openBasis()">调整基准</button>
+  </footer>
+</div>
+
+<!-- 诊断基准弹窗 -->
+<div class="backdrop" id="modal" hidden onclick="if(event.target===this)closeBasis()">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="basisTitle">
+    <div class="modal-head">
+      <h3 id="basisTitle">诊断基准</h3>
+      <p>基准只决定灯号的判读区间，不改变组织数据。换基准后，所有指标按新区间重新判读。</p>
+    </div>
+    <div class="options">
+      <div class="opt" data-basis-opt="startup" onclick="pickBasis('startup')">
+        <h4>初创期</h4>
+        <div class="scale">团队 ≤ 50 人</div>
+        <ul>
+          <li>知识型管理幅度 <span>3–12 人</span></li>
+          <li>汇报链 <span>≤3 层</span></li>
+          <li>管理者比 <span>≤20%</span></li>
+          <li>空岗率 <span>≤15%</span></li>
+        </ul>
+        <div class="fit">适合：团队快速搭建、一人多岗、层级尚未固化。</div>
+      </div>
+      <div class="opt active" data-basis-opt="growth" onclick="pickBasis('growth')">
+        <h4>成长期 <span style="font-size:10px;color:#6366f1;background:#eef2ff;border-radius:999px;padding:1px 6px">当前</span></h4>
+        <div class="scale">团队 50–200 人</div>
+        <ul>
+          <li>知识型管理幅度 <span>5–10 人</span></li>
+          <li>汇报链 <span>≤4 层</span></li>
+          <li>管理者比 <span>≤15%</span></li>
+          <li>空岗率 <span>≤10%</span></li>
+        </ul>
+        <div class="fit">适合：正在扩编、开始分层、岗位边界逐渐清晰。</div>
+      </div>
+      <div class="opt" data-basis-opt="mature" onclick="pickBasis('mature')">
+        <h4>成熟期</h4>
+        <div class="scale">团队 200 人以上</div>
+        <ul>
+          <li>知识型管理幅度 <span>5–9 人</span></li>
+          <li>汇报链 <span>≤5 层</span></li>
+          <li>管理者比 <span>≤18%</span></li>
+          <li>空岗率 <span>≤8%</span></li>
+        </ul>
+        <div class="fit">适合：流程稳定、分工明确、更强调人效与成本。</div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <div class="note">三个档位互斥，只能选一个。<br>原「业务场景」（快速扩张 / 降本增效等）将移出页面。</div>
+      <button class="btn" onclick="closeBasis()">取消</button>
+      <button class="btn primary" onclick="applyBasis()">应用基准</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const BASES = {
+    startup: { name:'初创期', span:'3–12 人（知识型）', managerRatio:'≤20%', depth:'≤3 层', vacancy:'≤15%',
+      foot:'知识型管理幅度 3–12 人 · 汇报链 ≤3 层 · 管理者比 ≤20% · 空岗率 ≤15%' },
+    growth:  { name:'成长期', span:'5–10 人（知识型）', managerRatio:'≤15%', depth:'≤4 层', vacancy:'≤10%',
+      foot:'知识型管理幅度 5–10 人 · 汇报链 ≤4 层 · 管理者比 ≤15% · 空岗率 ≤10%' },
+    mature:  { name:'成熟期', span:'5–9 人（知识型）', managerRatio:'≤18%', depth:'≤5 层', vacancy:'≤8%',
+      foot:'知识型管理幅度 5–9 人 · 汇报链 ≤5 层 · 管理者比 ≤18% · 空岗率 ≤8%' }
+  };
+  let picked = 'growth';
+  let current = 'growth';
+
+  function toggleDetail(row){
+    const key = row.dataset.metric;
+    const detail = document.querySelector(`tr.detail[data-detail="${key}"]`);
+    if (detail) detail.classList.toggle('open');
+  }
+
+  function openBasis(){
+    document.getElementById('modal').hidden = false;
+    document.body.style.overflow = 'hidden';
+  }
+  function closeBasis(){
+    document.getElementById('modal').hidden = true;
+    document.body.style.overflow = '';
+  }
+  function pickBasis(key){
+    picked = key;
+    document.querySelectorAll('.opt').forEach(el => el.classList.toggle('active', el.dataset.basisOpt === key));
+  }
+  function applyBasis(){
+    current = picked;
+    const b = BASES[current];
+    document.getElementById('basisName').textContent = b.name;
+    document.getElementById('basisFoot').textContent = b.name;
+    document.querySelector('[data-basis="span"]').textContent = b.span;
+    document.querySelector('[data-basis="managerRatio"]').textContent = b.managerRatio;
+    document.querySelector('[data-basis="depth"]').textContent = b.depth;
+    document.querySelector('[data-basis="vacancy"]').textContent = b.vacancy;
+    // 更新页脚明细文案
+    const foot = document.querySelector('.basis-bar');
+    foot.innerHTML = `诊断基准：<b id="basisFoot">${b.name}</b> · ${b.foot}
+      <button class="btn" onclick="openBasis()">调整基准</button>`;
+    closeBasis();
+    toast(`已切换基准：${b.name} · 原型仅演示布局，灯号未重算`);
+  }
+
+  // 编制编辑 → 行内缺口联动
+  document.querySelectorAll('input[data-hc]').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const tr = inp.closest('tr');
+      const hc = Number(inp.value) || 0;
+      const actual = Number(tr.dataset.actual) || 0;
+      const avg = Number(tr.dataset.avg) || 0;
+      const gap = hc - actual;
+      const gapCell = tr.querySelector('[data-gap]');
+      const costCell = tr.querySelector('[data-gapcost]');
+      if (gap > 0) gapCell.innerHTML = `<span class="tag warn"><i></i>+${gap} 空岗</span>`;
+      else if (gap < 0) gapCell.innerHTML = `<span class="tag danger"><i></i>${gap} 超编</span>`;
+      else gapCell.innerHTML = `<span class="tag ok"><i></i>满编</span>`;
+      costCell.textContent = gap === 0 ? '0w' : `${(gap * avg).toFixed(1)}w`;
+      costCell.style.color = gap > 0 ? '#d97706' : gap < 0 ? '#dc2626' : '';
+    });
+  });
+
+  // 部门 / 岗位下钻
+  document.querySelectorAll('[data-toggle]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const key = el.dataset.toggle;
+      const rows = key === 'depts'
+        ? [...document.querySelectorAll('tr.dept-row')]
+        : [...document.querySelectorAll(`tr.pos-row[data-pos="${key}"]`)];
+      if (!rows.length) return;
+      const hidden = getComputedStyle(rows[0]).display === 'none';
+      rows.forEach(r => { r.style.display = hidden ? 'table-row' : 'none'; });
+      el.textContent = hidden ? '▾' : '▸';
+      if (!hidden) document.querySelectorAll('tr.pos-row').forEach(r => { r.style.display = 'none'; });
+    });
+  });
+
+  let toastTimer;
+  function toast(msg){
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+  }
+
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeBasis(); });
+</script>
+</body>
+</html>

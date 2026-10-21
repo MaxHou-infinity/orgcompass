@@ -1759,8 +1759,6 @@ export default function App() {
             /></LazyView>
           ) : view === 'health' ? (
             <LazyView label="HealthPage"><HealthPage
-            businessContext={project.businessContext ?? 'normal'}
-            onBusinessContextChange={ws.updateBusinessContext}
             healthThresholds={project.healthThresholds ?? DEFAULT_HEALTH_THRESHOLDS}
             onHealthThresholdsChange={ws.updateHealthThresholds}
             onDepartmentTypeChange={handleDepartmentTypeChange}
@@ -1884,7 +1882,6 @@ export default function App() {
       />
 
       {reportOpen && <LazyView label="DiagnosticReport"><DiagnosticReport
-        businessContext={project.businessContext ?? 'normal'}
         healthThresholds={project.healthThresholds ?? DEFAULT_HEALTH_THRESHOLDS}
         onFocusEmployee={handleDiagnosticEmployeeFocus}
         open={reportOpen}
@@ -1899,7 +1896,6 @@ export default function App() {
 
       {scenarioDiffOpen && baselineScenario && targetScenario && (
         <LazyView label="ScenarioDiffView"><ScenarioDiffView
-          businessContext={project.businessContext ?? 'normal'}
           healthThresholds={project.healthThresholds ?? DEFAULT_HEALTH_THRESHOLDS}
           open={scenarioDiffOpen}
           onClose={() => setScenarioDiffOpen(false)}
@@ -1916,7 +1912,6 @@ export default function App() {
 
       {mgmtReportOpen && baselineScenario && targetScenario && (
         <LazyView label="ManagementReport"><ManagementReport
-          businessContext={project.businessContext ?? 'normal'}
           healthThresholds={project.healthThresholds ?? DEFAULT_HEALTH_THRESHOLDS}
           open={mgmtReportOpen}
           onClose={() => setMgmtReportOpen(false)}
