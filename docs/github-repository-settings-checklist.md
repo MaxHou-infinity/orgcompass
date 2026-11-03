@@ -114,7 +114,9 @@ Private vulnerability reporting 应与 `SECURITY.md` 同时上线，避免公开
 
 `https://compass.hiontic.com`
 
-这项在 GitHub 设置里修改，提交改不了。不要改用 GitHub Pages 来托管演示。
+这项在 GitHub 设置里修改，提交改不了。公开 README 只写读者可见的演示地址与隐私说明，不要再写 Homepage / About / Website 操作步骤。
+
+演示站：把 `npm run build` 的 `dist/` 用 Cloudflare Pages Direct Upload 传到项目 `orgcompass`；`compass.hiontic.com` 的 DNS / 自定义域名在控制台改，本仓库不含这些变更。不要改用 GitHub Pages 来托管演示。
 
 ## 3. 暂不建议执行
 

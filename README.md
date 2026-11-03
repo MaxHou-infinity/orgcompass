@@ -241,11 +241,11 @@ OrgCompass 当前使用透明、可配置的规则口径，不使用不可解释
 
 ### 公开 Web 演示
 
-官方演示地址：**https://compass.hiontic.com**。GitHub 仓库 Homepage（About → Website）请填同一串：`https://compass.hiontic.com`。Homepage 在 GitHub 设置里修改，不由本仓库的提交改写。
+官方演示：[compass.hiontic.com](https://compass.hiontic.com)
 
 这是浏览器里的本地优先预览：组织数据写在当前浏览器的 localStorage，不会上传到 OrgCompass 服务器，也没有账号。请使用内置虚构行业模板，不要粘贴真实员工名册。企业若在自己的浏览器里导入真实数据，风险由该企业自行承担；共用电脑请在结束后清理本站点数据。
 
-演示站由维护者把 `npm run build` 产出的 `dist/` 直接上传到 Cloudflare Pages 项目 `orgcompass`。`compass.hiontic.com` 的域名绑定由维护者在 DNS 完成后处理。本仓库不包含 DNS 或 Pages 控制台变更。
+Web 演示不能替代桌面版的原生文件工作流。
 
 ### Web 预览与桌面版
 
