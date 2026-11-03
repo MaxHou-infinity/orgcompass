@@ -420,14 +420,14 @@ function EmptyStateHero({ onDownloadTemplate, onOpenSamplePicker }: {
             <path d="M6.5 10v2.5h4v1.5M17.5 10v2.5" />
           </svg>
         </div>
-        <h2 className="text-2xl font-bold text-slate-900 tracking-tight mb-2">开始设计您的组织架构</h2>
-        <p className="text-sm text-slate-500 mb-8">三步即可在几分钟内生成专业组织架构图</p>
+        <h2 className="text-2xl font-bold text-slate-900 tracking-tight mb-2">先用虚构示例看一遍</h2>
+        <p className="text-sm text-slate-500 mb-8">五套内置行业模板都是合成人名和编制。浏览器里的数据只写在 localStorage，不会上传。</p>
 
         <div className="space-y-4 text-left mb-8">
           {[
-            { n: '①', title: '导入数据', desc: '上传员工 Excel 即可生成架构图；组织架构表为可选补充' },
+            { n: '①', title: '载入虚构示例', desc: '从行业模板开始熟悉画布和诊断，不要先贴真实员工表' },
             { n: '②', title: '拖拽调整', desc: '拖拽 / 框选批量移动员工，滚轮缩放画布' },
-            { n: '③', title: '导出分享', desc: '导出 PNG / Excel / 诊断报告，或保存 .orgproj' },
+            { n: '③', title: '留在本地或导出', desc: '自动保存在这台浏览器；需要时再下载 PNG / Excel / 报告' },
           ].map((step) => (
             <div key={step.n} className="flex items-start gap-3">
               <span className="w-7 h-7 rounded-full bg-indigo-500 text-white text-sm font-semibold grid place-items-center shrink-0">{step.n}</span>
@@ -440,18 +440,18 @@ function EmptyStateHero({ onDownloadTemplate, onOpenSamplePicker }: {
         </div>
 
         <div className="flex justify-center gap-3">
-          <button
-            onClick={onDownloadTemplate}
-            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 text-white font-medium shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all"
-          >
-            去下载模板
-          </button>
-          {/* V2.4.0：原「载入示例数据」与「载入示例模板」两个按钮合并为一个 —— 都进同一个选择器 */}
+          {/* 主按钮保持「载入示例数据」这个名字：侧栏与空状态共用同一选择器，测试与文案都认这个入口。 */}
           <button
             onClick={onOpenSamplePicker}
-            className="px-5 py-2.5 rounded-xl bg-emerald-500 text-white font-medium shadow-md hover:bg-emerald-600 hover:shadow-lg transition-all"
+            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 text-white font-medium shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all"
           >
             载入示例数据
+          </button>
+          <button
+            onClick={onDownloadTemplate}
+            className="px-5 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-600 font-medium hover:bg-slate-50 transition-all"
+          >
+            下载空白模板
           </button>
         </div>
       </div>
