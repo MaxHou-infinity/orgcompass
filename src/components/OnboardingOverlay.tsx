@@ -1,4 +1,4 @@
-import { X, Download, Sparkles, FileSpreadsheet, MousePointerClick, Share2 } from 'lucide-react';
+import { X, Download, Sparkles, MousePointerClick, Share2 } from 'lucide-react';
 import { APP_VERSION } from '../version';
 import { useDialogFocus } from '../utils/useDialogFocus';
 
@@ -21,10 +21,10 @@ export function OnboardingOverlay({ open, onClose, onDownloadTemplate, onLoadTem
 
   const steps = [
     {
-      icon: <FileSpreadsheet className="w-6 h-6" />,
+      icon: <Sparkles className="w-6 h-6" />,
       n: '01',
-      title: '导入数据',
-      desc: '上传员工 Excel 即可生成组织架构图；组织架构表为可选补充（补空部门 / 负责人）。也可载入内置行业模板或示例数据。',
+      title: '先载入虚构示例',
+      desc: '五套内置行业模板都是合成人名和编制。公开演示请从这里开始，不要粘贴真实员工名册。',
     },
     {
       icon: <MousePointerClick className="w-6 h-6" />,
@@ -35,8 +35,8 @@ export function OnboardingOverlay({ open, onClose, onDownloadTemplate, onLoadTem
     {
       icon: <Share2 className="w-6 h-6" />,
       n: '03',
-      title: '导出分享',
-      desc: '导出 PNG / Excel / 诊断报告，或保存 .orgproj 项目文件长期复用。',
+      title: '导出或留在本地',
+      desc: '可导出 PNG / Excel / 诊断报告。浏览器把项目自动写进 localStorage；桌面版再用 .orgproj 另存为文件。',
     },
   ];
 
@@ -63,8 +63,8 @@ export function OnboardingOverlay({ open, onClose, onDownloadTemplate, onLoadTem
             <Sparkles className="w-4 h-4" />
             v{APP_VERSION} 快速上手
           </div>
-          <h2 className="text-2xl font-bold tracking-tight">三步设计您的组织架构</h2>
-          <p className="text-sm text-white/80 mt-1.5">导入 · 拖拽 · 导出，几分钟生成专业组织架构图</p>
+          <h2 className="text-2xl font-bold tracking-tight">先用虚构示例看组织</h2>
+          <p className="text-sm text-white/80 mt-1.5">数据只留在这台浏览器，不会上传到服务器。请不要粘贴真实员工名册。</p>
         </div>
 
         <div className="p-7">
@@ -87,26 +87,26 @@ export function OnboardingOverlay({ open, onClose, onDownloadTemplate, onLoadTem
             ))}
           </div>
 
-          <div className="mt-7 flex items-center gap-3">
+          <div className="mt-7 flex flex-wrap items-center gap-3">
+            <button
+              onClick={() => { onLoadTemplate('internet'); onClose(); }}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors"
+            >
+              <Sparkles className="w-4 h-4" />
+              载入虚构示例
+            </button>
             <button
               onClick={onDownloadTemplate}
               className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 transition-colors"
             >
               <Download className="w-4 h-4" />
-              下载模板
-            </button>
-            <button
-              onClick={() => { onLoadTemplate('internet'); onClose(); }}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 hover:shadow-sm transition-all"
-            >
-              <Sparkles className="w-4 h-4" />
-              载入示例组织
+              下载空白模板
             </button>
             <button
               onClick={onClose}
-              className="ml-auto px-5 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors"
+              className="ml-auto px-5 py-2.5 rounded-xl text-sm font-medium text-slate-500 hover:text-slate-800 transition-colors"
             >
-              开始使用
+              稍后再说
             </button>
           </div>
         </div>

@@ -8,7 +8,7 @@
 
 [![Latest release](https://img.shields.io/github/v/release/MaxHou-infinity/orgcompass?display_name=tag&label=release&color=6d5dfc)](https://github.com/MaxHou-infinity/orgcompass/releases/latest) [![License](https://img.shields.io/github/license/MaxHou-infinity/orgcompass?color=2563eb)](LICENSE) ![Platforms](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon%20%7C%20Windows-334155) ![Local first](https://img.shields.io/badge/data-local--first-16a34a)
 
-**[下载最新版](https://github.com/MaxHou-infinity/orgcompass/releases/latest)** · **[查看功能](#核心能力)** · **[了解诊断口径](#诊断如何工作)** · **[反馈问题](https://github.com/MaxHou-infinity/orgcompass/issues/new/choose)**
+**[在线演示](https://compass.hiontic.com)** · **[下载最新版](https://github.com/MaxHou-infinity/orgcompass/releases/latest)** · **[查看功能](#核心能力)** · **[了解诊断口径](#诊断如何工作)** · **[反馈问题](https://github.com/MaxHou-infinity/orgcompass/issues/new/choose)**
 
 </div>
 
@@ -239,9 +239,29 @@ OrgCompass 当前使用透明、可配置的规则口径，不使用不可解释
 > 仅支持 64 位 Windows（`x64` 指 CPU 架构，Intel / AMD 均可）；
 > ARM 版 Windows 会以 x64 仿真方式运行，可用但非原生。
 
-### 开发者：运行 Web 版
+### 公开 Web 演示
 
-Web 版目前提供源码运行与自行部署，不代表已有公开在线服务。
+官方演示地址：**https://compass.hiontic.com**。GitHub 仓库 Homepage（About → Website）请填同一串：`https://compass.hiontic.com`。Homepage 在 GitHub 设置里修改，不由本仓库的提交改写。
+
+这是浏览器里的本地优先预览：组织数据写在当前浏览器的 localStorage，不会上传到 OrgCompass 服务器，也没有账号。请使用内置虚构行业模板，不要粘贴真实员工名册。企业若在自己的浏览器里导入真实数据，风险由该企业自行承担；共用电脑请在结束后清理本站点数据。
+
+演示站由维护者把 `npm run build` 产出的 `dist/` 直接上传到 Cloudflare Pages 项目 `orgcompass`。`compass.hiontic.com` 的域名绑定由维护者在 DNS 完成后处理。本仓库不包含 DNS 或 Pages 控制台变更。
+
+### Web 预览与桌面版
+
+组织模型、画布、健康度、岗位与编制、胜任度在 Web 与桌面版是同一套。差别在运行环境和文件怎么落地：
+
+| | Web 演示与浏览器构建 | 桌面版（Tauri） |
+| --- | --- | --- |
+| 在哪里跑 | 现代浏览器 | macOS Apple Silicon、64 位 Windows |
+| 自动保存 | 浏览器 localStorage | 桌面 WebView 的本地存储 |
+| 项目文件 `.orgproj` | 下载到浏览器的下载目录，再从本机选文件恢复 | 系统「另存为 / 打开」对话框，直接读写所选路径 |
+| 图片与 Excel 导出 | 浏览器下载 | 原生保存对话框 |
+| 安装 | 打开演示网址，或自行托管 `dist/` | Release 里的 `.dmg` / `.exe` / `.msi` |
+
+Web 演示不替代桌面版的原生文件工作流。当前不提供 Intel Mac 与 Linux 安装包。
+
+### 开发者：运行 Web 版
 
 > 前置要求：**Node `^22.22.2`、`^24.15.0` 或 `>=26.0.0`**，与已安装的 jsdom 30 运行要求一致。`.nvmrc` 提供 Node 22 的最低支持版本。
 >
@@ -255,12 +275,15 @@ npm ci
 npm run dev
 ```
 
-构建静态 Web 产物：
+构建静态站点。Cloudflare Pages 的 Direct Upload 使用整个 `dist/` 目录：
 
 ```bash
+npm ci
 npm run build
 npm run preview
 ```
+
+`public/_headers` 会原样进入 `dist/_headers`（安全响应头，以及带哈希的 `/assets/*` 长期缓存）。应用没有客户端路由，不需要 `public/_redirects`，也不要把所有路径改写到 `index.html`。
 
 ### 开发者：运行 Tauri 桌面版
 
@@ -279,9 +302,11 @@ OrgCompass 采用本地优先设计：
 
 - 不需要账号或业务服务器即可运行
 - 当前版本不包含云端同步、组织数据上传或遥测服务
-- Web 版自动保存到浏览器本地存储
-- 桌面版可通过 `.orgproj` 文件备份和迁移项目
+- 公开演示 [https://compass.hiontic.com](https://compass.hiontic.com) 同样如此：数据只在访问者自己的浏览器里
+- Web 版自动保存到浏览器本地存储（localStorage）
+- 桌面版可通过 `.orgproj` 文件备份和迁移项目；Web 版则是浏览器下载与再选文件恢复
 - Excel、组织结构与诊断计算均在本机完成
+- 公开演示请使用内置虚构示例。不要粘贴真实员工名册；企业自行导入真实数据时，风险由企业自行承担
 
 组织和人员数据通常具有敏感性。请使用企业认可的设备与文件存储方式，并妥善管理导出的图片、Excel、报告和项目备份。
 

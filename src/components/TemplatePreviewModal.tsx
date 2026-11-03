@@ -87,6 +87,9 @@ export function TemplatePreviewModal({
             <X className="w-4 h-4" />
           </button>
         </div>
+        <p className="text-xs text-slate-500 leading-relaxed mb-4">
+          下面五套都是虚构的合成组织（教学用姓名与编制），不是真实企业名册。公开演示请只用这些模板，不要把真实员工表贴进来。
+        </p>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {INDUSTRY_TEMPLATES.map((tpl) => (

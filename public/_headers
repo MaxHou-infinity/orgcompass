@@ -1,0 +1,16 @@
+# Cloudflare Pages 会读取构建产物根目录的 _headers。
+# Vite 把 public/ 原样复制进 dist/，Direct Upload 整个 dist/ 即可带上这些头。
+# 应用是单页、没有 React Router 深层路径，所以不提供 _redirects。
+# 不设 CSP：导出图片会用到 blob: 工作线程，过严的 script-src 会把本机导出打断。
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

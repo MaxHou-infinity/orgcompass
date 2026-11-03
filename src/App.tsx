@@ -16,6 +16,7 @@ import type { PositionCreateFields } from './components/PositionModal';
 import { TemplatePreviewModal } from './components/TemplatePreviewModal';
 import { VirtualAssignmentModal, type VirtualAssignmentDraft, type VirtualAssignmentResult } from './components/VirtualAssignmentModal';
 import { OnboardingOverlay } from './components/OnboardingOverlay';
+import { PrivacyBanner } from './components/PrivacyBanner';
 import { UnassignedEmployeesDrawer } from './components/UnassignedEmployeesDrawer';
 import type { NewAssessment } from './components/BatchAssessmentModal';
 import { computeUnassignedEmployees } from './utils/analytics';
@@ -1708,6 +1709,8 @@ export default function App() {
         onOpenPositionBoard={() => setView('positionBoard')}
         onOpenCompetency={() => setView('competency')}
       />
+
+      <PrivacyBanner onOpenSamples={() => setSamplePickerOpen(true)} />
 
       <div className="flex flex-1 overflow-hidden">
         <div className={`workspace-sidebar-container ${sidebarHidden ? 'hidden' : 'flex'}`}>

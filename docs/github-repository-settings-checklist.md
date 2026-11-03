@@ -108,12 +108,19 @@ Private vulnerability reporting 应与 `SECURITY.md` 同时上线，避免公开
 
 判断逻辑：适配单人维护，不阻断当前直接提交方式，同时避免不可恢复的 Git 历史破坏。
 
+## 2.6 公开演示对应的 Homepage
+
+仓库 About → Website 填这一串，且只填这一串：
+
+`https://compass.hiontic.com`
+
+这项在 GitHub 设置里修改，提交改不了。不要改用 GitHub Pages 来托管演示。
+
 ## 3. 暂不建议执行
 
 | 设置项 | 建议 | 原因 |
 | --- | --- | --- |
-| Homepage | 保持为空 | 当前没有公开 Demo 或独立产品页 |
-| GitHub Pages | 不启用 | 不能把“可自行构建的 Web 版”包装成已有在线服务 |
+| GitHub Pages | 不启用 | 公开演示走 Cloudflare Pages 项目 `orgcompass` 的 Direct Upload，不用 GitHub Pages |
 | Discussions | 保持关闭 | 空论坛会增加维护负担和冷清感 |
 | Wiki / Projects | 暂不改 | 需要先确认是否已有私下使用方式 |
 | 强制 PR | 不启用 | 对当前单人维护成本过高 |
