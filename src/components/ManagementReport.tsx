@@ -20,7 +20,7 @@ import {
 } from '../utils/gapList';
 import { deriveBoard } from '../utils/boardScope';
 import type { CompetencySummary } from '../utils/competency';
-import { STATUS_STYLE, fmt, fmtCost } from '../utils/statusUI';
+import { STATUS_STYLE, fmt, fmtCost, formatGapCostSide, formatGapCostDelta } from '../utils/statusUI';
 import { APP_VERSION } from '../version';
 
 interface ManagementReportProps {
@@ -122,7 +122,7 @@ function gapRowsToSheet(rows: GapListRow[]): Record<string, string | number>[] {
 }
 
 /** 差异表 → Excel 字节（管理层报告 E2；复用现有 XLSX 导出模式） */
-async function buildDiffExcelBytes(
+export async function buildDiffExcelBytes(
   projectName: string,
   baseline: Scenario,
   target: Scenario,
@@ -178,7 +178,7 @@ async function buildDiffExcelBytes(
     { 项: '总人数', 基线: bT.totalEmployees, 目标: tT.totalEmployees, Δ: tT.totalEmployees - bT.totalEmployees },
     { 项: '总缺口', 基线: bT.totalGap ?? '未配置', 目标: tT.totalGap ?? '未配置', Δ: diff.totals.gapDelta ?? '无数据/不可比' },
     { 项: '月人力成本(w)', 基线: bT.totalCost, 目标: tT.totalCost, Δ: diff.totals.costDelta },
-    { 项: '缺口成本(w)', 基线: bT.totalGapCost, 目标: tT.totalGapCost, Δ: diff.totals.gapCostDelta ?? '无数据/不可比' },
+    { 项: '缺口成本(w)', 基线: formatGapCostSide(bT), 目标: formatGapCostSide(tT), Δ: diff.totals.gapCostDelta === null ? '无数据/不可比' : diff.totals.gapCostDelta },
   ];
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryRows), '缺口与成本汇总');
 
@@ -656,10 +656,10 @@ export function ManagementReport({
             <div className="rounded-2xl border border-slate-100 shadow-soft p-4">
               <div className="text-xs text-slate-500">缺口成本</div>
               <div className="text-xl font-bold tabular-nums text-slate-800">
-                {fmtCost(bT.totalGapCost)} → {fmtCost(tT.totalGapCost)}
+                {formatGapCostSide(bT)} → {formatGapCostSide(tT)}
               </div>
               <div className="text-xs text-slate-500">
-                {diff.totals.gapCostDelta === null ? '无数据/不可比' : `Δ ${diff.totals.gapCostDelta > 0 ? '+' : ''}${diff.totals.gapCostDelta}w`}
+                {formatGapCostDelta(diff.totals.gapCostDelta)}
               </div>
             </div>
           </div>

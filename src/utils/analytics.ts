@@ -162,6 +162,9 @@ export interface L3DeptRow {
   gapCost: number | null;
   /** 不把岗位成本、历史部门平均成本或数据不足混为同一种依据。 */
   gapCostBasis: string;
+  /** Runtime-only subtotal and missing items within this subtree; consume roots only. */
+  gapCostKnownSubtotal: number;
+  gapCostUnestimatedCount: number;
   headcountSource: string;
   status: HealthStatus;
 }
@@ -1097,25 +1100,33 @@ export function computeL3(roots: Department[], configs: LevelConfig[], threshold
     const employees = [...new Map(subtree.flatMap((dept) => dept.employees).filter((e) => !e.isVirtual).map((e) => [e.id, e])).values()];
     let gapCost: number | null = gap === null ? null : 0;
     let gapCostBasis = gap === null ? '无有效编制，无法估算' : '无缺口';
+    let gapCostKnownSubtotal = 0;
+    let gapCostUnestimatedCount = gap === null ? 1 : 0;
     if (gap !== null && (positions.length > 0 || legacy) && gap !== 0) {
       if (legacy) {
         const completeCosts = employees.length > 0 && employees.every((e) => hasEmployeeCost(e, configs));
         gapCost = completeCosts && avgCost > 0 ? round1(gap * avgCost) : null;
         gapCostBasis = gapCost !== null ? '历史部门编制 × 部门在岗平均成本（降级估算）' : '部门在岗成本数据不完整，无法估算';
+        gapCostKnownSubtotal = gapCost ?? 0;
+        gapCostUnestimatedCount = gapCost === null ? 1 : 0;
       } else {
         let known = 0;
         let positionalGap = 0;
-        let missing = false;
+        let missing = 0;
         for (const p of positions) {
           const assigned = employees.filter((e) => e.positionId === p.id);
           const delta = p.headcount - assigned.length;
           positionalGap += delta;
           if (delta === 0) continue;
           const unit = positionUnitCost(p, assigned, configs);
-          if (unit.cost <= 0) missing = true;
+          if (unit.cost <= 0) missing += 1;
           else known += delta * unit.cost;
         }
-        gapCost = missing || positionalGap !== gap ? null : round1(known);
+        // Keep the known position subtotal even when another position has no basis.
+        // Rows overlap (each includes descendants): totals must consume roots only.
+        gapCostKnownSubtotal = round1(known);
+        gapCostUnestimatedCount = missing + (positionalGap !== gap ? 1 : 0);
+        gapCost = gapCostUnestimatedCount > 0 ? null : gapCostKnownSubtotal;
         gapCostBasis = missing ? '部分岗位缺少成本依据，无法完整估算'
           : positionalGap !== gap ? '岗位与部门人员覆盖范围不一致，无法估算'
             : '逐岗位缺口 × 岗位单位成本（带宽 → 目标职级 → 在岗成本）';
@@ -1136,6 +1147,8 @@ export function computeL3(roots: Department[], configs: LevelConfig[], threshold
       actualCost,
       gapCost,
       gapCostBasis,
+      gapCostKnownSubtotal,
+      gapCostUnestimatedCount,
       headcountSource,
       status,
     };

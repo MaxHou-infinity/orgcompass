@@ -9,6 +9,7 @@ import { PositionSummary } from '../utils/analytics';
 import { MatchResult } from '../utils/match';
 import type { CompetencySummary } from '../utils/competency';
 import { computeLevelGaps, type DeptLevelGap } from '../utils/deptLevel';
+import { allowsDepartmentMove } from '../utils/departmentMove';
 
 interface OrgChartProps {
   departments: Department[];
@@ -770,8 +771,9 @@ export function OrgChart({
       if (dropData.type === 'department') {
         const targetDept = dropData.department;
         
-        // 不能把部门拖拽到自己或自己的子部门
-        if (sourceDept.id !== targetDept.id && !isDescendant(sourceDept, targetDept)) {
+        // 与 moveDepartmentInTree 同一规则：拒绝自身 / 移入自身后代；合法上移或无关目标才调用。
+        // 非法调用不走此分支，无新增提示。移到当前父会调用，由移动函数无操作且不写历史。
+        if (allowsDepartmentMove(sourceDept, targetDept)) {
           onMoveDepartment(sourceDept.id, targetDept.id);
         }
       }
@@ -822,18 +824,8 @@ export function OrgChart({
     }
   };
   
-  // 检查targetDept是否是sourceDept的子部门
-  const isDescendant = (source: Department, target: Department): boolean => {
-    const check = (dept: Department): boolean => {
-      if (dept.id === source.id) return true;
-      for (const child of dept.children) {
-        if (check(child)) return true;
-      }
-      return false;
-    };
-    return check(target);
-  };
-  
+  // 部门投放判定与移动函数共用 allowsDepartmentMove。
+
   // 布局按 100% 基准计算，缩放由外层 transform: scale 完成
   const visibleMemberIds = expandedMembersForSearch(departments, memberExpandedIds, searchHighlight?.empIds ?? EMPTY_ID_SET);
   const scale = zoom / 100;

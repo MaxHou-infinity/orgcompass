@@ -31,6 +31,7 @@ import { flattenAllPositions } from './components/positionUtils';
 import { uid, decodeStoredProject, PROJECT_STORAGE_KEY, listProjectBackups, orgprojFileName, summarizeProjectJson } from './utils/project';
 import { assignPrimary, indexPlacements, inspectPlacements, seedLegacyAssignments } from './utils/placement';
 import { moveEmployeesBetween, findDeptById, findEmployeeDept, checkDeptDeletion, removeDepartment, validateParent } from './utils/departments';
+import { moveDepartmentInTree } from './utils/departmentMove';
 import { findIndustryTemplate, loadIndustryTemplate } from './utils/industryTemplates';
 import {
   parseEmployeeExcel,
@@ -79,16 +80,6 @@ const CompetencyDetailModal = lazy(() => import('./components/CompetencyDetailMo
 const CompetencyModelModal = lazy(() => import('./components/CompetencyModelModal').then((module) => ({ default: module.CompetencyModelModal })));
 const BatchAssessmentModal = lazy(() => import('./components/BatchAssessmentModal').then((module) => ({ default: module.BatchAssessmentModal })));
 const EMPTY_HIGHLIGHT: SearchHighlight = { deptIds: new Set(), empIds: new Set() };
-
-// 查找部门辅助函数（模块级纯函数，不依赖组件状态）
-function findDept(depts: Department[], id: string): Department | null {
-  for (const dept of depts) {
-    if (dept.id === id) return dept;
-    const found = findDept(dept.children, id);
-    if (found) return found;
-  }
-  return null;
-}
 
 /** 递归对部门树内所有同 id 员工应用补丁（岗位套岗/取消套岗等跨部门一致更新用）。 */
 function mapEmployeesInDepts(
@@ -889,57 +880,11 @@ export default function App() {
     });
   }, [setBoth]);
 
-  // 移动部门（调整层级结构）- 支持拖到根级别
+  // 移动部门（调整层级结构）- 支持拖到根级别。子树 level 由 moveDepartmentInTree 整棵递推。
   const handleMoveDepartment = useCallback((deptId: string, targetDeptId: string | null) => {
     setDepartments((prev) => {
-      let movedDept: Department | undefined;
-      const removeDept = (depts: Department[]): Department[] => {
-        return depts
-          .map((dept) => {
-            if (dept.id === deptId) {
-              movedDept = dept;
-              return null;
-            }
-            if (dept.children.length > 0) return { ...dept, children: removeDept(dept.children) };
-            return dept;
-          })
-          .filter((d): d is Department => d !== null);
-      };
-      let newDepts = removeDept(prev);
-      if (movedDept === undefined) return prev;
-
-      if (!targetDeptId || targetDeptId === 'root') {
-        const updatedDept: Department = { ...movedDept, level: 1, parentId: undefined };
-        const updateChildLevels = (depts: Department[], baseLevel: number): Department[] => {
-          return depts.map((dept) => {
-            if (dept.id === updatedDept.id) return { ...dept, level: baseLevel };
-            if (dept.children.length > 0) return { ...dept, children: updateChildLevels(dept.children, baseLevel + 1) };
-            return dept;
-          });
-        };
-        return [...newDepts, updateChildLevels([updatedDept], 1)[0]];
-      }
-
-      const targetDept = findDept(newDepts, targetDeptId);
-      if (!targetDept) return prev;
-      const newLevel = targetDept.level + 1;
-      const updatedDept: Department = { ...movedDept, level: newLevel, parentId: targetDept.id };
-      const addToTarget = (depts: Department[]): Department[] => {
-        return depts.map((dept) => {
-          if (dept.id === targetDeptId) return { ...dept, children: [...dept.children, updatedDept] };
-          if (dept.children.length > 0) return { ...dept, children: addToTarget(dept.children) };
-          return dept;
-        });
-      };
-      newDepts = addToTarget(newDepts);
-      const updateChildLevels = (depts: Department[]): Department[] => {
-        return depts.map((dept) => {
-          if (dept.id === updatedDept.id) return { ...dept, level: newLevel };
-          if (dept.children.length > 0) return { ...dept, children: updateChildLevels(dept.children) };
-          return dept;
-        });
-      };
-      return updateChildLevels(newDepts);
+      const result = moveDepartmentInTree(prev, deptId, targetDeptId);
+      return result.moved ? result.departments : prev;
     });
   }, [setDepartments]);
 

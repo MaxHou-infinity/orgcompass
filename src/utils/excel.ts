@@ -2,6 +2,7 @@ import { mapSuccessorImportRows } from './succession';
 import { Employee, Department, OrgTemplate, Position, CompetencyModel } from '../types';
 import type { WorkBook } from 'xlsx';
 import { uid } from './project';
+import { findEmployeeDept } from './departments';
 
 /** 懒加载 xlsx（体积 ~400KB，仅在上传/导出时按需加载） */
 let xlsxModule: typeof import('xlsx') | null = null;
@@ -1098,6 +1099,27 @@ export function buildDepartmentTree(
   return sortDeptTree(rootDepts);
 }
 
+
+const DEPT_PATH_COLUMNS = ['一级部门', '二级部门', '三级部门', '四级部门', '五级部门', '六级部门'] as const;
+
+/** 当前方案树中每个部门的完整路径（根在前）。只用于导出派生，不回写员工字段。 */
+export function currentTreeDeptPaths(depts: Department[], prefix: string[] = [], acc: Map<string, string[]> = new Map()): Map<string, string[]> {
+  for (const d of depts) {
+    const path = [...prefix, d.name];
+    acc.set(d.id, path);
+    if (d.children.length > 0) currentTreeDeptPaths(d.children, path, acc);
+  }
+  return acc;
+}
+
+export function pathToDeptColumns(path: string[]): Record<(typeof DEPT_PATH_COLUMNS)[number], string> {
+  const out = {} as Record<(typeof DEPT_PATH_COLUMNS)[number], string>;
+  for (let i = 0; i < DEPT_PATH_COLUMNS.length; i++) {
+    out[DEPT_PATH_COLUMNS[i]] = path[i] ?? '';
+  }
+  return out;
+}
+
 /**
  * 生成组织架构 Excel 文件字节（含「员工信息」与「组织架构」两个工作表）。
  * 调用方决定保存方式（浏览器下载 / Tauri 另存为）。
@@ -1118,17 +1140,17 @@ export async function buildOrgExcelBytes(departments: Department[]): Promise<Uin
   // 过滤掉虚拟员工（兼岗），不影响人数统计
   const realEmployees = allEmployees.filter(emp => !emp.isVirtual);
   
-  const data = realEmployees.map(emp => ({
-    '姓名': emp.name,
-    '工号': emp.employeeId,
-    '职级': emp.level,
-    '一级部门': emp.dept1 || '',
-    '二级部门': emp.dept2 || '',
-    '三级部门': emp.dept3 || '',
-    '四级部门': emp.dept4 || '',
-    '五级部门': emp.dept5 || '',
-    '六级部门': emp.dept6 || '',
-  }));
+  const pathByDeptId = currentTreeDeptPaths(departments);
+  const data = realEmployees.map(emp => {
+    const home = findEmployeeDept(departments, emp.id);
+    const path = home ? (pathByDeptId.get(home.id) ?? []) : [];
+    return {
+      '姓名': emp.name,
+      '工号': emp.employeeId,
+      '职级': emp.level,
+      ...pathToDeptColumns(path),
+    };
+  });
   
   const worksheet = XLSX.utils.json_to_sheet(data);
   const workbook = XLSX.utils.book_new();

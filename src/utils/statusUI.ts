@@ -99,3 +99,30 @@ export function fmtCost(value: number | null): string {
   const v = Number.isInteger(value) ? String(value) : value.toFixed(1);
   return `${v}w`;
 }
+
+/** 缺口成本汇总展示所需的最小字段（避免与 scenarioDiff 循环依赖） */
+export interface GapCostSideView {
+  totalGapCost: number | null;
+  gapCostKnownSubtotal: number;
+  gapCostIncomplete: boolean;
+  gapCostUnestimatedCount: number;
+}
+
+/**
+ * 缺口成本单侧展示：完整已知（含真实 0）用数值；
+ * 不完整时展示已知小计 + 未估项，不把未知写成单独的 0。
+ */
+export function formatGapCostSide(totals: GapCostSideView): string {
+  if (!totals.gapCostIncomplete) return fmtCost(totals.totalGapCost);
+  const n = totals.gapCostUnestimatedCount;
+  if (totals.gapCostKnownSubtotal === 0) {
+    return `0w（已知小计，${n} 项未估）`;
+  }
+  return `${fmtCost(totals.gapCostKnownSubtotal)}（已知小计，另有 ${n} 项无法估算）`;
+}
+
+/** 缺口成本差额：null → 沿用既有「无数据/不可比」文案。 */
+export function formatGapCostDelta(delta: number | null): string {
+  if (delta === null) return '无数据/不可比';
+  return `Δ ${delta > 0 ? '+' : ''}${delta}w`;
+}
