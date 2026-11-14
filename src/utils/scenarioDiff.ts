@@ -117,8 +117,17 @@ export interface ScenarioTotals {
   totalGap: number | null;
   /** 总月成本（树内非虚拟员工成本合计，按 id 去重） */
   totalCost: number;
-  /** 总缺口成本（仅 L1 层汇总，避免嵌套部门重复累计；完全未配置 → 0） */
-  totalGapCost: number;
+  /**
+   * 总缺口成本（仅 L1 层汇总）。
+   * 全部可估（含真实 0）时为确定数值；存在未估项时为 null，不得把未知收成 0。
+   */
+  totalGapCost: number | null;
+  /** 已知小计：只含当前可估的 L1 缺口成本（不完整时仍可展示，不能当作完整总额） */
+  gapCostKnownSubtotal: number;
+  /** 无法估算的岗位/覆盖项数量（根级去重汇总） */
+  gapCostUnestimatedCount: number;
+  /** 任一项无法估算即为不完整 */
+  gapCostIncomplete: boolean;
 }
 
 /** 缺口与成本汇总 Δ */
@@ -458,7 +467,7 @@ export function computePersonnelChanges(baseline: Scenario, target: Scenario): P
  * 单场景总量：
  * - 编制/缺口只统计配置了编制的 L1 子树（与空岗率口径一致）；完全未配置 → null（不伪装成 0）。
  * - 月成本 = 树内非虚拟员工成本合计（按 id 去重，避免父子子树重复累计）。
- * - 缺口成本 = L1 层（子树）缺口 × 子树平均成本，不做全树逐行累加（避免嵌套重复累计）。
+ * - 缺口成本仅累加根级 L3 的岗位已知小计/未估项，不累加重叠子树行。
  */
 export function computeScenarioTotals(s: Scenario, thresholds?: HealthThresholds): ScenarioTotals {
   const l1 = computeL1(s.departments, thresholds);
@@ -469,7 +478,8 @@ export function computeScenarioTotals(s: Scenario, thresholds?: HealthThresholds
   let totalHeadcount = 0;
   let configured = 0;
   let totalEmployees = 0;
-  let totalGapCost = 0;
+  let knownGapCost = 0;
+  let gapCostUnestimatedCount = 0;
   for (const row of l1) {
     totalEmployees += row.actual;
     if (row.headcount !== null) {
@@ -478,10 +488,13 @@ export function computeScenarioTotals(s: Scenario, thresholds?: HealthThresholds
     }
   }
   for (const row of l3) {
-    // v2.3.1（F-11）：gapCost 现在可为 null（无法估算），缺依据的部门不并入合计，
-    // 避免把「不知道」当成 0 参与净差计算。
-    if (l1ById.has(row.deptId) && row.gap !== null && row.gapCost !== null) totalGapCost += row.gapCost;
+    // Root L3 already includes its entire subtree. Never add descendant rows again.
+    if (!l1ById.has(row.deptId)) continue;
+    knownGapCost += row.gapCostKnownSubtotal;
+    gapCostUnestimatedCount += row.gapCostUnestimatedCount;
   }
+  const gapCostIncomplete = gapCostUnestimatedCount > 0;
+  const gapCostKnownSubtotal = round1(knownGapCost);
 
   const seen = new Set<string>();
   let totalCost = 0;
@@ -498,7 +511,10 @@ export function computeScenarioTotals(s: Scenario, thresholds?: HealthThresholds
     totalEmployees,
     totalGap: coverage.headcount === null ? null : round1(coverage.headcount - coverage.actual),
     totalCost: round1(totalCost),
-    totalGapCost: round1(totalGapCost),
+    totalGapCost: gapCostIncomplete ? null : gapCostKnownSubtotal,
+    gapCostKnownSubtotal,
+    gapCostUnestimatedCount,
+    gapCostIncomplete,
   };
 }
 
@@ -513,7 +529,11 @@ export function computeDiffTotals(baseline: Scenario, target: Scenario, threshol
     headcountDelta: numDelta(b.totalHeadcount, t.totalHeadcount),
     costDelta: round1(t.totalCost - b.totalCost),
     gapDelta: numDelta(b.totalGap, t.totalGap),
-    gapCostDelta: b.totalGap === null || t.totalGap === null ? null : round1(t.totalGapCost - b.totalGapCost),
+    // 任一侧编制完全未配置，或任一侧缺口成本不完整 → 差额不可比，不把未知当 0。
+    gapCostDelta:
+      b.totalGap === null || t.totalGap === null || b.gapCostIncomplete || t.gapCostIncomplete || b.totalGapCost === null || t.totalGapCost === null
+        ? null
+        : round1(t.totalGapCost - b.totalGapCost),
   };
 }
 

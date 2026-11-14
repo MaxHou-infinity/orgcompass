@@ -20,7 +20,7 @@ import {
   getHealthThresholds,
   DEFAULT_HEALTH_THRESHOLDS,
 } from '../utils/analytics';
-import { STATUS_STYLE, fmt, fmtCost } from '../utils/statusUI';
+import { STATUS_STYLE, fmt, fmtCost, formatGapCostSide } from '../utils/statusUI';
 
 interface ScenarioDiffViewProps {
   healthThresholds?: HealthThresholds;
@@ -740,8 +740,8 @@ export function ScenarioDiffView({
               <div className="rounded-2xl bg-white/70 backdrop-blur-xl border border-white/50 shadow-card p-4">
                 <div className="text-xs text-slate-500">缺口成本</div>
                 <div className="mt-1 text-xl font-bold tabular-nums text-slate-800 text-right">
-                  {fmtCost(bTotals.totalGapCost)} <span className="text-slate-300 text-sm">→</span>{' '}
-                  {fmtCost(tTotals.totalGapCost)}
+                  {formatGapCostSide(bTotals)} <span className="text-slate-300 text-sm">→</span>{' '}
+                  {formatGapCostSide(tTotals)}
                 </div>
                 <div className="text-[11px] tabular-nums">
                   <DeltaText delta={diff.totals.gapCostDelta} format={(n) => `${n}w`} />

@@ -228,7 +228,13 @@ export function useOrgWorkspace() {
 
   const setDepartments = useCallback(
     (fn: (prev: Department[]) => Department[]) => {
-      setSnapshot((prev) => reconcilePlacementChange(prev, { ...prev, departments: fn(prev.departments) }, new Date().toISOString()));
+      setSnapshot((prev) => {
+        const departments = fn(prev.departments);
+        // Preserve the *snapshot*, not just its tree, for refused/no-op moves.
+        // Wrapping an unchanged tree would push empty history and destroy redo.
+        if (departments === prev.departments) return prev;
+        return reconcilePlacementChange(prev, { ...prev, departments }, new Date().toISOString());
+      });
     },
     [setSnapshot],
   );

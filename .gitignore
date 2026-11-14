@@ -1,5 +1,5 @@
 # 依赖
-node_modules/
+node_modules
 
 # 构建产物
 dist/
@@ -71,3 +71,7 @@ docs/v240-*.md
 
 # v2.5 本地研判与验收记录
 docs/v250-*.md
+
+# Local test artifacts and isolated runtime
+.test-artifacts/
+.runtime/
